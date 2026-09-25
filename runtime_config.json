@@ -1,0 +1,46 @@
+{
+    "weights": {
+        "Default": {
+            "w_dma": 35,
+            "w_rsi": 30,
+            "w_low": 20,
+            "w_exp": 15
+        },
+        "Long-Term": {
+            "w_dma": 45,
+            "w_rsi": 15,
+            "w_low": 25,
+            "w_exp": 15
+        },
+        "Swing / Positional": {
+            "w_dma": 15,
+            "w_rsi": 55,
+            "w_low": 25,
+            "w_exp": 5
+        },
+        "Intraday": {
+            "w_dma": 5,
+            "w_rsi": 65,
+            "w_low": 5,
+            "w_exp": 25
+        },
+        "AI / RAG": {
+            "w_dma": 25,
+            "w_rsi": 35,
+            "w_low": 20,
+            "w_exp": 20
+        }
+    },
+    "risk_parameters": {
+        "intraday_sl_multiplier": 1.0,
+        "intraday_target_multiplier": 1.8,
+        "swing_sl_multiplier": 1.5,
+        "swing_target_multiplier": 3.0,
+        "longterm_sl_multiplier": 2.5,
+        "longterm_target_multiplier": 5.0,
+        "trailing_stop_activation_pct": 3.0,
+        "trailing_stop_lock_pct": 0.5
+    },
+    "last_optimized_timestamp": "None",
+    "optimization_status": "V2 Public Testbed Active"
+}

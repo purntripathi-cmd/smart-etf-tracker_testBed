@@ -222,12 +222,19 @@ def load_historical_market_data(all_tickers):
         return pd.DataFrame()
 
 def load_paper_trades():
+    df = None
     if os.path.exists(LOCAL_TRADES_CSV) and os.path.getsize(LOCAL_TRADES_CSV) > 0:
         try:
-            return pd.read_csv(LOCAL_TRADES_CSV)
+            df = pd.read_csv(LOCAL_TRADES_CSV)
         except Exception:
-            pass
-    return pd.DataFrame(columns=DEFAULT_PAPER_HEADERS)
+            df = None
+    if df is None:
+        df = pd.DataFrame(columns=DEFAULT_PAPER_HEADERS)
+    else:
+        for c in DEFAULT_PAPER_HEADERS:
+            if c not in df.columns:
+                df[c] = ""
+    return df
 
 def save_paper_trades(df):
     for c in DEFAULT_PAPER_HEADERS:
@@ -808,9 +815,20 @@ elif active_tab == "📈 Paper Trading & Multi-Regime Ledger":
         st.markdown("##### 📊 Multi-Regime & Category KPI Matrix")
         
         all_eval_trades = trades_df.copy()
+        for req_col, default_v in [
+            ("PnL_Rs", 0.0),
+            ("Strategy_Preset", "Default"),
+            ("Market_Regime_At_Entry", "Normal"),
+            ("Status", "ACTIVE"),
+            ("Hold_Duration_Days", 0)
+        ]:
+            if req_col not in all_eval_trades.columns:
+                all_eval_trades[req_col] = default_v
+
         all_eval_trades["Clean_PnL"] = pd.to_numeric(all_eval_trades["PnL_Rs"], errors="coerce").fillna(0.0)
-        all_eval_trades["Strategy_Preset"] = all_eval_trades["Strategy_Preset"].fillna("Default").astype(str)
-        all_eval_trades["Market_Regime_At_Entry"] = all_eval_trades["Market_Regime_At_Entry"].fillna("Normal").astype(str)
+        all_eval_trades["Strategy_Preset"] = all_eval_trades["Strategy_Preset"].replace("", "Default").fillna("Default").astype(str)
+        all_eval_trades["Market_Regime_At_Entry"] = all_eval_trades["Market_Regime_At_Entry"].replace("", "Normal").fillna("Normal").astype(str)
+        all_eval_trades["Hold_Duration_Days"] = pd.to_numeric(all_eval_trades["Hold_Duration_Days"], errors="coerce").fillna(0)
 
         kpi_rows = []
         for (preset_name, regime_entry), grp in all_eval_trades.groupby(["Strategy_Preset", "Market_Regime_At_Entry"]):
@@ -825,7 +843,7 @@ elif active_tab == "📈 Paper Trading & Multi-Regime Ledger":
             p_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (9.99 if gross_profit > 0 else 0.0)
             net_realized = c_grp["Clean_PnL"].sum()
             unrealized = grp[grp["Status"] == "ACTIVE"]["Clean_PnL"].sum()
-            avg_hold = grp["Hold_Duration_Days"].mean() if "Hold_Duration_Days" in grp.columns else 0.0
+            avg_hold = grp["Hold_Duration_Days"].mean()
 
             kpi_rows.append({
                 "Strategy Preset": preset_name,
@@ -843,8 +861,8 @@ elif active_tab == "📈 Paper Trading & Multi-Regime Ledger":
             kpi_df = pd.DataFrame(kpi_rows)
             st.dataframe(
                 kpi_df.style.format({
-                    "Realized PnL (₹)": "₹{:+, .2f}",
-                    "Unrealized PnL (₹)": "₹{:+, .2f}"
+                    "Realized PnL (₹)": "₹{:+,.2f}",
+                    "Unrealized PnL (₹)": "₹{:+,.2f}"
                 }),
                 use_container_width=True
             )
@@ -858,8 +876,15 @@ elif active_tab == "📈 Paper Trading & Multi-Regime Ledger":
                 "RSI_At_Entry", "Composite_Score_At_Entry", "Market_Regime_At_Entry"
             ]
             valid_open_cols = [c for c in open_cols if c in open_trades.columns]
+            
+            # Coerce numeric display columns safely
+            open_display = open_trades[valid_open_cols].copy()
+            for n_col in ["Entry_Price", "Live_CMP", "Stop_Loss", "Target", "PnL_Rs", "RSI_At_Entry", "Composite_Score_At_Entry"]:
+                if n_col in open_display.columns:
+                    open_display[n_col] = pd.to_numeric(open_display[n_col], errors="coerce").fillna(0.0)
+
             st.dataframe(
-                open_trades[valid_open_cols].style.format({
+                open_display.style.format({
                     "Entry_Price": "₹{:.2f}",
                     "Live_CMP": "₹{:.2f}",
                     "Stop_Loss": "₹{:.2f}",
@@ -882,8 +907,14 @@ elif active_tab == "📈 Paper Trading & Multi-Regime Ledger":
                 "Execution_Timestamp", "Exit_Timestamp", "RSI_At_Entry", "Composite_Score_At_Entry", "Market_Regime_At_Entry"
             ]
             valid_closed_cols = [c for c in closed_cols if c in closed_trades.columns]
+
+            closed_display = closed_trades[valid_closed_cols].copy()
+            for n_col in ["Entry_Price", "Exit_Price", "PnL_Rs", "RSI_At_Entry", "Composite_Score_At_Entry"]:
+                if n_col in closed_display.columns:
+                    closed_display[n_col] = pd.to_numeric(closed_display[n_col], errors="coerce").fillna(0.0)
+
             st.dataframe(
-                closed_trades[valid_closed_cols].style.format({
+                closed_display.style.format({
                     "Entry_Price": "₹{:.2f}",
                     "Exit_Price": "₹{:.2f}",
                     "PnL_Rs": "₹{:+.2f}",

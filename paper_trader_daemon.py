@@ -63,12 +63,19 @@ DEFAULT_AUDIT_HEADERS = [
 # LOCAL LEDGER PERSISTENCE
 # =====================================================================
 def load_trades():
+    df = None
     if os.path.exists(LOCAL_TRADES_CSV) and os.path.getsize(LOCAL_TRADES_CSV) > 0:
         try:
-            return pd.read_csv(LOCAL_TRADES_CSV)
+            df = pd.read_csv(LOCAL_TRADES_CSV)
         except Exception:
-            pass
-    return pd.DataFrame(columns=DEFAULT_PAPER_HEADERS)
+            df = None
+    if df is None:
+        df = pd.DataFrame(columns=DEFAULT_PAPER_HEADERS)
+    else:
+        for c in DEFAULT_PAPER_HEADERS:
+            if c not in df.columns:
+                df[c] = ""
+    return df
 
 def save_trades(df):
     for c in DEFAULT_PAPER_HEADERS:

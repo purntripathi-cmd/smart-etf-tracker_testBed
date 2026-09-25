@@ -226,6 +226,10 @@ def evaluate_strategy_performance_and_suggest_tweaks():
         return sug_df
 
     closed_df = trades_df[trades_df["Status"].isin(["TARGET_ACHIEVED", "STOP_LOSS_HIT", "TIME_EXPIRED", "INTRADAY_SQUAREOFF", "OVERBOUGHT_EXIT"])].copy()
+    if "PnL_Rs" not in closed_df.columns:
+        closed_df["PnL_Rs"] = 0.0
+    if "Strategy_Preset" not in closed_df.columns:
+        closed_df["Strategy_Preset"] = "Default"
 
     if closed_df.empty or len(closed_df) < 2:
         suggestions.append({

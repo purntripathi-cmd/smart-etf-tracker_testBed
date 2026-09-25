@@ -220,6 +220,13 @@ def evaluate_market_metrics(raw, universe_config, is_stock_mode=False, dynamic_w
         regime_desc = "Standard quantitative scanning mode."
         n500_curr, n500_d50, n500_d200 = 0.0, 0.0, 0.0
 
+    # Benchmark 21D Momentum ROC for Relative Strength
+    bench_roc_21d = 0.0
+    if not bench_df.empty and "Close" in bench_df.columns:
+        b_c = bench_df["Close"].dropna()
+        if len(b_c) > 21:
+            bench_roc_21d = round(((float(b_c.iloc[-1]) - float(b_c.iloc[-21])) / float(b_c.iloc[-21])) * 100.0, 2)
+
     # India VIX Volatility Filter
     vix_df = extract_ticker_df(raw, "^INDIAVIX")
     current_vix = 15.0
@@ -362,6 +369,8 @@ def evaluate_market_metrics(raw, universe_config, is_stock_mode=False, dynamic_w
             "9 EMA": round(ema9, 2), "21 EMA": round(ema21, 2), "EMA Trend": "Bullish" if ema9 > ema21 else "Bearish",
             "52W Low (₹)": round(low52, 2), "Dist 52W Low %": round(((curr - low52) / low52) * 100.0, 2) if low52 > 0 else 0.0,
             "52W High (₹)": round(high52, 2), "Dist 52W High %": round(((curr - high52) / high52) * 100.0, 2) if high52 > 0 else 0.0,
+            "ATR % of CMP": round((atr_val / curr) * 100.0, 2) if curr > 0 else 0.0,
+            "RS Spread 21D %": round(roc_21d - bench_roc_21d, 2),
             "RSI (14D)": round(rsi_latest, 1), "RSI Delta": rsi_delta,
             "Bollinger %B": round(percent_b, 2), "BB Upper": round(bb_upper, 2), "BB Lower": round(bb_lower, 2),
             "Dist VWAP %": vwap_dist_pct, "Volume Surge Ratio": vol_surge_ratio,
@@ -577,6 +586,15 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False):
         pnl_rs = round((current_p - entry_p) * qty, 2)
         pnl_pct = round(((current_p - entry_p) / entry_p) * 100.0, 2)
 
+        # Hold duration calculation
+        hold_days = 0
+        entry_ts_str = str(row.get("Execution_Timestamp", ""))
+        try:
+            entry_dt = datetime.datetime.strptime(entry_ts_str, "%Y-%m-%d %H:%M:%S")
+            hold_days = max(0, (now_ist.date() - entry_dt.date()).days)
+        except Exception:
+            pass
+
         # Trailing stop: Lock in +0.5% profit once gain exceeds +3.0%
         if pnl_pct >= 3.0:
             trailing_floor = round(entry_p * 1.005, 2)
@@ -587,6 +605,11 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False):
         # Exit 1: Intraday Auto-Squareoff
         if ("INTRADAY" in preset or "INTRADAY" in trigger_type) and is_auto_squareoff_time:
             updated.at[idx, "Status"] = "INTRADAY_SQUAREOFF"
+            updated.at[idx, "Exit_Price"] = current_p
+            updated.at[idx, "Exit_Timestamp"] = now_ist.strftime("%Y-%m-%d %H:%M:%S")
+            updated.at[idx, "Exit_Reason"] = "3:10 PM Intraday Auto-Squareoff"
+            updated.at[idx, "Hold_Duration_Days"] = hold_days
+            updated.at[idx, "Live_CMP"] = current_p
             updated.at[idx, "PnL_Rs"] = pnl_rs
             updated.at[idx, "PnL_Pct"] = f"{pnl_pct:+.2f}%"
             logger.info(f"[EXIT-INTRADAY] {sym} squared off at ₹{current_p:.2f} (PnL: ₹{pnl_rs:.2f})")
@@ -595,6 +618,11 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False):
         # Exit 2: Target Achieved
         if target_p > 0 and current_p >= target_p:
             updated.at[idx, "Status"] = "TARGET_ACHIEVED"
+            updated.at[idx, "Exit_Price"] = current_p
+            updated.at[idx, "Exit_Timestamp"] = now_ist.strftime("%Y-%m-%d %H:%M:%S")
+            updated.at[idx, "Exit_Reason"] = "Target Price Reached"
+            updated.at[idx, "Hold_Duration_Days"] = hold_days
+            updated.at[idx, "Live_CMP"] = current_p
             updated.at[idx, "PnL_Rs"] = pnl_rs
             updated.at[idx, "PnL_Pct"] = f"{pnl_pct:+.2f}%"
             logger.info(f"[EXIT-TARGET] {sym} hit target ₹{target_p:.2f} at ₹{current_p:.2f} (+{pnl_pct:.2f}%)")
@@ -603,6 +631,11 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False):
         # Exit 3: Stop-Loss Hit
         if stop_l > 0 and current_p <= stop_l:
             updated.at[idx, "Status"] = "STOP_LOSS_HIT"
+            updated.at[idx, "Exit_Price"] = current_p
+            updated.at[idx, "Exit_Timestamp"] = now_ist.strftime("%Y-%m-%d %H:%M:%S")
+            updated.at[idx, "Exit_Reason"] = "Stop-Loss Hit" if stop_l <= entry_p else "Trailing Stop Triggered"
+            updated.at[idx, "Hold_Duration_Days"] = hold_days
+            updated.at[idx, "Live_CMP"] = current_p
             updated.at[idx, "PnL_Rs"] = pnl_rs
             updated.at[idx, "PnL_Pct"] = f"{pnl_pct:+.2f}%"
             logger.info(f"[EXIT-STOP] {sym} hit stop ₹{stop_l:.2f} at ₹{current_p:.2f} ({pnl_pct:.2f}%)")
@@ -613,9 +646,20 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False):
             rsi_series = calculate_rsi_series(c_series)
             if not rsi_series.empty and float(rsi_series.iloc[-1]) >= 76.0 and pnl_pct > 1.5:
                 updated.at[idx, "Status"] = "OVERBOUGHT_EXIT"
+                updated.at[idx, "Exit_Price"] = current_p
+                updated.at[idx, "Exit_Timestamp"] = now_ist.strftime("%Y-%m-%d %H:%M:%S")
+                updated.at[idx, "Exit_Reason"] = "Overbought Exhaustion (RSI >= 76)"
+                updated.at[idx, "Hold_Duration_Days"] = hold_days
+                updated.at[idx, "Live_CMP"] = current_p
                 updated.at[idx, "PnL_Rs"] = pnl_rs
                 updated.at[idx, "PnL_Pct"] = f"{pnl_pct:+.2f}%"
                 logger.info(f"[EXIT-SWING-RSI] {sym} exited on overbought RSI >= 76 at ₹{current_p:.2f}")
                 continue
+
+        # If trade remains active, update live MTM figures
+        updated.at[idx, "Live_CMP"] = current_p
+        updated.at[idx, "PnL_Rs"] = pnl_rs
+        updated.at[idx, "PnL_Pct"] = f"{pnl_pct:+.2f}%"
+        updated.at[idx, "Hold_Duration_Days"] = hold_days
 
     return updated

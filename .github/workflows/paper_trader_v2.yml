@@ -1,0 +1,74 @@
+name: V2 Public Automated Paper Trader (Zero Secrets Required)
+
+on:
+  schedule:
+    # 09:45 AM IST (04:15 AM UTC) Mon-Fri: Intraday Entry
+    - cron: '15 4 * * 1-5'
+    # 03:00 PM IST (09:30 AM UTC) Mon-Fri: Multi-Asset 3PM Accumulation & AI/RAG
+    - cron: '30 9 * * 1-5'
+    # 03:10 PM IST (09:40 AM UTC) Mon-Fri: Intraday Auto-Squareoff
+    - cron: '40 9 * * 1-5'
+
+  workflow_dispatch:
+    inputs:
+      action_mode:
+        description: 'Execution Mode'
+        required: false
+        type: choice
+        default: 'PAPER_TRADE_3PM'
+        options:
+          - 'PAPER_TRADE_3PM'
+          - 'INTRADAY_ENTRY'
+          - 'INTRADAY_SQUAREOFF'
+
+permissions:
+  contents: write
+
+jobs:
+  run-trader-v2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-cache-dir yfinance pandas numpy requests
+
+      - name: Determine Execution Mode
+        id: set-mode
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "MODE=${{ github.event.inputs.action_mode }}" >> $GITHUB_ENV
+          else
+            UTC_HOUR=$(date -u +%H)
+            UTC_MIN=$(date -u +%M)
+            echo "Current UTC Time: $UTC_HOUR:$UTC_MIN"
+            
+            if [ "$UTC_HOUR" -eq 4 ]; then
+              echo "MODE=INTRADAY_ENTRY" >> $GITHUB_ENV
+            elif [ "$UTC_HOUR" -eq 9 ] && [ "$UTC_MIN" -ge 35 ]; then
+              echo "MODE=INTRADAY_SQUAREOFF" >> $GITHUB_ENV
+            else
+              echo "MODE=PAPER_TRADE_3PM" >> $GITHUB_ENV
+            fi
+          fi
+
+      - name: Execute V2 Paper Trader Daemon
+        run: |
+          echo "Running V2 Daemon with MODE=$MODE"
+          python paper_trader_daemon.py "$MODE"
+
+      - name: Commit and Push CSV Ledger Updates
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/*.csv runtime_config.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore(v2-cron): auto-update paper trades ledger [skip ci]" && git pull --rebase origin main && git push)

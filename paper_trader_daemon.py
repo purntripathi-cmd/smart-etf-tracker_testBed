@@ -47,8 +47,11 @@ logger = logging.getLogger("PaperTraderDaemon_V2")
 
 DEFAULT_PAPER_HEADERS = [
     "Trade_ID", "Username", "Ticker", "Asset_Class", "Trigger_Type", "Strategy_Preset",
-    "Status", "Entry_Price", "Executed_Qty", "Stop_Loss", "Target",
-    "Execution_Timestamp", "PnL_Rs", "PnL_Pct", "Invested_Value"
+    "Status", "Entry_Price", "Live_CMP", "Executed_Qty", "Stop_Loss", "Target",
+    "Execution_Timestamp", "Exit_Timestamp", "Exit_Price", "Exit_Reason", "Hold_Duration_Days",
+    "PnL_Rs", "PnL_Pct", "Invested_Value",
+    "Technical_Score_At_Entry", "Fundamental_Score_At_Entry", "RSI_At_Entry",
+    "Composite_Score_At_Entry", "Market_Regime_At_Entry"
 ]
 
 DEFAULT_AUDIT_HEADERS = [
@@ -186,10 +189,16 @@ def run_paper_trader_daemon(mode_override=None):
                 rec = {
                     "Trade_ID": trade_id, "Username": "V2_Daemon", "Ticker": sym,
                     "Asset_Class": "Stock", "Trigger_Type": "INTRADAY_BUY", "Strategy_Preset": "Intraday",
-                    "Status": "ACTIVE", "Entry_Price": cmp_val, "Executed_Qty": final_qty,
+                    "Status": "ACTIVE", "Entry_Price": cmp_val, "Live_CMP": cmp_val, "Executed_Qty": final_qty,
                     "Stop_Loss": r["Stop_Loss"], "Target": r["Target"],
-                    "Execution_Timestamp": now_str, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
-                    "Invested_Value": round(cmp_val * final_qty, 2)
+                    "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                    "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                    "Invested_Value": round(cmp_val * final_qty, 2),
+                    "Technical_Score_At_Entry": round(float(r.get("Technical Score", 50.0)), 1),
+                    "Fundamental_Score_At_Entry": round(float(r.get("Fundamental Score", 50.0)), 1),
+                    "RSI_At_Entry": round(float(r.get("RSI (14D)", 50.0)), 1),
+                    "Composite_Score_At_Entry": round(float(r.get("Composite Score", r.get("Composite Buy Score", 50.0))), 1),
+                    "Market_Regime_At_Entry": regime_name
                 }
                 created_records.append(rec)
                 active_ticker_set.add(sym)
@@ -211,10 +220,16 @@ def run_paper_trader_daemon(mode_override=None):
                 rec = {
                     "Trade_ID": trade_id, "Username": "V2_Daemon", "Ticker": sym,
                     "Asset_Class": "ETF", "Trigger_Type": "INTRADAY_BUY", "Strategy_Preset": "Intraday",
-                    "Status": "ACTIVE", "Entry_Price": cmp_val, "Executed_Qty": final_qty,
+                    "Status": "ACTIVE", "Entry_Price": cmp_val, "Live_CMP": cmp_val, "Executed_Qty": final_qty,
                     "Stop_Loss": r["Stop_Loss"], "Target": r["Target"],
-                    "Execution_Timestamp": now_str, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
-                    "Invested_Value": round(cmp_val * final_qty, 2)
+                    "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                    "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                    "Invested_Value": round(cmp_val * final_qty, 2),
+                    "Technical_Score_At_Entry": round(float(r.get("Technical Score", 50.0)), 1),
+                    "Fundamental_Score_At_Entry": round(float(r.get("Fundamental Score", 50.0)), 1),
+                    "RSI_At_Entry": round(float(r.get("RSI (14D)", 50.0)), 1),
+                    "Composite_Score_At_Entry": round(float(r.get("Composite Score", r.get("Composite Buy Score", 50.0))), 1),
+                    "Market_Regime_At_Entry": regime_name
                 }
                 created_records.append(rec)
                 active_ticker_set.add(sym)
@@ -240,10 +255,16 @@ def run_paper_trader_daemon(mode_override=None):
                 rec = {
                     "Trade_ID": trade_id, "Username": "V2_Daemon", "Ticker": sym,
                     "Asset_Class": "Stock", "Trigger_Type": "AI_RAG_CONFLUENCE_BUY", "Strategy_Preset": "AI / RAG",
-                    "Status": "ACTIVE", "Entry_Price": cmp_val, "Executed_Qty": qty,
+                    "Status": "ACTIVE", "Entry_Price": cmp_val, "Live_CMP": cmp_val, "Executed_Qty": qty,
                     "Stop_Loss": r["Stop_Loss"], "Target": r["Target"],
-                    "Execution_Timestamp": now_str, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
-                    "Invested_Value": round(cmp_val * qty, 2)
+                    "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                    "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                    "Invested_Value": round(cmp_val * qty, 2),
+                    "Technical_Score_At_Entry": round(float(r.get("Technical Score", 50.0)), 1),
+                    "Fundamental_Score_At_Entry": round(float(r.get("Fundamental Score", 50.0)), 1),
+                    "RSI_At_Entry": round(float(r.get("RSI (14D)", 50.0)), 1),
+                    "Composite_Score_At_Entry": round(float(r.get("Composite Score", 50.0)), 1),
+                    "Market_Regime_At_Entry": regime_name
                 }
                 created_records.append(rec)
                 active_ticker_set.add(sym)
@@ -270,10 +291,16 @@ def run_paper_trader_daemon(mode_override=None):
                     rec = {
                         "Trade_ID": trade_id, "Username": "V2_Daemon", "Ticker": sym,
                         "Asset_Class": "ETF", "Trigger_Type": "AUTO_3PM_BUY", "Strategy_Preset": p_name,
-                        "Status": "ACTIVE", "Entry_Price": cmp_val, "Executed_Qty": final_qty,
+                        "Status": "ACTIVE", "Entry_Price": cmp_val, "Live_CMP": cmp_val, "Executed_Qty": final_qty,
                         "Stop_Loss": r["Stop_Loss"], "Target": r["Target"],
-                        "Execution_Timestamp": now_str, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
-                        "Invested_Value": round(cmp_val * final_qty, 2)
+                        "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                        "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                        "Invested_Value": round(cmp_val * final_qty, 2),
+                        "Technical_Score_At_Entry": round(float(r.get("Technical Score", 50.0)), 1),
+                        "Fundamental_Score_At_Entry": round(float(r.get("Fundamental Score", 50.0)), 1),
+                        "RSI_At_Entry": round(float(r.get("RSI (14D)", 50.0)), 1),
+                        "Composite_Score_At_Entry": round(float(r.get("Composite Score", 50.0)), 1),
+                        "Market_Regime_At_Entry": regime_name
                     }
                     created_records.append(rec)
                     active_ticker_set.add(sym)
@@ -294,10 +321,16 @@ def run_paper_trader_daemon(mode_override=None):
                     rec = {
                         "Trade_ID": trade_id, "Username": "V2_Daemon", "Ticker": sym,
                         "Asset_Class": "Stock", "Trigger_Type": "AUTO_3PM_BUY", "Strategy_Preset": p_name,
-                        "Status": "ACTIVE", "Entry_Price": cmp_val, "Executed_Qty": final_qty,
+                        "Status": "ACTIVE", "Entry_Price": cmp_val, "Live_CMP": cmp_val, "Executed_Qty": final_qty,
                         "Stop_Loss": r["Stop_Loss"], "Target": r["Target"],
-                        "Execution_Timestamp": now_str, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
-                        "Invested_Value": round(cmp_val * final_qty, 2)
+                        "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                        "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                        "Invested_Value": round(cmp_val * final_qty, 2),
+                        "Technical_Score_At_Entry": round(float(r.get("Technical Score", 50.0)), 1),
+                        "Fundamental_Score_At_Entry": round(float(r.get("Fundamental Score", 50.0)), 1),
+                        "RSI_At_Entry": round(float(r.get("RSI (14D)", 50.0)), 1),
+                        "Composite_Score_At_Entry": round(float(r.get("Composite Score", 50.0)), 1),
+                        "Market_Regime_At_Entry": regime_name
                     }
                     created_records.append(rec)
                     active_ticker_set.add(sym)

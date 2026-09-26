@@ -442,6 +442,24 @@ def get_asset_comprehensive_profile(raw_row):
     }
 
 
+def get_34_parameter_profile(raw_data, ticker, is_stock_mode=True):
+    """Retrieves 34-parameter profile for a specific ticker."""
+    try:
+        from strategy_engine import evaluate_market_metrics
+        from universe_manager import get_active_universe
+        stk_u, etf_u = get_active_universe()
+        u = stk_u if is_stock_mode else etf_u
+        clean_t = str(ticker).replace(".NS", "").strip()
+        matched = [item for item in u if item.get("ticker", "").replace(".NS", "").strip() == clean_t]
+        if matched and raw_data is not None and not raw_data.empty:
+            m_df, _ = evaluate_market_metrics(raw_data, matched, is_stock_mode=is_stock_mode)
+            if not m_df.empty:
+                return get_asset_comprehensive_profile(m_df.iloc[0])
+    except Exception as e:
+        logger.error(f"Error building 34-parameter profile for {ticker}: {e}")
+    return {}
+
+
 # =====================================================================
 # 5. S/R MATRIX VISUAL STYLER (BUY IN GREEN, SELL/EXIT IN RED)
 # =====================================================================

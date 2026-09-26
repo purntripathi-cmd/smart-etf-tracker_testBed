@@ -111,6 +111,17 @@ def save_audit(entry_dict):
     combined = pd.concat([existing, pd.DataFrame([entry_dict])], ignore_index=True).drop_duplicates()
     combined.to_csv(LOCAL_AUDIT_CSV, index=False)
 
+def load_audit_log():
+    if os.path.exists(LOCAL_AUDIT_CSV) and os.path.getsize(LOCAL_AUDIT_CSV) > 0:
+        try:
+            return pd.read_csv(LOCAL_AUDIT_CSV)
+        except Exception:
+            pass
+    return pd.DataFrame(columns=DEFAULT_AUDIT_HEADERS)
+
+load_paper_trades = load_trades
+save_paper_trades = save_trades
+
 # =====================================================================
 # MARKET DATA FETCHER
 # =====================================================================

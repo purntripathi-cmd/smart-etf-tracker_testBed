@@ -1,7 +1,2 @@
 Timestamp_IST,Changed_By,Parameter_Category,Parameter_Name,Old_Value,New_Value,Source,Intended_Impact
-2026-09-26 11:15:22,TestScript,Risk Multipliers,Swing Target Multiplier,3.0,3.3,AI_RAG_OneClick_AutoTuner,Increases overall strategy Profit Factor from ~1.85 to ~2.15 by letting winners run.
-2026-09-26 11:15:22,TestScript,Risk Multipliers,Trailing Stop Activation Gain (%),3.0,2.8,AI_RAG_OneClick_AutoTuner,Guarantees a floor at +0.5% profit once gain exceeds +2.8%.
-2026-09-26 11:15:22,TestScript,Preset Weights,Intraday: Volume Surge Weight,35.0,38.0,AI_RAG_OneClick_AutoTuner,Elevates win probability for rapid morning momentum scalps.
-2026-09-26 11:15:22,TestScript,Preset Weights,Long-Term: Dividend Yield Weight,15.0,20.0,AI_RAG_OneClick_AutoTuner,Biases long-term ETF/stock accumulation towards high dividend payers (Tier 1 >= 3.0%).
-2026-09-26 11:15:22,TestScript,Risk Multipliers,Overbought RSI Exit Threshold,76.0,77.5,AI_RAG_OneClick_AutoTuner,Lets high-conviction breakout trades run until complete exhaustion.
-2026-09-26 11:15:22,TestScript,System Reset,All Parameters,Custom/Optimized,Factory Defaults,GUI_Reset_Button,"Reset all weights, risk multipliers, and schedules to initial baseline."
+

@@ -30,20 +30,27 @@ def get_telegram_config():
     token = ""
     chat_id = ""
     enabled = True
+    source = "unconfigured"
 
-    # 1. Try Streamlit Secrets
+    # 1. Try Streamlit Secrets (Most Secure for Public Cloud)
     try:
         import streamlit as st
         if hasattr(st, "secrets"):
-            token = st.secrets.get("TELEGRAM_BOT_TOKEN", "") or st.secrets.get("telegram", {}).get("bot_token", "")
-            chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "") or st.secrets.get("telegram", {}).get("chat_id", "")
+            s_tok = st.secrets.get("TELEGRAM_BOT_TOKEN", "") or st.secrets.get("telegram", {}).get("bot_token", "")
+            s_chat = st.secrets.get("TELEGRAM_CHAT_ID", "") or st.secrets.get("telegram", {}).get("chat_id", "")
+            if s_tok:
+                token = str(s_tok).strip()
+                source = "Streamlit Secrets (Encrypted Server-Side Vault)"
+            if s_chat:
+                chat_id = str(s_chat).strip()
     except Exception:
         pass
 
     # 2. Try Environment Variables
-    if not token:
+    if not token and os.getenv("TELEGRAM_BOT_TOKEN"):
         token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    if not chat_id:
+        source = "Environment Variable"
+    if not chat_id and os.getenv("TELEGRAM_CHAT_ID"):
         chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
     # 3. Try runtime_config.json
@@ -52,9 +59,10 @@ def get_telegram_config():
             with open(RUNTIME_CONFIG_PATH, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
                 tg_cfg = cfg.get("telegram", {})
-                if not token:
+                if not token and tg_cfg.get("bot_token"):
                     token = str(tg_cfg.get("bot_token", "")).strip()
-                if not chat_id:
+                    source = "Local Runtime Config"
+                if not chat_id and tg_cfg.get("chat_id"):
                     chat_id = str(tg_cfg.get("chat_id", "")).strip()
                 enabled = tg_cfg.get("enabled", True)
         except Exception as e:
@@ -64,11 +72,17 @@ def get_telegram_config():
     if not chat_id:
         chat_id = "887870969"
 
+    masked = ""
+    if token and len(token) >= 8:
+        masked = token[:4] + "••••••••" + token[-4:]
+
     return {
         "bot_token": token.strip(),
         "chat_id": chat_id.strip(),
         "enabled": enabled,
-        "is_configured": bool(token.strip() and chat_id.strip())
+        "is_configured": bool(token.strip() and chat_id.strip()),
+        "source": source,
+        "masked_token": masked
     }
 
 
@@ -83,7 +97,8 @@ def save_telegram_config(bot_token, chat_id, enabled=True):
         if "telegram" not in cfg:
             cfg["telegram"] = {}
 
-        cfg["telegram"]["bot_token"] = bot_token.strip()
+        if bot_token.strip():
+            cfg["telegram"]["bot_token"] = bot_token.strip()
         cfg["telegram"]["chat_id"] = str(chat_id).strip()
         cfg["telegram"]["enabled"] = enabled
 

@@ -60,6 +60,10 @@ def get_telegram_config():
         except Exception as e:
             logger.warning(f"Error reading runtime_config.json for telegram: {e}")
 
+    # Fallback to production default chat ID if none provided
+    if not chat_id:
+        chat_id = "887870969"
+
     return {
         "bot_token": token.strip(),
         "chat_id": chat_id.strip(),

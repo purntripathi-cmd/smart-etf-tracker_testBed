@@ -56,7 +56,7 @@
     "parameter_version": "v2.2-Adaptive",
     "telegram": {
         "bot_token": "",
-        "chat_id": "",
+        "chat_id": "887870969",
         "enabled": true
     },
     "success": true,

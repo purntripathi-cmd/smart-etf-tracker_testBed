@@ -68,9 +68,9 @@ def get_telegram_config():
         except Exception as e:
             logger.warning(f"Error reading runtime_config.json for telegram: {e}")
 
-    # Fallback to production default chat ID if none provided
+    # Keep chat_id empty if not configured so user is guided to link it
     if not chat_id:
-        chat_id = "887870969"
+        chat_id = ""
 
     masked = ""
     if token and len(token) >= 8:
@@ -97,9 +97,10 @@ def save_telegram_config(bot_token, chat_id, enabled=True):
         if "telegram" not in cfg:
             cfg["telegram"] = {}
 
-        if bot_token.strip():
-            cfg["telegram"]["bot_token"] = bot_token.strip()
-        cfg["telegram"]["chat_id"] = str(chat_id).strip()
+        if bot_token and str(bot_token).strip():
+            cfg["telegram"]["bot_token"] = str(bot_token).strip()
+        if chat_id is not None:
+            cfg["telegram"]["chat_id"] = str(chat_id).strip()
         cfg["telegram"]["enabled"] = enabled
 
         with open(RUNTIME_CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -202,8 +203,8 @@ def send_telegram_message(message_text, bot_token=None, chat_id=None):
     Returns: {"ok": bool, "message_id": int, "error": str}
     """
     cfg = get_telegram_config()
-    token = bot_token or cfg["bot_token"]
-    target_chat = chat_id or cfg["chat_id"]
+    token = (str(bot_token).strip() if bot_token else "") or cfg.get("bot_token", "")
+    target_chat = (str(chat_id).strip() if chat_id else "") or cfg.get("chat_id", "")
 
     if not token or not target_chat:
         return {"ok": False, "message_id": 0, "error": "Bot Token or Chat ID is not configured."}

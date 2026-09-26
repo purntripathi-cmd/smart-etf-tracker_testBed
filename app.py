@@ -1867,7 +1867,7 @@ elif active_tab == "🌐 Quant Ecosystem & Webhook Setup":
         sample_default_msg = f"""🤖 <b>[AGY QUANT TESTBED] Telegram Integration Verified!</b>
 ━━━━━━━━━━━━━━━━━━━━
 ✅ <b>System Status:</b> Online & Operational
-⏱️ <b>Timestamp:</b> {datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")}
+⏱️ <b>Timestamp:</b> {datetime.datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")}
 📊 <b>Market Regime:</b> {regime_data.get('regime', 'Normal')}
 📉 <b>India VIX:</b> {regime_data.get('vix', 15.0):.1f}
 🎯 <b>Universe Scope:</b> {len(current_stock_universe)} Stocks, {len(current_etf_universe)} ETFs

@@ -1602,6 +1602,8 @@ elif active_tab == "🧱 S/R Range-Bound Lab & Multi-Factor Hub":
                             st.success(f"✅ Telegram S/R Alert sent! (Message ID: {res['message_id']})")
                         else:
                             st.error(f"❌ Dispatch failed: {res['error']}")
+                            if "chat not found" in res['error'].lower():
+                                st.info("💡 **How to fix in 10 seconds:**\n1. Open Telegram on your phone/PC and open chat with **@TAPscreenerbot**\n2. Send **`/start`** or **`hello`**\n3. Click the **🎯 Detect Chat ID** button in the box above to link it automatically!")
                             st.caption("Tip: Check Bot Token, Chat ID, and ensure you sent `/start` to your bot.")
 
     # =================================================================
@@ -1882,6 +1884,8 @@ elif active_tab == "🌐 Quant Ecosystem & Webhook Setup":
                 st.success(f"🎉 Alert delivered! Message ID: `{dispatch_res['message_id']}`")
             else:
                 st.error(f"❌ Dispatch error: {dispatch_res['error']}")
+                if "chat not found" in dispatch_res['error'].lower():
+                    st.info("💡 **How to fix in 10 seconds:**\n1. Open Telegram on your phone/PC and open chat with **@TAPscreenerbot**\n2. Send **`/start`** or **`hello`**\n3. Click the **🎯 Detect Chat ID** button at the top of this tab to link it automatically!")
 
     with st.expander("📖 2-Minute Setup Guide: How to create a Telegram Bot & get your Chat ID"):
         st.markdown("""

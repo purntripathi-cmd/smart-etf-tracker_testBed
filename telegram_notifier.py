@@ -160,7 +160,17 @@ def fetch_latest_chat_id(bot_token=None):
         resp = requests.get(url, params={"limit": 20, "timeout": 5}, timeout=10)
         data = resp.json()
         if not data.get("ok"):
-            return {"ok": False, "chat_id": "", "chat_name": "", "error": data.get("description", f"HTTP {resp.status_code}")}
+            err_desc = data.get("description", f"HTTP {resp.status_code}")
+            # If webhook is active, auto-remove it so getUpdates can function
+            if "webhook" in err_desc.lower() and "conflict" in err_desc.lower():
+                try:
+                    requests.post(f"https://api.telegram.org/bot{token}/deleteWebhook", timeout=6)
+                    resp = requests.get(url, params={"limit": 20, "timeout": 5}, timeout=10)
+                    data = resp.json()
+                except Exception:
+                    pass
+            if not data.get("ok"):
+                return {"ok": False, "chat_id": "", "chat_name": "", "error": f"Telegram API error: {err_desc}"}
 
         results = data.get("result", [])
         if not results:
@@ -168,7 +178,7 @@ def fetch_latest_chat_id(bot_token=None):
                 "ok": False,
                 "chat_id": "",
                 "chat_name": "",
-                "error": "No recent updates found. Please open your bot in Telegram, send /start or type 'hello', then try again."
+                "error": "No recent updates found for @TAPscreenerbot. Please open Telegram, search for @TAPscreenerbot, send /start or type 'hello', and click Detect Chat ID again."
             }
 
         for item in reversed(results):

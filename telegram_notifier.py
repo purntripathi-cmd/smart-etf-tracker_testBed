@@ -255,8 +255,11 @@ def format_paper_trade_alert(trade_dict, action_type="ENTRY"):
 ━━━━━━━━━━━━━━━━━━━━
 ⏱️ <i>Executed at {now_str}</i>"""
     else:
-        pnl_rs = float(trade_dict.get("PnL_Rs", 0.0))
-        pnl_pct = float(trade_dict.get("PnL_Pct", 0.0))
+        raw_pnl_pct = trade_dict.get("PnL_Pct", 0.0)
+        try:
+            pnl_pct = float(str(raw_pnl_pct).replace("%", "").strip())
+        except Exception:
+            pnl_pct = 0.0
         pnl_icon = "💰" if pnl_rs >= 0 else "🛑"
         exit_p = float(trade_dict.get("Exit_Price", price))
         reason = trade_dict.get("Exit_Reason", "System Exit")

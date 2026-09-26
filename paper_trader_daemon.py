@@ -63,12 +63,13 @@ logging.basicConfig(
 logger = logging.getLogger("PaperTraderDaemon_V2")
 
 DEFAULT_PAPER_HEADERS = [
-    "Trade_ID", "Username", "Ticker", "Asset_Class", "Trigger_Type", "Strategy_Preset",
+    "Trade_ID", "Username", "Ticker", "Trade_Action", "Buy Ticker", "Sell Ticker",
+    "Asset_Class", "Category", "Trigger_Type", "Strategy_Preset", "Trigger_Indicator", "Near_Support_Status",
     "Status", "Entry_Price", "Live_CMP", "Executed_Qty", "Stop_Loss", "Target",
     "Execution_Timestamp", "Exit_Timestamp", "Exit_Price", "Exit_Reason", "Hold_Duration_Days",
     "PnL_Rs", "PnL_Pct", "Invested_Value",
     "Technical_Score_At_Entry", "Fundamental_Score_At_Entry", "RSI_At_Entry",
-    "Composite_Score_At_Entry", "Market_Regime_At_Entry"
+    "Composite_Score_At_Entry", "Empirical_Win_Rate_At_Entry", "Market_Regime_At_Entry"
 ]
 
 DEFAULT_AUDIT_HEADERS = [
@@ -92,6 +93,23 @@ def load_trades():
         for c in DEFAULT_PAPER_HEADERS:
             if c not in df.columns:
                 df[c] = ""
+    
+    if not df.empty:
+        def derive_action(r):
+            ta = str(r.get("Trade_Action", "")).strip()
+            if "BUY" in ta: return "🟢 BUY"
+            if "SELL" in ta or "EXIT" in ta or "SQUARE" in ta: return "🔴 SELL"
+            tt = str(r.get("Trigger_Type", "")).upper()
+            ti = str(r.get("Trigger_Indicator", "")).upper()
+            if "BUY" in tt or "ACCUMULATE" in tt: return "🟢 BUY"
+            if "SELL" in tt or "EXIT" in tt or "OVERBOUGHT" in tt: return "🔴 SELL"
+            if "BUY" in ti: return "🟢 BUY"
+            if "SELL" in ti or "EXIT" in ti: return "🔴 SELL"
+            return "🟢 BUY"
+            
+        df["Trade_Action"] = df.apply(derive_action, axis=1)
+        df["Buy Ticker"] = df.apply(lambda r: str(r["Ticker"]).replace(".NS", "") if "BUY" in str(r["Trade_Action"]) else "—", axis=1)
+        df["Sell Ticker"] = df.apply(lambda r: str(r["Ticker"]).replace(".NS", "") if "SELL" in str(r["Trade_Action"]) else "—", axis=1)
     return df
 
 def save_trades(df):

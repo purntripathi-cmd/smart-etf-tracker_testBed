@@ -390,8 +390,195 @@ def build_all_precious_metals_df(etfs_df):
     return pd.DataFrame(all_metals_rows)
 
 # =====================================================================
+# MULTI-PRESET OVERVIEW GRID & CONVICTION TILE HELPERS
+# =====================================================================
+def render_preset_overview_grid(df, is_stock_mode=False):
+    """Renders a responsive 4-column overview grid of top picks across the 4 key presets: Default, Swing, Long-Term, Intraday."""
+    if df is None or df.empty:
+        return
+    
+    presets_meta = [
+        ("Default", "🎯 Default (Core Balanced)", "#eff6ff", "#1d4ed8"),
+        ("Swing / Positional", "🌊 Swing / Positional", "#f0fdf4", "#15803d"),
+        ("Long-Term", "🏛️ Long-Term Secular", "#faf5ff", "#7e22ce"),
+        ("Intraday", "⚡ Intraday Momentum", "#fffbeb", "#b45309")
+    ]
+    
+    cols = st.columns(4)
+    for idx, (p_key, p_label, bg_col, border_col) in enumerate(presets_meta):
+        b_cands, s_cands = get_top_conviction_candidates(df, preset_name=p_key, is_stock_mode=is_stock_mode, limit=1)
+        
+        b_html = "<span style='color:#64748b; font-size:0.75rem;'>No active buy candidate</span>"
+        if not b_cands.empty:
+            b_r = b_cands.iloc[0]
+            b_sym = str(b_r["Ticker"]).replace(".NS", "")
+            b_cmp = float(b_r["CMP (₹)"])
+            b_rsi = float(b_r.get("RSI (14D)", 50.0))
+            b_sc = float(b_r.get("Composite Score", b_r.get("Composite Buy Score", 50.0)))
+            b_sig = str(b_r.get("Action Signal", "BUY")).strip()
+            b_badge_col = "#166534" if not any(k in b_sig.upper() for k in ["SELL", "AVOID"]) else "#991b1b"
+            b_html = f"<div style='margin-top:2px;'><b>🟢 BUY:</b> <b style='color:{b_badge_col}; font-size:0.86rem;'>{b_sym}</b> (₹{b_cmp:.2f})<br><span style='color:#64748b; font-size:0.72rem;'>RSI: <b>{b_rsi:.1f}</b> • Score: <b>#{b_sc:.1f}</b> • {b_sig}</span></div>"
+            
+        s_html = "<span style='color:#166534; font-size:0.72rem;'>🟢 Healthy (0 Overbought Exits)</span>"
+        if not s_cands.empty:
+            s_r = s_cands.iloc[0]
+            s_sym = str(s_r["Ticker"]).replace(".NS", "")
+            s_cmp = float(s_r["CMP (₹)"])
+            s_rsi = float(s_r.get("RSI (14D)", 50.0))
+            s_sc = float(s_r.get("Composite Score", 50.0))
+            s_html = f"<div style='margin-top:2px;'><b>🔴 EXIT:</b> <b style='color:#991b1b; font-size:0.86rem;'>{s_sym}</b> (₹{s_cmp:.2f})<br><span style='color:#64748b; font-size:0.72rem;'>RSI: <b>{s_rsi:.1f}</b> • Exit Score: <b>#{s_sc:.1f}</b></span></div>"
+
+        with cols[idx]:
+            st.markdown(
+                f"""
+                <div style="background:{bg_col}; border:1.5px solid {border_col}44; border-radius:8px; padding:10px 12px; margin-bottom:12px; min-height:120px; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+                    <div style="font-weight:700; font-size:0.80rem; color:{border_col}; border-bottom:1px solid {border_col}22; padding-bottom:4px; margin-bottom:6px;">
+                        {p_label}
+                    </div>
+                    {b_html}
+                    <div style="margin-top:6px; padding-top:4px; border-top:1px dashed {border_col}22;">
+                        {s_html}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+def render_preset_conviction_tiles(df, preset_name, is_stock_mode=False, limit=2):
+    """Renders the detailed conviction recommendation cards (Top 2 Buys + Top 1 Sell) for any given Strategy Preset."""
+    if df is None or df.empty:
+        st.info(f"No asset data available for {preset_name} preset.")
+        return
+
+    if preset_name == "AI / RAG":
+        top_b, top_s = get_ai_rag_conviction_candidates(df, is_stock_mode=is_stock_mode, limit=limit)
+    else:
+        top_b, top_s = get_top_conviction_candidates(df, preset_name=preset_name, is_stock_mode=is_stock_mode, limit=limit)
+
+    # 1. Top Buy Recommendations (2 columns)
+    if not top_b.empty:
+        b_cols = st.columns(min(len(top_b), 2))
+        for idx, (_, r) in enumerate(top_b.iterrows()):
+            if idx >= 2:
+                break
+            with b_cols[idx]:
+                sym = str(r["Ticker"]).replace(".NS", "")
+                cmp_val = float(r["CMP (₹)"])
+                rsi_val = float(r.get("RSI (14D)", 50.0))
+                sc_val = float(r.get("Composite Score", r.get("Composite Buy Score", 50.0)))
+                sl_val = float(r.get("Stop_Loss", round(cmp_val * (0.95 if is_stock_mode else 0.96), 2)))
+                tgt_val = float(r.get("Target", round(cmp_val * (1.07 if is_stock_mode else 1.05), 2)))
+                sig_val = str(r.get("Action Signal", "ACCUMULATE")).strip()
+                dist_dma = float(r.get("Dist 200DMA %", 0.0))
+                crit = r.get("Criteria_Met", f"Rank #{idx+1} in {preset_name} Preset • RSI {rsi_val:.1f} • 200DMA {dist_dma:+.1f}%")
+                cat_desc = r.get("Category", "Equity" if is_stock_mode else "Broad Index")
+
+                b_badge_bg = "#fee2e2" if any(k in sig_val.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "#dcfce7"
+                b_badge_col = "#991b1b" if any(k in sig_val.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "#166534"
+                b_badge_icon = "🔴" if any(k in sig_val.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "🟢"
+
+                st.markdown(
+                    f"""
+                    <div class="rec-card" style="background-color: #f0fdf4; border: 1.2px solid #22c55e;">
+                        <div style="font-size:0.72rem; color:#1e40af; font-weight:600; margin-bottom:3px;">🏷️ Evaluation Preset: {preset_name} (Accumulation Call)</div>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-weight:700; font-size:0.90rem;">#{idx+1} {sym} ({cat_desc})</span>
+                            <span class="rec-badge" style="background-color: {b_badge_bg}; color: {b_badge_col}; font-weight:700; border: 1px solid {b_badge_col}33;">{b_badge_icon} {sig_val} (Rank #{idx+1})</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.76rem; color:#475569; margin-top:4px;">
+                            <span>CMP: <b>₹{cmp_val:.2f}</b></span>
+                            <span>RSI: <b>{rsi_val:.1f}</b></span>
+                            <span>Preset Score: <b>#{sc_val:.1f}</b></span>
+                            <span>Dist 200DMA: <b>{dist_dma:+.1f}%</b></span>
+                        </div>
+                        <div class="criteria-box">
+                            <b>Criteria Met ({preset_name}):</b> {crit}<br>
+                            <span style="color:#15803d; font-weight:600;">Stop-Loss: ₹{sl_val:.2f} (-{abs((cmp_val-sl_val)/cmp_val*100):.1f}%) | Target: ₹{tgt_val:.2f} (+{((tgt_val-cmp_val)/cmp_val*100):.1f}%)</span>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+    # 2. Top Sell / Profit Booking Opportunity
+    if not top_s.empty:
+        sell_r = top_s.iloc[0]
+        s_sym = str(sell_r["Ticker"]).replace(".NS", "")
+        s_cmp = float(sell_r["CMP (₹)"])
+        s_rsi = float(sell_r.get("RSI (14D)", 50.0))
+        s_sc = float(sell_r.get("Composite Score", 50.0))
+        s_sl = float(sell_r.get("Stop_Loss", round(s_cmp * (1.05 if is_stock_mode else 1.04), 2)))
+        s_tgt = float(sell_r.get("Target", round(s_cmp * (0.94 if is_stock_mode else 0.95), 2)))
+        s_dist_dma = float(sell_r.get("Dist 200DMA %", 0.0))
+        s_crit = sell_r.get("Criteria_Met", f"RSI {s_rsi:.1f} Overbought • 200DMA {s_dist_dma:+.1f}% Extension")
+        s_cat = sell_r.get("Category", "Stock" if is_stock_mode else "ETF")
+
+        st.markdown(
+            f"""
+            <div class="rec-card" style="background-color: #fffbeb; border: 1.2px solid #f59e0b; margin-top: -4px;">
+                <div style="font-size:0.72rem; color:#991b1b; font-weight:600; margin-bottom:3px;">🏷️ Exit Strategy: {preset_name} Overbought Profit Booking</div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-weight:700; font-size:0.85rem; color:#92400e;">💡 Top Sell / Profit Booking Opportunity: {s_sym} ({s_cat})</span>
+                    <span class="rec-badge" style="background-color: #fee2e2; color: #991b1b;">🔴 PROFIT BOOKING / EXIT</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.74rem; color:#475569; margin-top:3px;">
+                    <span>CMP: ₹{s_cmp:.2f}</span>
+                    <span>RSI: {s_rsi:.1f}</span>
+                    <span>Exit Urgency Score: #{s_sc:.1f}/100</span>
+                    <span>Dist 200DMA: {s_dist_dma:+.1f}%</span>
+                </div>
+                <div class="criteria-box-sell">
+                    <b>Exit Rationale:</b> {s_crit} | <span style="font-weight:600; color:#b91c1c;">Target Exit: ₹{s_tgt:.2f} | Trailing Stop: ₹{s_sl:.2f}</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    else:
+        asset_label = "Equities" if is_stock_mode else "Broad ETFs"
+        st.markdown(
+            f"""
+            <div class="rec-card" style="background-color: #f0fdf4; border: 1.2px dashed #86efac; margin-top: -4px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-weight:600; font-size:0.85rem; color:#166534;">🟢 Macro Accumulation Phase: 0 Overbought Sell Triggers under {preset_name}</span>
+                    <span class="rec-badge" style="background-color: #dcfce7; color: #166534;">ACCUMULATE ONLY</span>
+                </div>
+                <div style="font-size: 0.74rem; color:#475569; margin-top:3px;">
+                    No {asset_label.lower()} in this preset have reached overbought exhaustion boundaries. Cohort is in healthy accumulation.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+# =====================================================================
 # ADVANCED SCREENER STYLING FUNCTION
 # =====================================================================
+def apply_paper_table_styling(df):
+    """Styles paper trading tables with clear red/green indicators for buy/sell actions and tickers."""
+    styles = pd.DataFrame("", index=df.index, columns=df.columns)
+    if "Trade_Action" in df.columns:
+        styles["Trade_Action"] = df["Trade_Action"].apply(
+            lambda v: "background-color: #dcfce7; color: #166534; font-weight: bold; border-left: 3px solid #22c55e;" if "BUY" in str(v).upper() else ("background-color: #fee2e2; color: #991b1b; font-weight: bold; border-left: 3px solid #ef4444;" if any(k in str(v).upper() for k in ["SELL", "EXIT"]) else "")
+        )
+    if "Buy Ticker" in df.columns:
+        styles["Buy Ticker"] = df["Buy Ticker"].apply(
+            lambda v: "background-color: #f0fdf4; color: #166534; font-weight: bold;" if str(v).strip() not in ["—", "", "nan"] else "color: #94a3b8;"
+        )
+    if "Sell Ticker" in df.columns:
+        styles["Sell Ticker"] = df["Sell Ticker"].apply(
+            lambda v: "background-color: #fef2f2; color: #991b1b; font-weight: bold;" if str(v).strip() not in ["—", "", "nan"] else "color: #94a3b8;"
+        )
+    if "🟢 Buy Tickers" in df.columns:
+        styles["🟢 Buy Tickers"] = df["🟢 Buy Tickers"].apply(
+            lambda v: "color: #166534; font-weight: bold;" if str(v).strip() not in ["—", "", "nan"] else "color: #94a3b8;"
+        )
+    if "🔴 Sell Tickers" in df.columns:
+        styles["🔴 Sell Tickers"] = df["🔴 Sell Tickers"].apply(
+            lambda v: "color: #991b1b; font-weight: bold;" if str(v).strip() not in ["—", "", "nan"] else "color: #94a3b8;"
+        )
+    return styles
+
 def apply_advanced_table_styling(df):
     styles = pd.DataFrame("", index=df.index, columns=df.columns)
     n_len = len(df)
@@ -702,7 +889,7 @@ if active_tab == "🎯 High-Conviction Master Hub":
     # CATEGORY 1: BROAD EQUITY & SMART BETA ETFs
     # =================================================================
     st.markdown("#### 🛡️ Category 1: Broad Equity & Smart Beta ETFs")
-    st.caption(f"Top liquid Non-Sectoral ETFs evaluated under **{preset_key}** preset. Showing Top 2 Accumulation & Top Exit candidates.")
+    st.caption("Top liquid Non-Sectoral ETFs evaluated across all Strategy Presets: Default (Core), Swing / Positional, Long-Term Secular, Intraday Momentum, and AI Confluence.")
 
     # Category 1 Breadth Pulse & Volume Stats
     c1_buy_cnt = int(filtered_etfs_df["Action Signal"].str.contains("BUY|ACCUMULATE", na=False).sum()) if not filtered_etfs_df.empty else 0
@@ -724,105 +911,29 @@ if active_tab == "🎯 High-Conviction Master Hub":
         unsafe_allow_html=True
     )
 
-    # Retrieve candidates matching active preset
-    if preset_key == "AI / RAG":
-        top_etf_b, top_etf_s = get_ai_rag_conviction_candidates(filtered_etfs_df, is_stock_mode=False, limit=2)
-    else:
-        top_etf_b, top_etf_s = get_top_conviction_candidates(filtered_etfs_df, preset_name=preset_key, is_stock_mode=False, limit=2)
+    # 4-Preset Quick-Look Tile Grid (At a Glance)
+    st.markdown("##### ⚡ Multi-Preset Strategic Picks at a Glance:")
+    render_preset_overview_grid(filtered_etfs_df, is_stock_mode=False)
 
-    # Top Buy Recommendations
-    if not top_etf_b.empty:
-        c1_col1, c1_col2 = st.columns(2)
-        for idx_e, (_, etf_r) in enumerate(top_etf_b.iterrows()):
-            col_tgt = c1_col1 if idx_e == 0 else c1_col2
-            with col_tgt:
-                e_sym = str(etf_r["Ticker"]).replace(".NS", "")
-                e_cmp = float(etf_r["CMP (₹)"])
-                e_rsi = float(etf_r.get("RSI (14D)", 50.0))
-                e_sc = float(etf_r.get("Composite Score", etf_r.get("Composite Buy Score", 50.0)))
-                e_sl = float(etf_r.get("Stop_Loss", round(e_cmp * 0.96, 2)))
-                e_tgt = float(etf_r.get("Target", round(e_cmp * 1.05, 2)))
-                e_sig = str(etf_r.get("Action Signal", "ACCUMULATE")).strip()
-                e_dist_dma = float(etf_r.get("Dist 200DMA %", 0.0))
-                e_dist_low = float(etf_r.get("Dist 52W Low %", 0.0))
-                e_range = float(etf_r.get("52W Range %", 50.0))
-                e_crit = etf_r.get("Criteria_Met", f"Rank #{idx_e+1} in {preset_key} Preset • RSI {e_rsi:.1f} • 200DMA {e_dist_dma:+.1f}%")
-
-                e_badge_bg = "#fee2e2" if any(k in e_sig.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "#dcfce7"
-                e_badge_col = "#991b1b" if any(k in e_sig.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "#166534"
-                e_badge_icon = "🔴" if any(k in e_sig.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "🟢"
-
-                st.markdown(
-                    f"""
-                    <div class="rec-card" style="background-color: #f0fdf4; border: 1.2px solid #22c55e;">
-                        <div style="font-size:0.72rem; color:#1e40af; font-weight:600; margin-bottom:3px;">🏷️ Evaluation Preset: {preset_key} (Accumulation Call)</div>
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span style="font-weight:700; font-size:0.90rem;">#{idx_e+1} {e_sym} ({etf_r.get('Category', 'Broad Index')})</span>
-                            <span class="rec-badge" style="background-color: {e_badge_bg}; color: {e_badge_col}; font-weight:700; border: 1px solid {e_badge_col}33;">{e_badge_icon} {e_sig} (Rank #{idx_e+1})</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; font-size: 0.76rem; color:#475569; margin-top:4px;">
-                            <span>CMP: <b>₹{e_cmp:.2f}</b></span>
-                            <span>RSI: <b>{e_rsi:.1f}</b></span>
-                            <span>Preset Score: <b>#{e_sc:.1f}</b></span>
-                            <span>Dist 200DMA: <b>{e_dist_dma:+.1f}%</b></span>
-                        </div>
-                        <div class="criteria-box">
-                            <b>Criteria Met ({preset_key}):</b> {e_crit}<br>
-                            <span style="color:#15803d; font-weight:600;">Stop-Loss: ₹{e_sl:.2f} (-{abs((e_cmp-e_sl)/e_cmp*100):.1f}%) | Target: ₹{e_tgt:.2f} (+{((e_tgt-e_cmp)/e_cmp*100):.1f}%)</span>
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-    # Top Sell / Profit Booking Opportunity
-    if not top_etf_s.empty:
-        etf_sell_top = top_etf_s.iloc[0]
-        es_sym = str(etf_sell_top["Ticker"]).replace(".NS", "")
-        es_cmp = float(etf_sell_top["CMP (₹)"])
-        es_rsi = float(etf_sell_top.get("RSI (14D)", 50.0))
-        es_sc = float(etf_sell_top.get("Composite Score", 50.0))
-        es_sl = float(etf_sell_top.get("Stop_Loss", round(es_cmp * 1.04, 2)))
-        es_tgt = float(etf_sell_top.get("Target", round(es_cmp * 0.95, 2)))
-        es_dist_dma = float(etf_sell_top.get("Dist 200DMA %", 0.0))
-        es_crit = etf_sell_top.get("Criteria_Met", f"RSI {es_rsi:.1f} Overbought • 200DMA {es_dist_dma:+.1f}% Extension")
-
-        st.markdown(
-            f"""
-            <div class="rec-card" style="background-color: #fffbeb; border: 1.2px solid #f59e0b; margin-top: -4px;">
-                <div style="font-size:0.72rem; color:#991b1b; font-weight:600; margin-bottom:3px;">🏷️ Exit Strategy: {preset_key} Overbought Profit Booking</div>
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="font-weight:700; font-size:0.85rem; color:#92400e;">💡 Top Sell / Profit Booking Opportunity: {es_sym} ({etf_sell_top.get('Category', 'ETF')})</span>
-                    <span class="rec-badge" style="background-color: #fee2e2; color: #991b1b;">🔴 PROFIT BOOKING / EXIT</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; font-size: 0.74rem; color:#475569; margin-top:3px;">
-                    <span>CMP: ₹{es_cmp:.2f}</span>
-                    <span>RSI: {es_rsi:.1f}</span>
-                    <span>Exit Urgency Score: #{es_sc:.1f}/100</span>
-                    <span>Dist 200DMA: {es_dist_dma:+.1f}%</span>
-                </div>
-                <div class="criteria-box-sell">
-                    <b>Exit Rationale:</b> {es_crit} | <span style="font-weight:600; color:#b91c1c;">Target Exit: ₹{es_tgt:.2f} | Trailing Stop: ₹{es_sl:.2f}</span>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    else:
-        st.markdown(
-            f"""
-            <div class="rec-card" style="background-color: #f0fdf4; border: 1.2px dashed #86efac; margin-top: -4px;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="font-weight:600; font-size:0.85rem; color:#166534;">🟢 Macro Accumulation Phase: 0 Overbought Sell Triggers in Broad ETFs</span>
-                    <span class="rec-badge" style="background-color: #dcfce7; color: #166534;">ACCUMULATE ONLY</span>
-                </div>
-                <div style="font-size: 0.74rem; color:#475569; margin-top:3px;">
-                    No broad ETF has reached RSI ≥ 58 or extended > 8% above 200DMA. The universe is in healthy accumulation without profit-taking pressure.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+    # Detailed Preset Conviction Tiles
+    st.markdown("##### 🎯 Conviction Tiles by Strategy Preset:")
+    c1_tab_def, c1_tab_swing, c1_tab_lt, c1_tab_intra, c1_tab_ai = st.tabs([
+        "🎯 Default (Core Balanced)",
+        "🌊 Swing / Positional",
+        "🏛️ Long-Term Secular",
+        "⚡ Intraday Momentum",
+        "🤖 AI / RAG Confluence"
+    ])
+    with c1_tab_def:
+        render_preset_conviction_tiles(filtered_etfs_df, "Default", is_stock_mode=False)
+    with c1_tab_swing:
+        render_preset_conviction_tiles(filtered_etfs_df, "Swing / Positional", is_stock_mode=False)
+    with c1_tab_lt:
+        render_preset_conviction_tiles(filtered_etfs_df, "Long-Term", is_stock_mode=False)
+    with c1_tab_intra:
+        render_preset_conviction_tiles(filtered_etfs_df, "Intraday", is_stock_mode=False)
+    with c1_tab_ai:
+        render_preset_conviction_tiles(filtered_etfs_df, "AI / RAG", is_stock_mode=False)
 
     # Category 1 Screener Expander (Sorted by Active Preset Score for 100% 1-to-1 Table/Tile Consistency)
     with st.expander("🔍 See More: Broad ETF Universe Screener & Factor Rankings (Click to expand)", expanded=False):
@@ -883,7 +994,7 @@ if active_tab == "🎯 High-Conviction Master Hub":
     # CATEGORY 2: HIGH-CONVICTION QUALITY STOCKS (NIFTY CORE & 250)
     # =================================================================
     st.markdown("#### 💼 Category 2: High-Conviction Quality Equities (NIFTY Core & 250)")
-    st.caption(f"Top fundamentally sound Indian equities evaluated under **{preset_key}** preset. Showing Top 2 Accumulation & Top Exit candidates.")
+    st.caption("Top fundamentally sound Indian equities evaluated across all Strategy Presets: Default (Core), Swing / Positional, Long-Term Secular, Intraday Momentum, and AI Confluence.")
 
     # Category 2 Breadth Pulse & Volume Stats
     c2_buy_cnt = int(filtered_stocks_df["Action Signal"].str.contains("BUY|ACCUMULATE", na=False).sum()) if not filtered_stocks_df.empty else 0
@@ -905,103 +1016,29 @@ if active_tab == "🎯 High-Conviction Master Hub":
         unsafe_allow_html=True
     )
 
-    if preset_key == "AI / RAG":
-        top_stk_b, top_stk_s = get_ai_rag_conviction_candidates(filtered_stocks_df, is_stock_mode=True, limit=2)
-    else:
-        top_stk_b, top_stk_s = get_top_conviction_candidates(filtered_stocks_df, preset_name=preset_key, is_stock_mode=True, limit=2)
+    # 4-Preset Quick-Look Tile Grid (At a Glance)
+    st.markdown("##### ⚡ Multi-Preset Strategic Picks at a Glance:")
+    render_preset_overview_grid(filtered_stocks_df, is_stock_mode=True)
 
-    # Top Buy Recommendations
-    if not top_stk_b.empty:
-        c2_col1, c2_col2 = st.columns(2)
-        for idx_s, (_, stk_r) in enumerate(top_stk_b.iterrows()):
-            col_tgt2 = c2_col1 if idx_s == 0 else c2_col2
-            with col_tgt2:
-                s_sym = str(stk_r["Ticker"]).replace(".NS", "")
-                s_cmp = float(stk_r["CMP (₹)"])
-                s_rsi = float(stk_r.get("RSI (14D)", 50.0))
-                s_sc = float(stk_r.get("Composite Score", stk_r.get("Composite Buy Score", 50.0)))
-                s_sl = float(stk_r.get("Stop_Loss", round(s_cmp * 0.95, 2)))
-                s_tgt = float(stk_r.get("Target", round(s_cmp * 1.07, 2)))
-                s_sig = str(stk_r.get("Action Signal", "BUY")).strip()
-                s_dist_dma = float(stk_r.get("Dist 200DMA %", 0.0))
-                s_dist_low = float(stk_r.get("Dist 52W Low %", 0.0))
-                s_crit = stk_r.get("Criteria_Met", f"Rank #{idx_s+1} in {preset_key} Preset • RSI {s_rsi:.1f} • 200DMA {s_dist_dma:+.1f}%")
-
-                s_badge_bg = "#fee2e2" if any(k in s_sig.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "#dcfce7"
-                s_badge_col = "#991b1b" if any(k in s_sig.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "#166534"
-                s_badge_icon = "🔴" if any(k in s_sig.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "🟢"
-
-                st.markdown(
-                    f"""
-                    <div class="rec-card" style="background-color: #f0fdf4; border: 1.2px solid #22c55e;">
-                        <div style="font-size:0.72rem; color:#1e40af; font-weight:600; margin-bottom:3px;">🏷️ Evaluation Preset: {preset_key} (Accumulation Call)</div>
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span style="font-weight:700; font-size:0.90rem;">#{idx_s+1} {s_sym} ({stk_r.get('Category', 'Equity')})</span>
-                            <span class="rec-badge" style="background-color: {s_badge_bg}; color: {s_badge_col}; font-weight:700; border: 1px solid {s_badge_col}33;">{s_badge_icon} {s_sig} (Rank #{idx_s+1})</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; font-size: 0.76rem; color:#475569; margin-top:4px;">
-                            <span>CMP: <b>₹{s_cmp:.2f}</b></span>
-                            <span>RSI: <b>{s_rsi:.1f}</b></span>
-                            <span>Preset Score: <b>#{s_sc:.1f}</b></span>
-                            <span>Dist 200DMA: <b>{s_dist_dma:+.1f}%</b></span>
-                        </div>
-                        <div class="criteria-box">
-                            <b>Criteria Met ({preset_key}):</b> {s_crit}<br>
-                            <span style="color:#15803d; font-weight:600;">Stop-Loss: ₹{s_sl:.2f} (-{abs((s_cmp-s_sl)/s_cmp*100):.1f}%) | Target: ₹{s_tgt:.2f} (+{((s_tgt-s_cmp)/s_cmp*100):.1f}%)</span>
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-    # Top Sell / Profit Booking Opportunity
-    if not top_stk_s.empty:
-        stk_sell_top = top_stk_s.iloc[0]
-        ss_sym = str(stk_sell_top["Ticker"]).replace(".NS", "")
-        ss_cmp = float(stk_sell_top["CMP (₹)"])
-        ss_rsi = float(stk_sell_top.get("RSI (14D)", 50.0))
-        ss_sc = float(stk_sell_top.get("Composite Score", 50.0))
-        ss_sl = float(stk_sell_top.get("Stop_Loss", round(ss_cmp * 1.05, 2)))
-        ss_tgt = float(stk_sell_top.get("Target", round(ss_cmp * 0.94, 2)))
-        ss_dist_dma = float(stk_sell_top.get("Dist 200DMA %", 0.0))
-        ss_crit = stk_sell_top.get("Criteria_Met", f"RSI {ss_rsi:.1f} Overbought • 200DMA {ss_dist_dma:+.1f}% Extension")
-
-        st.markdown(
-            f"""
-            <div class="rec-card" style="background-color: #fffbeb; border: 1.2px solid #f59e0b; margin-top: -4px;">
-                <div style="font-size:0.72rem; color:#991b1b; font-weight:600; margin-bottom:3px;">🏷️ Exit Strategy: {preset_key} Overbought Profit Booking</div>
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="font-weight:700; font-size:0.85rem; color:#92400e;">💡 Top Sell / Profit Booking Opportunity: {ss_sym} ({stk_sell_top.get('Category', 'Equity')})</span>
-                    <span class="rec-badge" style="background-color: #fee2e2; color: #991b1b;">🔴 PROFIT BOOKING / EXIT</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; font-size: 0.74rem; color:#475569; margin-top:3px;">
-                    <span>CMP: ₹{ss_cmp:.2f}</span>
-                    <span>RSI: {ss_rsi:.1f}</span>
-                    <span>Exit Urgency Score: #{ss_sc:.1f}/100</span>
-                    <span>Dist 200DMA: {ss_dist_dma:+.1f}%</span>
-                </div>
-                <div class="criteria-box-sell">
-                    <b>Exit Rationale:</b> {ss_crit} | <span style="font-weight:600; color:#b91c1c;">Target Exit: ₹{ss_tgt:.2f} | Trailing Stop: ₹{ss_sl:.2f}</span>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    else:
-        st.markdown(
-            f"""
-            <div class="rec-card" style="background-color: #f0fdf4; border: 1.2px dashed #86efac; margin-top: -4px;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="font-weight:600; font-size:0.85rem; color:#166534;">🟢 Equities Accumulation Phase: 0 Overbought Sell Triggers in Stocks</span>
-                    <span class="rec-badge" style="background-color: #dcfce7; color: #166534;">ACCUMULATE ONLY</span>
-                </div>
-                <div style="font-size: 0.74rem; color:#475569; margin-top:3px;">
-                    No quality stock in the selected universe has breached RSI ≥ 58 or extended > 8% above 200DMA. Equities are well-positioned for accumulation.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+    # Detailed Preset Conviction Tiles
+    st.markdown("##### 🎯 Conviction Tiles by Strategy Preset:")
+    c2_tab_def, c2_tab_swing, c2_tab_lt, c2_tab_intra, c2_tab_ai = st.tabs([
+        "🎯 Default (Core Balanced)",
+        "🌊 Swing / Positional",
+        "🏛️ Long-Term Secular",
+        "⚡ Intraday Momentum",
+        "🤖 AI / RAG Confluence"
+    ])
+    with c2_tab_def:
+        render_preset_conviction_tiles(filtered_stocks_df, "Default", is_stock_mode=True)
+    with c2_tab_swing:
+        render_preset_conviction_tiles(filtered_stocks_df, "Swing / Positional", is_stock_mode=True)
+    with c2_tab_lt:
+        render_preset_conviction_tiles(filtered_stocks_df, "Long-Term", is_stock_mode=True)
+    with c2_tab_intra:
+        render_preset_conviction_tiles(filtered_stocks_df, "Intraday", is_stock_mode=True)
+    with c2_tab_ai:
+        render_preset_conviction_tiles(filtered_stocks_df, "AI / RAG", is_stock_mode=True)
 
     # Category 2 Screener Expander (Sorted by Active Preset Score for 100% 1-to-1 Table/Tile Consistency)
     with st.expander("🔍 See More: Quality Stocks Screener & Multi-Factor Rankings (Click to expand)", expanded=False):
@@ -1529,6 +1566,7 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
                             created_trades.append({
                                 "Trade_ID": f"V2_ETF_{int(datetime.datetime.now(IST).timestamp())}_{sym}_{p_name[:3].upper()}",
                                 "Username": "Public_User", "Ticker": sym,
+                                "Trade_Action": "🟢 BUY", "Buy Ticker": sym, "Sell Ticker": "—",
                                 "Category": "Broad Equity ETF", "Asset_Class": "ETF",
                                 "Trigger_Type": f"{p_name.upper()}_ETF_BUY",
                                 "Trigger_Indicator": f"{p_name} Preset Buy (RSI: {r.get('RSI (14D)', 50):.1f}, 200DMA: {r.get('Dist 200DMA %', 0):+.1f}%)",
@@ -1560,6 +1598,8 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
                                 pnl_val = round((cmp_v - entry_p) * eqty, 2)
                                 pnl_pct_val = f"{((cmp_v - entry_p) / entry_p * 100):+.2f}%" if entry_p > 0 else "0.0%"
                                 all_t.at[row_idx, "Status"] = "CLOSED_PROFIT" if pnl_val >= 0 else "CLOSED_STOPLOSS"
+                                all_t.at[row_idx, "Trade_Action"] = "🔴 SELL"
+                                all_t.at[row_idx, "Sell Ticker"] = sym
                                 all_t.at[row_idx, "Exit_Price"] = cmp_v
                                 all_t.at[row_idx, "Exit_Timestamp"] = now_str
                                 all_t.at[row_idx, "Exit_Reason"] = f"Overbought Exit Trigger ({p_name} RSI {r.get('RSI (14D)', 50):.1f})"
@@ -1572,6 +1612,7 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
                                 created_trades.append({
                                     "Trade_ID": f"V2_ETF_EXIT_{int(datetime.datetime.now(IST).timestamp())}_{sym}_{p_name[:3].upper()}",
                                     "Username": "Public_User", "Ticker": sym,
+                                    "Trade_Action": "🔴 SELL", "Buy Ticker": "—", "Sell Ticker": sym,
                                     "Category": "Broad Equity ETF", "Asset_Class": "ETF",
                                     "Trigger_Type": f"{p_name.upper()}_ETF_SELL",
                                     "Trigger_Indicator": f"{p_name} Exit Alert (RSI: {r.get('RSI (14D)', 50):.1f}, Urgency: {r.get('Composite Score', 50):.1f})",
@@ -1609,6 +1650,7 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
                             created_trades.append({
                                 "Trade_ID": f"V2_STK_{int(datetime.datetime.now(IST).timestamp())}_{sym}_{p_name[:3].upper()}",
                                 "Username": "Public_User", "Ticker": sym,
+                                "Trade_Action": "🟢 BUY", "Buy Ticker": sym, "Sell Ticker": "—",
                                 "Category": "Quality Stock", "Asset_Class": "Stock",
                                 "Trigger_Type": f"{p_name.upper()}_STOCK_BUY",
                                 "Trigger_Indicator": f"{p_name} Preset Buy (RSI: {r.get('RSI (14D)', 50):.1f}, 200DMA: {r.get('Dist 200DMA %', 0):+.1f}%)",
@@ -1640,6 +1682,8 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
                                 pnl_val = round((cmp_v - entry_p) * eqty, 2)
                                 pnl_pct_val = f"{((cmp_v - entry_p) / entry_p * 100):+.2f}%" if entry_p > 0 else "0.0%"
                                 all_t.at[row_idx, "Status"] = "CLOSED_PROFIT" if pnl_val >= 0 else "CLOSED_STOPLOSS"
+                                all_t.at[row_idx, "Trade_Action"] = "🔴 SELL"
+                                all_t.at[row_idx, "Sell Ticker"] = sym
                                 all_t.at[row_idx, "Exit_Price"] = cmp_v
                                 all_t.at[row_idx, "Exit_Timestamp"] = now_str
                                 all_t.at[row_idx, "Exit_Reason"] = f"Overbought Exit Trigger ({p_name} RSI {r.get('RSI (14D)', 50):.1f})"
@@ -1652,6 +1696,7 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
                                 created_trades.append({
                                     "Trade_ID": f"V2_STK_EXIT_{int(datetime.datetime.now(IST).timestamp())}_{sym}_{p_name[:3].upper()}",
                                     "Username": "Public_User", "Ticker": sym,
+                                    "Trade_Action": "🔴 SELL", "Buy Ticker": "—", "Sell Ticker": sym,
                                     "Category": "Quality Stock", "Asset_Class": "Stock",
                                     "Trigger_Type": f"{p_name.upper()}_STOCK_SELL",
                                     "Trigger_Indicator": f"{p_name} Exit Alert (RSI: {r.get('RSI (14D)', 50):.1f}, Urgency: {r.get('Composite Score', 50):.1f})",
@@ -1687,6 +1732,7 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
                         dist_s1 = ((cmp_v - s1_v) / s1_v * 100) if s1_v > 0 else 0.0
                         created_trades.append({
                             "Trade_ID": f"V2_SR_{int(datetime.datetime.now(IST).timestamp())}_{sym}", "Username": "Public_User", "Ticker": sym,
+                            "Trade_Action": "🟢 BUY", "Buy Ticker": sym, "Sell Ticker": "—",
                             "Category": "S/R Mean Reversion", "Asset_Class": sr_it.get("Category", "Stock"), "Trigger_Type": "SR_SUPPORT_BUY",
                             "Trigger_Indicator": f"S1 Support Bounce ({sr_it.get('5Y S/R Win Rate (%)', 50)}% 5Y Win)",
                             "Strategy_Preset": "S/R Range Mean Reversion", "Status": "ACTIVE",
@@ -1719,6 +1765,8 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
                             pnl_val = round((cmp_v - entry_p) * eqty, 2)
                             pnl_pct_val = f"{((cmp_v - entry_p) / entry_p * 100):+.2f}%" if entry_p > 0 else "0.0%"
                             all_t.at[row_idx, "Status"] = "CLOSED_PROFIT" if pnl_val >= 0 else "CLOSED_STOPLOSS"
+                            all_t.at[row_idx, "Trade_Action"] = "🔴 SELL"
+                            all_t.at[row_idx, "Sell Ticker"] = sym
                             all_t.at[row_idx, "Exit_Price"] = cmp_v
                             all_t.at[row_idx, "Exit_Timestamp"] = now_str
                             all_t.at[row_idx, "Exit_Reason"] = f"S/R Resistance Exit (Range Position {srx.get('Range Position (%)', 85):.1f}%)"
@@ -1742,6 +1790,7 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
                             created_trades.append({
                                 "Trade_ID": f"V2_REIT_{int(datetime.datetime.now(IST).timestamp())}_{sym}",
                                 "Username": "Public_User", "Ticker": sym,
+                                "Trade_Action": "🟢 BUY", "Buy Ticker": sym, "Sell Ticker": "—",
                                 "Category": "REIT/InvIT", "Asset_Class": "Real Estate / Infra",
                                 "Trigger_Type": "HIGH_YIELD_REIT_BUY",
                                 "Trigger_Indicator": f"Lucrative Yield {r_row['Distribution Yield (%)']:.1f}% (NAV Disc: {r_row['NAV Discount / Premium (%)']:+.1f}%)",
@@ -1781,6 +1830,7 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
                                 created_trades.append({
                                     "Trade_ID": f"V2_MET_{int(datetime.datetime.now(IST).timestamp())}_{sym}",
                                     "Username": "Public_User", "Ticker": sym,
+                                    "Trade_Action": "🟢 BUY", "Buy Ticker": sym, "Sell Ticker": "—",
                                     "Category": "Precious Metal", "Asset_Class": "Commodity",
                                     "Trigger_Type": "METALS_VALUE_DIP_BUY",
                                     "Trigger_Indicator": f"Lucrative Dip (AMC: {best_m.get('AMC')}, RSI: {best_m.get('RSI (14D)', 50):.1f})",
@@ -1828,6 +1878,32 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
     if not trades_df.empty and "Status" in trades_df.columns:
         trades_df = evaluate_trade_exits(trades_df, active_raw_data)
 
+        # Ensure Trade_Action, Buy Ticker, and Sell Ticker provenance are present
+        if "Trade_Action" not in trades_df.columns:
+            trades_df["Trade_Action"] = trades_df.apply(
+                lambda r: "🔴 SELL" if any(k in str(r.get("Trigger_Type", "")).upper() + str(r.get("Trigger_Indicator", "")).upper() + str(r.get("Exit_Reason", "")).upper() for k in ["SELL", "EXIT"]) else "🟢 BUY",
+                axis=1
+            )
+        else:
+            trades_df["Trade_Action"] = trades_df["Trade_Action"].fillna("").apply(
+                lambda v: "🔴 SELL" if any(k in str(v).upper() for k in ["SELL", "EXIT"]) else "🟢 BUY"
+            )
+        if "Buy Ticker" not in trades_df.columns:
+            trades_df["Buy Ticker"] = trades_df.apply(
+                lambda r: str(r.get("Ticker", "—")).replace(".NS", "") if "BUY" in str(r.get("Trade_Action", "")).upper() else "—",
+                axis=1
+            )
+        else:
+            trades_df["Buy Ticker"] = trades_df["Buy Ticker"].fillna("—")
+
+        if "Sell Ticker" not in trades_df.columns:
+            trades_df["Sell Ticker"] = trades_df.apply(
+                lambda r: str(r.get("Ticker", "—")).replace(".NS", "") if "SELL" in str(r.get("Trade_Action", "")).upper() else "—",
+                axis=1
+            )
+        else:
+            trades_df["Sell Ticker"] = trades_df["Sell Ticker"].fillna("—")
+
         # Category Filter Dropdown
         cat_options = ["All Categories"] + sorted(list(trades_df["Category"].dropna().unique())) if "Category" in trades_df.columns else ["All Categories"]
         sel_cat = st.selectbox("🎯 Filter Ledger by Asset Category:", cat_options, key="ledger_cat_filter")
@@ -1862,9 +1938,15 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
                 c_wins = (pd.to_numeric(c_closed["PnL_Rs"], errors="coerce") > 0).sum() if not c_closed.empty else 0
                 c_tot_c = len(c_closed)
                 c_wrate = (c_wins / c_tot_c * 100.0) if c_tot_c > 0 else 0.0
+
+                b_tickers = sorted(list(set([str(t) for t in grp["Buy Ticker"] if str(t).strip() not in ["—", "", "nan"]])))
+                s_tickers = sorted(list(set([str(t) for t in grp["Sell Ticker"] if str(t).strip() not in ["—", "", "nan"]])))
+
                 cat_kpi_rows.append({
                     "Category": c_name,
                     "Total Trades": len(grp),
+                    "🟢 Buy Tickers": ", ".join(b_tickers) if b_tickers else "—",
+                    "🔴 Sell Tickers": ", ".join(s_tickers) if s_tickers else "—",
                     "Active Trades": len(grp[grp["Status"] == "ACTIVE"]),
                     "Closed Trades": c_tot_c,
                     "Win Rate %": f"{c_wrate:.1f}%" if c_tot_c > 0 else "Pending",
@@ -1872,8 +1954,9 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
                     "Unrealized PnL (₹)": c_unreal
                 })
             if cat_kpi_rows:
+                cat_kpi_df = pd.DataFrame(cat_kpi_rows)
                 st.dataframe(
-                    pd.DataFrame(cat_kpi_rows).style.format({
+                    cat_kpi_df.style.apply(apply_paper_table_styling, axis=None).format({
                         "Realized PnL (₹)": "₹{:+,.2f}",
                         "Unrealized PnL (₹)": "₹{:+,.2f}"
                     }),
@@ -1881,11 +1964,63 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
                     hide_index=True
                 )
 
+        # Strategy Preset Performance Breakdown Matrix
+        if not trades_df.empty and "Strategy_Preset" in trades_df.columns:
+            st.markdown("##### 🎯 Strategy Preset Performance Breakdown")
+            preset_kpi_rows = []
+            for p_name, grp in trades_df.groupby("Strategy_Preset"):
+                p_closed = grp[grp["Status"] != "ACTIVE"]
+                p_pnl = pd.to_numeric(p_closed["PnL_Rs"], errors="coerce").sum() if not p_closed.empty else 0.0
+                p_unreal = pd.to_numeric(grp[grp["Status"] == "ACTIVE"]["PnL_Rs"], errors="coerce").sum() if not grp.empty else 0.0
+                p_wins = (pd.to_numeric(p_closed["PnL_Rs"], errors="coerce") > 0).sum() if not p_closed.empty else 0
+                p_tot_c = len(p_closed)
+                p_wrate = (p_wins / p_tot_c * 100.0) if p_tot_c > 0 else 0.0
+
+                p_b_tickers = sorted(list(set([str(t) for t in grp["Buy Ticker"] if str(t).strip() not in ["—", "", "nan"]])))
+                p_s_tickers = sorted(list(set([str(t) for t in grp["Sell Ticker"] if str(t).strip() not in ["—", "", "nan"]])))
+
+                preset_kpi_rows.append({
+                    "Strategy Preset": p_name,
+                    "Total Trades": len(grp),
+                    "🟢 Buy Tickers": ", ".join(p_b_tickers) if p_b_tickers else "—",
+                    "🔴 Sell Tickers": ", ".join(p_s_tickers) if p_s_tickers else "—",
+                    "Active": len(grp[grp["Status"] == "ACTIVE"]),
+                    "Closed": p_tot_c,
+                    "Win Rate %": f"{p_wrate:.1f}%" if p_tot_c > 0 else "Pending",
+                    "Realized PnL (₹)": p_pnl,
+                    "Unrealized PnL (₹)": p_unreal
+                })
+            if preset_kpi_rows:
+                preset_kpi_df = pd.DataFrame(preset_kpi_rows)
+                st.dataframe(
+                    preset_kpi_df.style.apply(apply_paper_table_styling, axis=None).format({
+                        "Realized PnL (₹)": "₹{:+,.2f}",
+                        "Unrealized PnL (₹)": "₹{:+,.2f}"
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+        # Trade Direction Filter
+        filter_action = st.radio(
+            "🔎 Filter Positions by Trade Direction:",
+            ["All Positions (Mixed)", "🟢 BUY Positions Only", "🔴 SELL / Exit Positions Only"],
+            horizontal=True,
+            key="ledger_action_filter"
+        )
+        if filter_action == "🟢 BUY Positions Only":
+            open_trades = open_trades[open_trades["Trade_Action"].str.contains("BUY", na=False)]
+            closed_trades = closed_trades[closed_trades["Trade_Action"].str.contains("BUY", na=False)]
+        elif filter_action == "🔴 SELL / Exit Positions Only":
+            open_trades = open_trades[open_trades["Trade_Action"].str.contains("SELL|EXIT", na=False)]
+            closed_trades = closed_trades[closed_trades["Trade_Action"].str.contains("SELL|EXIT", na=False)]
+
         # Active Positions Table with Enriched Parameter Provenance
         st.markdown("##### 📋 Open Active Positions (Live MTM & Indicator Provenance)")
         if not open_trades.empty:
             open_display_cols = [
-                "Trade_ID", "Ticker", "Category", "Trigger_Indicator", "Near_Support_Status",
+                "Trade_Action", "Buy Ticker", "Sell Ticker", "Trade_ID", "Category", "Strategy_Preset",
+                "Trigger_Indicator", "Near_Support_Status",
                 "Technical_Score_At_Entry", "Fundamental_Score_At_Entry", "RSI_At_Entry",
                 "Entry_Price", "Live_CMP", "Executed_Qty", "Stop_Loss", "Target",
                 "PnL_Rs", "PnL_Pct", "Hold_Duration_Days", "Execution_Timestamp"
@@ -1893,7 +2028,7 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
             valid_open_cols = [c for c in open_display_cols if c in open_trades.columns]
             render_top_scrollbar_sync()
             st.dataframe(
-                open_trades[valid_open_cols].style.format({
+                open_trades[valid_open_cols].style.apply(apply_paper_table_styling, axis=None).format({
                     "Entry_Price": "₹{:.2f}",
                     "Live_CMP": "₹{:.2f}",
                     "Stop_Loss": "₹{:.2f}",
@@ -1910,7 +2045,7 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
             st.markdown("###### 🚪 Immediate Position Square-Off Control:")
             sq_c1, sq_c2 = st.columns([3, 1])
             with sq_c1:
-                active_trade_opts = [f"{r['Trade_ID']} - {r['Ticker']} (CMP: ₹{r['Live_CMP']:.2f}, PnL: ₹{r['PnL_Rs']:+.2f})" for _, r in open_trades.iterrows()]
+                active_trade_opts = [f"{r['Trade_ID']} - {r['Ticker']} ({r.get('Trade_Action', 'BUY')} | CMP: ₹{r['Live_CMP']:.2f}, PnL: ₹{r['PnL_Rs']:+.2f})" for _, r in open_trades.iterrows()]
                 sel_sq_trade = st.selectbox("Select Active Position to Exit:", active_trade_opts, key="sq_trade_select")
             with sq_c2:
                 st.write("")
@@ -1925,6 +2060,8 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
                             pnl_val = round((cur_cmp - ent_p) * qty_p, 2)
                             pnl_pct_val = round(((cur_cmp - ent_p) / ent_p * 100), 2) if ent_p > 0 else 0.0
                             all_raw_t.at[idx_t, "Status"] = "MANUAL_EXITED"
+                            all_raw_t.at[idx_t, "Trade_Action"] = "🔴 SELL"
+                            all_raw_t.at[idx_t, "Sell Ticker"] = str(row_t.get("Ticker", "")).replace(".NS", "")
                             all_raw_t.at[idx_t, "Exit_Price"] = cur_cmp
                             all_raw_t.at[idx_t, "Exit_Timestamp"] = datetime.datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
                             all_raw_t.at[idx_t, "Exit_Reason"] = "User Manual Squareoff"
@@ -1936,13 +2073,14 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
                     st.session_state.strategy_toast = f"Closed position {sel_tid} successfully."
                     st.rerun()
         else:
-            st.info("No active open positions for the selected category.")
+            st.info("No active open positions for the selected filter.")
 
         # Closed Positions History Journal
         st.markdown("##### 📜 Closed Positions & Historical Exit Journal")
         if not closed_trades.empty:
             closed_display_cols = [
-                "Trade_ID", "Ticker", "Category", "Trigger_Indicator", "Near_Support_Status",
+                "Trade_Action", "Buy Ticker", "Sell Ticker", "Trade_ID", "Category", "Strategy_Preset",
+                "Trigger_Indicator", "Near_Support_Status",
                 "Technical_Score_At_Entry", "Fundamental_Score_At_Entry",
                 "Entry_Price", "Exit_Price", "Executed_Qty", "Hold_Duration_Days",
                 "PnL_Rs", "PnL_Pct", "Exit_Reason", "Execution_Timestamp", "Exit_Timestamp"
@@ -1950,7 +2088,7 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
             valid_closed_cols = [c for c in closed_display_cols if c in closed_trades.columns]
             render_top_scrollbar_sync()
             st.dataframe(
-                closed_trades[valid_closed_cols].style.format({
+                closed_trades[valid_closed_cols].style.apply(apply_paper_table_styling, axis=None).format({
                     "Entry_Price": "₹{:.2f}",
                     "Exit_Price": "₹{:.2f}",
                     "PnL_Rs": "₹{:+.2f}",
@@ -1960,6 +2098,8 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
                 use_container_width=True,
                 height=220
             )
+        else:
+            st.info("No closed positions for the selected filter.")
     else:
         st.info("No paper trades found. Use the Centralized Execution Console above to generate paper trades.")
 
@@ -1968,7 +2108,15 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
     st.markdown("##### 📋 Execution Audit Trail")
     aud_df = load_audit_log()
     if not aud_df.empty:
-        st.dataframe(aud_df.sort_values(by="Timestamp_IST", ascending=False), use_container_width=True, height=180)
+        aud_display = aud_df.rename(columns={
+            "Recommended_BUY": "🟢 Buy Tickers",
+            "Recommended_SELL": "🔴 Sell Tickers"
+        })
+        st.dataframe(
+            aud_display.sort_values(by="Timestamp_IST", ascending=False).style.apply(apply_paper_table_styling, axis=None),
+            use_container_width=True,
+            height=180
+        )
 
 
 # =====================================================================

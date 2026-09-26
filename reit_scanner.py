@@ -307,6 +307,7 @@ def calculate_reit_scores(rec: dict) -> dict:
         "Fundamental Score (0-100)": fundamental_score,
         "Technical Score (0-100)": technical_score,
         "Composite Score (0-100)": composite_score,
+        "Confidence Score (%)": composite_score,
         "Action Signal": action,
         "Badge Color": badge_color
     }

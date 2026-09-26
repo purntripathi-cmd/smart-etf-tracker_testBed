@@ -361,6 +361,35 @@ def execute_category_paper_trade(
     return True, f"Executed {qty} units of {clean_sym} ({category}) at ₹{cmp_val:.2f} into Paper Ledger."
 
 # =====================================================================
+# MULTI-AMC PRECIOUS METALS BUILDER (AVAILABLE ACROSS ALL TABS)
+# =====================================================================
+def build_all_precious_metals_df(etfs_df):
+    all_metals_rows = []
+    for m_cfg in ALL_PRECIOUS_METALS_CONFIG:
+        sym_clean = m_cfg["ticker"].replace(".NS", "")
+        m_row = etfs_df[etfs_df["Ticker"].str.contains(sym_clean, case=False, na=False)] if (etfs_df is not None and not etfs_df.empty and "Ticker" in etfs_df.columns) else pd.DataFrame()
+        if not m_row.empty:
+            m_dict = m_row.iloc[0].to_dict()
+        else:
+            m_dict = {
+                "Ticker": sym_clean, "CMP (₹)": 65.0, "RSI (14D)": 52.0, "Dist 200DMA %": 3.5,
+                "Dist 52W Low %": 12.0, "52W Range %": 55.0, "Volume Surge Ratio": 1.0, "14D ATR (₹)": 0.8
+            }
+        m_dict["Ticker"] = sym_clean
+        m_dict["Name"] = m_cfg["name"]
+        m_dict["AMC"] = m_cfg["amc"]
+        m_dict["Metal Type"] = m_cfg["metal"]
+        m_dict["Expense %"] = m_cfg["expense"]
+        m_el = check_metal_investment_eligibility(m_dict)
+        m_dict["Tactical Status"] = m_el["status"]
+        m_dict["Eligibility_Reason"] = m_el.get("reason", "Macro Hedge Allocation")
+        m_dict["is_eligible"] = m_el["eligible"]
+        m_dict["Stop_Loss"] = float(m_dict.get("Stop_Loss", round(float(m_dict["CMP (₹)"]) * 0.96, 2)))
+        m_dict["Target"] = float(m_dict.get("Target", round(float(m_dict["CMP (₹)"]) * 1.06, 2)))
+        all_metals_rows.append(m_dict)
+    return pd.DataFrame(all_metals_rows)
+
+# =====================================================================
 # ADVANCED SCREENER STYLING FUNCTION
 # =====================================================================
 def apply_advanced_table_styling(df):
@@ -416,6 +445,20 @@ def apply_advanced_table_styling(df):
         styles["Falling Knife Guard"] = df["Falling Knife Guard"].apply(
             lambda v: "background-color: #d4edda; color: #155724; font-weight: bold;" if "Safe" in str(v) else ("background-color: #f8d7da; color: #721c24; font-weight: bold;" if "Wait" in str(v) else "")
         )
+
+    # Prominent Red / Green Color Coding for Action Signal (Categories 1 & 2)
+    if "Action Signal" in df.columns:
+        def style_action_signal(val):
+            v_str = str(val).upper()
+            if any(k in v_str for k in ["BUY", "ACCUMULATE", "STRONG BUY"]):
+                return "background-color: #dcfce7; color: #166534; font-weight: bold; border-left: 3px solid #22c55e;"
+            elif any(k in v_str for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID", "OVERBOUGHT"]):
+                return "background-color: #fee2e2; color: #991b1b; font-weight: bold; border-left: 3px solid #ef4444;"
+            elif any(k in v_str for k in ["HOLD", "NEUTRAL"]):
+                return "background-color: #f1f5f9; color: #475569; font-weight: 500;"
+            return ""
+        styles["Action Signal"] = df["Action Signal"].apply(style_action_signal)
+
     return styles
 
 # =====================================================================
@@ -433,6 +476,7 @@ with st.spinner("Evaluating multi-factor metrics across 250+ Equities & Broad ET
     stocks_market_df, stock_regime = evaluate_market_metrics(active_raw_data, current_stock_universe, is_stock_mode=True)
     etfs_market_df, etf_regime = evaluate_market_metrics(active_raw_data, current_etf_universe, is_stock_mode=False)
     regime_data = etf_regime
+    all_metals_df = build_all_precious_metals_df(etfs_market_df)
 
 # =====================================================================
 # SIDEBAR NAVIGATION & DATA REFRESH CONTROLS
@@ -698,11 +742,15 @@ if active_tab == "🎯 High-Conviction Master Hub":
                 e_sc = float(etf_r.get("Composite Score", etf_r.get("Composite Buy Score", 50.0)))
                 e_sl = float(etf_r.get("Stop_Loss", round(e_cmp * 0.96, 2)))
                 e_tgt = float(etf_r.get("Target", round(e_cmp * 1.05, 2)))
-                e_sig = str(etf_r.get("Action Signal", "ACCUMULATE"))
+                e_sig = str(etf_r.get("Action Signal", "ACCUMULATE")).strip()
                 e_dist_dma = float(etf_r.get("Dist 200DMA %", 0.0))
                 e_dist_low = float(etf_r.get("Dist 52W Low %", 0.0))
                 e_range = float(etf_r.get("52W Range %", 50.0))
                 e_crit = etf_r.get("Criteria_Met", f"Rank #{idx_e+1} in {preset_key} Preset • RSI {e_rsi:.1f} • 200DMA {e_dist_dma:+.1f}%")
+
+                e_badge_bg = "#fee2e2" if any(k in e_sig.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "#dcfce7"
+                e_badge_col = "#991b1b" if any(k in e_sig.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "#166534"
+                e_badge_icon = "🔴" if any(k in e_sig.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "🟢"
 
                 st.markdown(
                     f"""
@@ -710,7 +758,7 @@ if active_tab == "🎯 High-Conviction Master Hub":
                         <div style="font-size:0.72rem; color:#1e40af; font-weight:600; margin-bottom:3px;">🏷️ Evaluation Preset: {preset_key} (Accumulation Call)</div>
                         <div style="display: flex; justify-content: space-between; align-items: center;">
                             <span style="font-weight:700; font-size:0.90rem;">#{idx_e+1} {e_sym} ({etf_r.get('Category', 'Broad Index')})</span>
-                            <span class="rec-badge" style="background-color: #dcfce7; color: #166534;">🟢 BUY (Rank #{idx_e+1})</span>
+                            <span class="rec-badge" style="background-color: {e_badge_bg}; color: {e_badge_col}; font-weight:700; border: 1px solid {e_badge_col}33;">{e_badge_icon} {e_sig} (Rank #{idx_e+1})</span>
                         </div>
                         <div style="display: flex; justify-content: space-between; font-size: 0.76rem; color:#475569; margin-top:4px;">
                             <span>CMP: <b>₹{e_cmp:.2f}</b></span>
@@ -874,10 +922,14 @@ if active_tab == "🎯 High-Conviction Master Hub":
                 s_sc = float(stk_r.get("Composite Score", stk_r.get("Composite Buy Score", 50.0)))
                 s_sl = float(stk_r.get("Stop_Loss", round(s_cmp * 0.95, 2)))
                 s_tgt = float(stk_r.get("Target", round(s_cmp * 1.07, 2)))
-                s_sig = str(stk_r.get("Action Signal", "BUY"))
+                s_sig = str(stk_r.get("Action Signal", "BUY")).strip()
                 s_dist_dma = float(stk_r.get("Dist 200DMA %", 0.0))
                 s_dist_low = float(stk_r.get("Dist 52W Low %", 0.0))
                 s_crit = stk_r.get("Criteria_Met", f"Rank #{idx_s+1} in {preset_key} Preset • RSI {s_rsi:.1f} • 200DMA {s_dist_dma:+.1f}%")
+
+                s_badge_bg = "#fee2e2" if any(k in s_sig.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "#dcfce7"
+                s_badge_col = "#991b1b" if any(k in s_sig.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "#166534"
+                s_badge_icon = "🔴" if any(k in s_sig.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "🟢"
 
                 st.markdown(
                     f"""
@@ -885,7 +937,7 @@ if active_tab == "🎯 High-Conviction Master Hub":
                         <div style="font-size:0.72rem; color:#1e40af; font-weight:600; margin-bottom:3px;">🏷️ Evaluation Preset: {preset_key} (Accumulation Call)</div>
                         <div style="display: flex; justify-content: space-between; align-items: center;">
                             <span style="font-weight:700; font-size:0.90rem;">#{idx_s+1} {s_sym} ({stk_r.get('Category', 'Equity')})</span>
-                            <span class="rec-badge" style="background-color: #dcfce7; color: #166534;">🟢 BUY (Rank #{idx_s+1})</span>
+                            <span class="rec-badge" style="background-color: {s_badge_bg}; color: {s_badge_col}; font-weight:700; border: 1px solid {s_badge_col}33;">{s_badge_icon} {s_sig} (Rank #{idx_s+1})</span>
                         </div>
                         <div style="display: flex; justify-content: space-between; font-size: 0.76rem; color:#475569; margin-top:4px;">
                             <span>CMP: <b>₹{s_cmp:.2f}</b></span>
@@ -1228,6 +1280,7 @@ if active_tab == "🎯 High-Conviction Master Hub":
                 r_yd = float(r_it["Distribution Yield (%)"])
                 r_cp = float(r_it["CMP (₹)"])
                 r_disc = float(r_it["NAV Discount / Premium (%)"])
+                r_conf = float(r_it.get("Confidence Score (%)", r_it.get("Composite Score (0-100)", 75.0)))
                 r_sl = float(r_it.get("Immediate Support S1 (₹)", round(r_cp * 0.95, 2)))
                 r_tgt = float(r_it.get("Immediate Resistance R1 (₹)", round(r_cp * 1.08, 2)))
                 r_el = check_reit_investment_eligibility(r_it.to_dict())
@@ -1246,11 +1299,11 @@ if active_tab == "🎯 High-Conviction Master Hub":
                         <div style="display: flex; justify-content: space-between; font-size: 0.76rem; color:#475569; margin-top:4px;">
                             <span>CMP: <b>₹{r_cp:.2f}</b></span>
                             <span>Yield: <b>{r_yd:.1f}%</b></span>
-                            <span>NDCF Payout: <b>100%</b></span>
+                            <span>Confidence: <b style="color:#6d28d9;">{r_conf:.1f}%</b></span>
                             <span>NAV Disc: <b>{r_disc:+.1f}%</b></span>
                         </div>
                         <div class="criteria-box">
-                            <b>Criteria Met:</b> High-Yield Cash Distribution ({r_yd:.1f}%) • 100% NDCF Payout • NAV Discount: {r_disc:+.1f}% • Credit: {r_it.get('Credit Rating', 'CRISIL AAA')}<br>
+                            <b>Criteria Met:</b> High-Yield Cash Distribution ({r_yd:.1f}%) • 100% NDCF Payout • Confidence: <b>{r_conf:.1f}%</b> • NAV Discount: {r_disc:+.1f}% • Credit: {r_it.get('Credit Rating', 'CRISIL AAA')}<br>
                             <span style="color:#5b21b6; font-weight:600;">S1 Support: ₹{r_sl:.2f} | Target: ₹{r_tgt:.2f}</span>
                         </div>
                     </div>
@@ -1267,7 +1320,7 @@ if active_tab == "🎯 High-Conviction Master Hub":
             rk5.metric("Avg LTV Debt Ratio", f"{reits_data['LTV Leverage (%)'].mean():.1f}%", delta="Safe (Cap 49%)")
 
             cols_r_show = [
-                "Ticker", "Name", "Type", "Sponsor", "CMP (₹)", "Distribution Yield (%)",
+                "Ticker", "Name", "Type", "Sponsor", "CMP (₹)", "Confidence Score (%)", "Distribution Yield (%)",
                 "Dividend Payout Ratio (%)", "Annualized DPU (₹)", "Net Asset Value NAV (₹)",
                 "NAV Discount / Premium (%)", "Occupancy (%)", "WALE (Years)", "LTV Leverage (%)",
                 "Credit Rating", "Action Signal"
@@ -1277,6 +1330,7 @@ if active_tab == "🎯 High-Conviction Master Hub":
             st.dataframe(
                 reits_data[valid_r_cols].style.format({
                     "CMP (₹)": "₹{:.2f}",
+                    "Confidence Score (%)": "{:.1f}%",
                     "Distribution Yield (%)": "{:.2f}%",
                     "Dividend Payout Ratio (%)": "{:.1f}%",
                     "Annualized DPU (₹)": "₹{:.2f}",
@@ -1298,31 +1352,7 @@ if active_tab == "🎯 High-Conviction Master Hub":
     st.markdown("#### 🥇 Category 5: Precious Metals (Multi-AMC Gold & Silver Commodities)")
     st.caption("Defensive commodity hedges against equity drawdowns and currency depreciation. Evaluated conditionally across top Indian AMCs to prevent buying near cyclical peaks.")
 
-    all_metals_rows = []
-    for m_cfg in ALL_PRECIOUS_METALS_CONFIG:
-        sym_clean = m_cfg["ticker"].replace(".NS", "")
-        m_row = etfs_market_df[etfs_market_df["Ticker"].str.contains(sym_clean, case=False, na=False)] if not etfs_market_df.empty else pd.DataFrame()
-        if not m_row.empty:
-            m_dict = m_row.iloc[0].to_dict()
-        else:
-            m_dict = {
-                "Ticker": sym_clean, "CMP (₹)": 65.0, "RSI (14D)": 52.0, "Dist 200DMA %": 3.5,
-                "Dist 52W Low %": 12.0, "52W Range %": 55.0, "Volume Surge Ratio": 1.0, "14D ATR (₹)": 0.8
-            }
-        m_dict["Ticker"] = sym_clean
-        m_dict["Name"] = m_cfg["name"]
-        m_dict["AMC"] = m_cfg["amc"]
-        m_dict["Metal Type"] = m_cfg["metal"]
-        m_dict["Expense %"] = m_cfg["expense"]
-        m_el = check_metal_investment_eligibility(m_dict)
-        m_dict["Tactical Status"] = m_el["status"]
-        m_dict["Eligibility_Reason"] = m_el.get("reason", "Macro Hedge Allocation")
-        m_dict["is_eligible"] = m_el["eligible"]
-        m_dict["Stop_Loss"] = float(m_dict.get("Stop_Loss", round(float(m_dict["CMP (₹)"]) * 0.96, 2)))
-        m_dict["Target"] = float(m_dict.get("Target", round(float(m_dict["CMP (₹)"]) * 1.06, 2)))
-        all_metals_rows.append(m_dict)
-
-    all_metals_df = pd.DataFrame(all_metals_rows)
+    all_metals_df = build_all_precious_metals_df(etfs_market_df)
     c5_el_cnt = int(all_metals_df["is_eligible"].sum()) if not all_metals_df.empty else 0
     c5_tot_cnt = len(all_metals_df) if not all_metals_df.empty else 0
 
@@ -1737,6 +1767,8 @@ elif active_tab == "📈 Paper Trading & Multi-Asset Ledger":
 
                 # 5. Multi-AMC Precious Metals (Conditional: Only on Lucrative Dip)
                 if chk_metal:
+                    if "all_metals_df" not in locals() or all_metals_df is None or (isinstance(all_metals_df, pd.DataFrame) and all_metals_df.empty):
+                        all_metals_df = build_all_precious_metals_df(etfs_market_df)
                     for m_metal_type in ["Gold", "Silver"]:
                         metal_cands = all_metals_df[all_metals_df["Metal Type"] == m_metal_type].sort_values(by=["is_eligible", "Expense %", "52W Range %"], ascending=[False, True, True])
                         if not metal_cands.empty:

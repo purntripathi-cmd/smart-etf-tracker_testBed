@@ -534,7 +534,7 @@ def style_sr_matrix_dataframe(df):
 # =====================================================================
 # 6. S/R PAPER TRADING EXECUTION CONNECTOR
 # =====================================================================
-def execute_sr_paper_trade(clean_sym, sr_row, budget=15000.0, username="Public_User", dispatch_telegram=True):
+def execute_sr_paper_trade(clean_sym, sr_row, budget=15000.0, username="Public_User", dispatch_telegram=False):
     """
     Executes an S/R Range Mean Reversion trade into the paper trading ledger (paper_trades.csv).
     Optionally dispatches a formatted alert to Telegram.
@@ -567,13 +567,27 @@ def execute_sr_paper_trade(clean_sym, sr_row, budget=15000.0, username="Public_U
     trade_id = f"V2_SR_{int(now_ist.timestamp())}_{clean_sym}"
     now_str = now_ist.strftime("%Y-%m-%d %H:%M:%S")
 
+    cat = sr_row.get("Category", "Stock")
+    s1_level = float(sr_row.get("Immediate Support S1 (₹)", sr_row.get("Major Support S1 (₹)", cmp_val * 0.97)))
+    dist_s1 = ((cmp_val - s1_level) / s1_level * 100) if s1_level > 0 else 0.0
+    near_supp = f"Yes (+{dist_s1:.1f}% from S1: ₹{s1_level:.1f})" if dist_s1 <= 3.5 else f"Above S1 (+{dist_s1:.1f}%)"
+    action_sig = str(sr_row.get("Action Signal", "S1 Support Bounce"))
+    win_rt = float(sr_row.get("5Y S/R Win Rate (%)", 50.0))
+    rsi_v = float(sr_row.get("RSI (14D)", 50.0))
+    tech_sc = float(sr_row.get("Technical Score", rsi_v))
+    fund_sc = float(sr_row.get("Fundamental Score", win_rt))
+    comp_sc = float(sr_row.get("Composite Buy Score", sr_row.get("Range Position (%)", 50.0)))
+    trig_ind = str(sr_row.get("Trigger_Indicator", f"{action_sig} (5Y Win: {win_rt:.1f}%, RSI: {rsi_v:.1f})"))
+
     rec = {
         "Trade_ID": trade_id,
         "Username": username,
         "Ticker": clean_sym,
-        "Asset_Class": sr_row.get("Category", "Stock"),
+        "Category": cat,
+        "Asset_Class": cat,
         "Trigger_Type": "SR_SUPPORT_BUY",
-        "Strategy_Preset": "S/R Range Mean Reversion",
+        "Trigger_Indicator": trig_ind,
+        "Strategy_Preset": sr_row.get("Strategy_Preset", "S/R Range Mean Reversion"),
         "Status": "ACTIVE",
         "Entry_Price": cmp_val,
         "Live_CMP": cmp_val,
@@ -588,12 +602,13 @@ def execute_sr_paper_trade(clean_sym, sr_row, budget=15000.0, username="Public_U
         "PnL_Rs": 0.0,
         "PnL_Pct": "0.0%",
         "Invested_Value": round(cmp_val * qty, 2),
-        "Technical_Score_At_Entry": round(float(sr_row.get("RSI (14D)", 50.0)), 1),
-        "Fundamental_Score_At_Entry": round(float(sr_row.get("5Y S/R Win Rate (%)", 50.0)), 1),
-        "Empirical_Win_Rate_At_Entry": f"{float(sr_row.get('5Y S/R Win Rate (%)', 50.0)):.1f}%",
+        "Technical_Score_At_Entry": round(tech_sc, 1),
+        "Fundamental_Score_At_Entry": round(fund_sc, 1),
+        "Composite_Score_At_Entry": round(comp_sc, 1),
+        "Near_Support_Status": near_supp,
+        "RSI_At_Entry": round(rsi_v, 1),
+        "Empirical_Win_Rate_At_Entry": f"{win_rt:.1f}%",
         "Predictability_Rating": str(sr_row.get("S/R Predictability Rating", "Good")),
-        "RSI_At_Entry": round(float(sr_row.get("RSI (14D)", 50.0)), 1),
-        "Composite_Score_At_Entry": round(float(sr_row.get("Range Position (%)", 50.0)), 1),
         "Market_Regime_At_Entry": str(sr_row.get("Regime", "🟢 Range-Bound"))
     }
 

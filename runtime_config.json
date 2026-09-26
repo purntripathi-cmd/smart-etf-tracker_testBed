@@ -54,10 +54,11 @@
     "optimization_status": "V2 Factory Baseline Active",
     "last_optimized_timestamp": "2026-09-26 11:15:22",
     "parameter_version": "v2.2-Adaptive",
+    "universe_mode": "EXPANDED_NIFTY_250",
     "telegram": {
         "bot_token": "",
         "chat_id": "",
-        "enabled": true
+        "enabled": false
     },
     "success": true,
     "status": "Reset to factory defaults"

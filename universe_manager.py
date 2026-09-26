@@ -431,10 +431,10 @@ def get_universe_mode():
         try:
             with open(RUNTIME_CONFIG_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data.get("universe_mode", "STANDARD_CORE")
+                return data.get("universe_mode", "EXPANDED_NIFTY_250")
         except Exception:
             pass
-    return "STANDARD_CORE"
+    return "EXPANDED_NIFTY_250"
 
 def set_universe_mode(new_mode):
     """Saves new universe mode to runtime_config.json and universe_config.json."""

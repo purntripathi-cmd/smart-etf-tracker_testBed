@@ -314,6 +314,10 @@ def format_paper_trade_alert(trade_dict, action_type="ENTRY"):
     sl = float(trade_dict.get("Stop_Loss", 0.0))
     tgt = float(trade_dict.get("Target", 0.0))
 
+    empirical_win = trade_dict.get("Empirical_Win_Rate_At_Entry", "")
+    rating = trade_dict.get("Predictability_Rating", "")
+    win_rate_line = f"\n📊 <b>5Y Empirical Win Rate:</b> <b>{empirical_win}</b> ({rating})" if empirical_win else ""
+
     if action_type == "ENTRY":
         msg = f"""🟢 <b>[PAPER TRADE EXECUTED] New Position</b>
 ━━━━━━━━━━━━━━━━━━━━
@@ -322,7 +326,7 @@ def format_paper_trade_alert(trade_dict, action_type="ENTRY"):
 💵 <b>Entry Price:</b> ₹{price:,.2f}
 📦 <b>Quantity:</b> {qty} units (₹{inv_val:,.2f})
 🛑 <b>Stop-Loss:</b> ₹{sl:,.2f}
-🎯 <b>Target:</b> ₹{tgt:,.2f}
+🎯 <b>Target:</b> ₹{tgt:,.2f}{win_rate_line}
 🏷️ <b>Trade ID:</b> <code>{trade_dict.get('Trade_ID', 'N/A')}</code>
 ━━━━━━━━━━━━━━━━━━━━
 ⏱️ <i>Executed at {now_str}</i>"""

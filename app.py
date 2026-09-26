@@ -91,6 +91,7 @@ try:
         format_paper_trade_alert,
         fetch_latest_chat_id
     )
+    from reit_scanner import scan_all_reits, REIT_FUNDAMENTALS_DB
 except Exception as _import_err:
     import traceback
     st.set_page_config(page_title="Startup Diagnostic", layout="wide")
@@ -370,7 +371,13 @@ with st.sidebar:
     st.markdown("##### ⚙️ Universe & Asset Mode")
     stock_count_str = f"{len(current_stock_universe)} Equities"
     etf_count_str = f"{len(current_etf_universe)} Products"
-    asset_mode_choice = st.radio("Active Asset Class:", [f"🎯 Indian Stocks ({stock_count_str})", f"🛡️ Broad ETFs ({etf_count_str})"], index=0)
+    reit_count_str = "5 Premier Trusts"
+    asset_mode_choice = st.radio(
+        "Active Asset Class:",
+        [f"🎯 Indian Stocks ({stock_count_str})", f"🛡️ Broad ETFs ({etf_count_str})", f"🏢 Indian REITs ({reit_count_str})"],
+        index=0
+    )
+    is_reit_mode = ("REITs" in asset_mode_choice)
     is_stock_mode = ("Stocks" in asset_mode_choice)
     df_all = stocks_market_df if is_stock_mode else etfs_market_df
 
@@ -520,6 +527,145 @@ def apply_advanced_table_styling(df):
 
     return styles
 
+
+def render_reit_terminal(base_budget=15000.0):
+    st.markdown("#### 🏢 Premier Indian Real Estate Investment Trusts (REITs) & InvITs")
+    st.caption("Institutional fundamental cash flow analytics, mandatory dividend payout ratios, Net Asset Value (NAV) discounts, and multi-factor technical scoring.")
+
+    with st.spinner("Analyzing Indian REITs & InvITs (EMBASSY, MINDSPACE, BIRET, NXST, PGINVIT)..."):
+        reit_df = scan_all_reits()
+
+    if reit_df.empty:
+        st.warning("Unable to fetch REIT data at this time.")
+        return
+
+    # Top Macro KPI Cards
+    avg_yield = reit_df["Distribution Yield (%)"].mean()
+    avg_discount = reit_df["NAV Discount / Premium (%)"].mean()
+    avg_ltv = reit_df["LTV Leverage (%)"].mean()
+    avg_occ = reit_df["Occupancy (%)"].mean()
+
+    rkpi1, rkpi2, rkpi3, rkpi4, rkpi5 = st.columns(5)
+    with rkpi1:
+        st.metric("Avg Distribution Yield", f"{avg_yield:.2f}%", delta="Cash Flow Yield")
+    with rkpi2:
+        st.metric("NDCF Payout Ratio", "100.0%", delta="SEBI Mandated ≥90%")
+    with rkpi3:
+        st.metric("Avg Discount to NAV", f"{avg_discount:+.1f}%", delta="Discount to Real Estate" if avg_discount < 0 else "Premium")
+    with rkpi4:
+        st.metric("Portfolio Occupancy", f"{avg_occ:.1f}%", delta="Grade-A Tech & Retail")
+    with rkpi5:
+        st.metric("Avg LTV Debt Ratio", f"{avg_ltv:.1f}%", delta="Safe (SEBI Cap 49%)")
+
+    st.markdown("---")
+
+    # Table of REITs
+    st.markdown("##### 📊 Institutional REIT Screener & Conviction Matrix")
+    cols_reit = [
+        "Ticker", "Name", "Type", "Sponsor", "CMP (₹)", "Distribution Yield (%)",
+        "Dividend Payout Ratio (%)", "Annualized DPU (₹)", "Net Asset Value NAV (₹)",
+        "NAV Discount / Premium (%)", "Occupancy (%)", "WALE (Years)", "LTV Leverage (%)",
+        "RSI (14D)", "Immediate Support S1 (₹)", "Dist to Support S1 (%)",
+        "Fundamental Score (0-100)", "Technical Score (0-100)", "Composite Score (0-100)",
+        "Action Signal"
+    ]
+    disp_reit = reit_df[[c for c in cols_reit if c in reit_df.columns]].copy()
+
+    reit_column_config = {
+        "Ticker": st.column_config.TextColumn("Ticker", pinned=True),
+        "Name": st.column_config.TextColumn("Name", pinned=True),
+        "Type": st.column_config.TextColumn("Type"),
+        "Sponsor": st.column_config.TextColumn("Sponsor"),
+        "CMP (₹)": st.column_config.NumberColumn("CMP (₹)", format="₹%.2f", pinned=True),
+        "Distribution Yield (%)": st.column_config.NumberColumn(
+            "Distribution Yield %", format="%.2f%%",
+            help="💰 Current annualized cash distribution divided by market price. Top yield highlighted."
+        ),
+        "Dividend Payout Ratio (%)": st.column_config.NumberColumn(
+            "Dividend Payout Ratio %", format="%.1f%%",
+            help="🏛️ MANDATORY METRIC: SEBI REIT Regulations 2014 mandate ≥90% NDCF distribution. All premier Indian REITs distribute 100% of NDCF."
+        ),
+        "Annualized DPU (₹)": st.column_config.NumberColumn("Annual DPU (₹)", format="₹%.2f"),
+        "Net Asset Value NAV (₹)": st.column_config.NumberColumn("NAV (₹)", format="₹%.2f"),
+        "NAV Discount / Premium (%)": st.column_config.NumberColumn(
+            "Discount / Premium %", format="%+.2f%%",
+            help="📉 Negative value = Buying underlying grade-A commercial real estate at a discount to independent valuation!"
+        ),
+        "Occupancy (%)": st.column_config.NumberColumn("Occupancy %", format="%.1f%%"),
+        "WALE (Years)": st.column_config.NumberColumn("WALE (Yrs)", format="%.1f"),
+        "LTV Leverage (%)": st.column_config.NumberColumn("LTV Debt %", format="%.1f%%", help="Loan-to-Value. Regulatory cap is 49%."),
+        "Immediate Support S1 (₹)": st.column_config.NumberColumn("Support S1 (₹)", format="₹%.2f"),
+        "Dist to Support S1 (%)": st.column_config.NumberColumn("Dist to S1 %", format="%+.2f%%"),
+        "Fundamental Score (0-100)": st.column_config.NumberColumn("Fund Score", format="%.1f"),
+        "Technical Score (0-100)": st.column_config.NumberColumn("Tech Score", format="%.1f"),
+        "Composite Score (0-100)": st.column_config.NumberColumn("Composite Rank", format="%.1f"),
+        "Action Signal": st.column_config.TextColumn("Action Signal")
+    }
+
+    st.dataframe(
+        disp_reit,
+        column_config=reit_column_config,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.markdown("---")
+    # Institutional Deep-Dive Cards
+    st.markdown("##### 🏛️ Institutional Portfolio Profiles & Tenancy Breakdowns")
+    for _, r_row in reit_df.iterrows():
+        with st.expander(f"🏢 **{r_row['Ticker']}** - {r_row['Name']} ({r_row['Type']}) | Yield: **{r_row['Distribution Yield (%)']:.2f}%** | Composite Score: **{r_row['Composite Score (0-100)']}**", expanded=False):
+            p_c1, p_c2, p_c3 = st.columns([1.2, 1.2, 1.6])
+            with p_c1:
+                st.markdown(f"**Sponsor:** {r_row['Sponsor']}")
+                st.markdown(f"**Credit Rating:** `{r_row['Credit Rating']}`")
+                st.markdown(f"**Tax-Free Distribution:** ~{r_row['Tax-Free Portion (%)']:.0f}%")
+                st.markdown(f"**Portfolio Leasable Area:** {r_row['Portfolio Area (MSF)']} MSF")
+            with p_c2:
+                st.markdown(f"**Annualized DPU:** ₹{r_row['Annualized DPU (₹)']:.2f} / unit")
+                st.markdown(f"**Dividend / NDCF Payout:** **{r_row['Dividend Payout Ratio (%)']:.1f}%** (SEBI 90% floor)")
+                st.markdown(f"**NAV per Unit:** ₹{r_row['Net Asset Value NAV (₹)']:.2f}")
+                st.markdown(f"**NAV Premium / Discount:** {r_row['NAV Discount / Premium (%)']:+.2f}%")
+            with p_c3:
+                st.markdown(f"**Marquee Tenancy:** {r_row['Tenant Profile']}")
+                st.markdown(f"**Profile:** {r_row['Description']}")
+                st.markdown(f"**Action Signal:** `{r_row['Action Signal']}`")
+
+    # REIT Paper Trade Execution
+    st.markdown("---")
+    st.markdown("##### ⚡ Paper Trade REIT Allocation")
+    reit_opts = [f"{r['Ticker']} - {r['Name']} (CMP: ₹{r['CMP (₹)']:.2f} | Yield: {r['Distribution Yield (%)']:.2f}%)" for _, r in reit_df.iterrows()]
+    r_sel = st.selectbox("Select REIT for Paper Allocation:", reit_opts, index=0)
+    r_sel_idx = reit_opts.index(r_sel)
+    r_target = reit_df.iloc[r_sel_idx]
+    r_sym = str(r_target["Ticker"])
+    r_cmp = float(r_target["CMP (₹)"])
+    r_sl = float(r_target["Immediate Support S1 (₹)"])
+    r_tgt = float(r_target["Immediate Resistance R1 (₹)"])
+    r_budget = float(base_budget)
+    r_qty = max(1, int(r_budget // r_cmp))
+
+    st.info(f"📋 **REIT Paper Order:** {r_sym} | Qty: {r_qty} units @ ₹{r_cmp:.2f} (Total: ₹{r_qty * r_cmp:,.2f}) | Distribution Yield: **{r_target['Distribution Yield (%)']:.2f}%** | Payout Ratio: **{r_target['Dividend Payout Ratio (%)']:.1f}%**")
+
+    if st.button(f"⚡ Execute {r_sym} REIT to Paper Ledger", type="primary", use_container_width=True, key="exec_reit_paper"):
+        r_rec = {
+            "CMP (₹)": r_cmp,
+            "Suggested SL (₹)": r_sl,
+            "Suggested Target (₹)": r_tgt,
+            "5Y S/R Win Rate (%)": float(r_target["Composite Score (0-100)"]),
+            "S/R Predictability Rating": f"REIT Yield {r_target['Distribution Yield (%)']:.1f}%",
+            "Category": "REIT",
+            "Regime": "🟢 High-Yield Income",
+            "RSI (14D)": float(r_target["RSI (14D)"]),
+            "Range Position (%)": 50.0
+        }
+        succ, r_msg = execute_sr_paper_trade(r_sym, r_rec, budget=r_budget, username="Public_User", dispatch_telegram=True)
+        if succ:
+            st.success(f"🎉 {r_msg}")
+            st.rerun()
+        else:
+            st.warning(f"⚠️ {r_msg}")
+
+
 # =====================================================================
 # TAB 1: TACTICAL SCREENER (TOP 3 BUY/SELL MATRIX + ENRICHED SCREENER)
 # =====================================================================
@@ -569,242 +715,245 @@ if active_tab == "🎯 Tactical Screener & Ladder Planner":
         st.caption(f"📊 **Economic Coverage:** {len(u_analysis['stock_category_distribution'])} Major Indian Sectors Active across all platform screeners, paper trading ledgers, and S/R labs.")
 
 
-    m_col1, m_col2 = st.columns([3, 1])
-    with m_col1:
-        st.markdown(
-            "##### 🌟 Dynamic High-Conviction Matrix &nbsp;<span style='font-size:0.80rem; font-weight:normal; color:#64748b;'>"
-            "(Top 3 BUY + Top 3 SELL per Category & Preset)</span>",
-            unsafe_allow_html=True
-        )
-    with m_col2:
-        matrix_is_etf = st.checkbox("🔄 Show ETF Matrix (Default: Stocks)", value=(not is_stock_mode), key="v2_matrix_toggle")
-
-    target_matrix_source = etfs_market_df if matrix_is_etf else stocks_market_df
-    categories_list = ["AI / RAG", "Default", "Long-Term", "Swing / Positional", "Intraday"]
-    category_picks = {}
-    ticker_match_count = {}
-
-    for cat_name in categories_list:
-        if cat_name == "AI / RAG":
-            cat_buy, cat_sell = get_ai_rag_conviction_candidates(target_matrix_source, is_stock_mode=(not matrix_is_etf), limit=3)
-        else:
-            cat_buy, cat_sell = get_top_conviction_candidates(target_matrix_source, preset_name=cat_name, is_stock_mode=(not matrix_is_etf), limit=3)
-        category_picks[cat_name] = {"buy": cat_buy, "sell": cat_sell}
-
-        for sub_df in [cat_buy, cat_sell]:
-            if sub_df is not None and not sub_df.empty:
-                for sym in sub_df["Ticker"].values:
-                    ticker_match_count[sym] = ticker_match_count.get(sym, 0) + 1
-
-    matrix_cols = st.columns(5)
-    for idx, cat_name in enumerate(categories_list):
-        with matrix_cols[idx]:
-            cat_icon = "🤖" if "AI" in cat_name else ("📌" if cat_name == "Default" else ("🏛️" if "Long" in cat_name else ("⚡" if "Swing" in cat_name else "⏱️")))
+    if is_reit_mode:
+        render_reit_terminal(base_budget)
+    else:
+        m_col1, m_col2 = st.columns([3, 1])
+        with m_col1:
             st.markdown(
-                f"<div style='font-size:0.82rem; font-weight:700; color:#1E88E5; border-bottom: 2px solid #1E88E5; padding-bottom: 2px; margin-bottom: 6px;'>"
-                f"{cat_icon} {cat_name}</div>",
+                "##### 🌟 Dynamic High-Conviction Matrix &nbsp;<span style='font-size:0.80rem; font-weight:normal; color:#64748b;'>"
+                "(Top 3 BUY + Top 3 SELL per Category & Preset)</span>",
                 unsafe_allow_html=True
             )
+        with m_col2:
+            matrix_is_etf = st.checkbox("🔄 Show ETF Matrix (Default: Stocks)", value=(not is_stock_mode), key="v2_matrix_toggle")
 
-            # TOP 3 BUY
-            st.markdown("<div style='font-size:0.74rem; font-weight:700; color:#155724; margin-bottom:3px;'>🟢 TOP 3 BUY (Dip Value)</div>", unsafe_allow_html=True)
-            top_buy_df = category_picks[cat_name]["buy"]
-            if top_buy_df is not None and not top_buy_df.empty:
-                for rank_i, (_, t_row) in enumerate(top_buy_df.iterrows()):
-                    sym = t_row["Ticker"]
-                    freq = ticker_match_count.get(sym, 1)
-                    if freq >= 3:
-                        card_bg, card_border, match_tag = "#fff9e6", "#f59e0b", "<span style='font-size:0.65rem; color:#b45309; font-weight:700;'>★ Multi-Preset Leader</span>"
-                    elif freq == 2:
-                        card_bg, card_border, match_tag = "#f0f9ff", "#0284c7", "<span style='font-size:0.65rem; color:#0369a1; font-weight:700;'>◆ Dual Match</span>"
-                    else:
-                        card_bg, card_border, match_tag = "#ffffff", "#22c55e", ""
+        target_matrix_source = etfs_market_df if matrix_is_etf else stocks_market_df
+        categories_list = ["AI / RAG", "Default", "Long-Term", "Swing / Positional", "Intraday"]
+        category_picks = {}
+        ticker_match_count = {}
 
-                    badge_info = f"Conf: {t_row.get('AI_Confidence_Score', '')}" if "AI" in cat_name else f"Score: {t_row.get('Composite Score', 0):.1f}"
-
-                    st.markdown(
-                        f"""
-                        <div class="rec-card" style="background-color: {card_bg}; border: 1.2px solid {card_border};">
-                            <div style="display: flex; justify-content: space-between; align-items: center;">
-                                <span style="font-weight:700; font-size:0.78rem;">#{rank_i+1} {sym}</span>
-                                <span class="rec-badge" style="background-color: #d4edda; color: #155724;">BUY | {badge_info}</span>
-                            </div>
-                            <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color:#475569; margin-top:2px;">
-                                <span>₹{t_row['CMP (₹)']:.2f}</span>
-                                <span>RSI: {t_row['RSI (14D)']:.1f}</span>
-                                <span>Tgt: ₹{t_row['Target']:.1f}</span>
-                            </div>
-                            <div style="display: flex; justify-content: space-between; font-size: 0.68rem; color:#64748b; margin-top:1px;">
-                                <span>SL: ₹{t_row['Stop_Loss']:.1f}</span>
-                                {match_tag}
-                            </div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
+        for cat_name in categories_list:
+            if cat_name == "AI / RAG":
+                cat_buy, cat_sell = get_ai_rag_conviction_candidates(target_matrix_source, is_stock_mode=(not matrix_is_etf), limit=3)
             else:
-                st.caption("No qualified setups.")
+                cat_buy, cat_sell = get_top_conviction_candidates(target_matrix_source, preset_name=cat_name, is_stock_mode=(not matrix_is_etf), limit=3)
+            category_picks[cat_name] = {"buy": cat_buy, "sell": cat_sell}
 
-            # TOP 3 SELL
-            st.markdown("<div style='font-size:0.74rem; font-weight:700; color:#721c24; margin-top:6px; margin-bottom:3px;'>🔴 TOP 3 SELL (Distribution)</div>", unsafe_allow_html=True)
-            top_sell_df = category_picks[cat_name]["sell"]
-            if top_sell_df is not None and not top_sell_df.empty:
-                for rank_i, (_, t_row) in enumerate(top_sell_df.iterrows()):
-                    sym = t_row["Ticker"]
-                    freq = ticker_match_count.get(sym, 1)
-                    if freq >= 3:
-                        card_bg, card_border, match_tag = "#fff9e6", "#f59e0b", "<span style='font-size:0.65rem; color:#b45309; font-weight:700;'>★ Multi-Preset Leader</span>"
-                    elif freq == 2:
-                        card_bg, card_border, match_tag = "#f0f9ff", "#0284c7", "<span style='font-size:0.65rem; color:#0369a1; font-weight:700;'>◆ Dual Match</span>"
-                    else:
-                        card_bg, card_border, match_tag = "#ffffff", "#ef4444", ""
+            for sub_df in [cat_buy, cat_sell]:
+                if sub_df is not None and not sub_df.empty:
+                    for sym in sub_df["Ticker"].values:
+                        ticker_match_count[sym] = ticker_match_count.get(sym, 0) + 1
 
-                    badge_info = f"Conf: {t_row.get('AI_Confidence_Score', '')}" if "AI" in cat_name else f"Score: {t_row.get('Composite Score', 0):.1f}"
+        matrix_cols = st.columns(5)
+        for idx, cat_name in enumerate(categories_list):
+            with matrix_cols[idx]:
+                cat_icon = "🤖" if "AI" in cat_name else ("📌" if cat_name == "Default" else ("🏛️" if "Long" in cat_name else ("⚡" if "Swing" in cat_name else "⏱️")))
+                st.markdown(
+                    f"<div style='font-size:0.82rem; font-weight:700; color:#1E88E5; border-bottom: 2px solid #1E88E5; padding-bottom: 2px; margin-bottom: 6px;'>"
+                    f"{cat_icon} {cat_name}</div>",
+                    unsafe_allow_html=True
+                )
 
-                    st.markdown(
-                        f"""
-                        <div class="rec-card" style="background-color: {card_bg}; border: 1.2px solid {card_border};">
-                            <div style="display: flex; justify-content: space-between; align-items: center;">
-                                <span style="font-weight:700; font-size:0.78rem;">#{rank_i+1} {sym}</span>
-                                <span class="rec-badge" style="background-color: #f8d7da; color: #721c24;">SELL | {badge_info}</span>
+                # TOP 3 BUY
+                st.markdown("<div style='font-size:0.74rem; font-weight:700; color:#155724; margin-bottom:3px;'>🟢 TOP 3 BUY (Dip Value)</div>", unsafe_allow_html=True)
+                top_buy_df = category_picks[cat_name]["buy"]
+                if top_buy_df is not None and not top_buy_df.empty:
+                    for rank_i, (_, t_row) in enumerate(top_buy_df.iterrows()):
+                        sym = t_row["Ticker"]
+                        freq = ticker_match_count.get(sym, 1)
+                        if freq >= 3:
+                            card_bg, card_border, match_tag = "#fff9e6", "#f59e0b", "<span style='font-size:0.65rem; color:#b45309; font-weight:700;'>★ Multi-Preset Leader</span>"
+                        elif freq == 2:
+                            card_bg, card_border, match_tag = "#f0f9ff", "#0284c7", "<span style='font-size:0.65rem; color:#0369a1; font-weight:700;'>◆ Dual Match</span>"
+                        else:
+                            card_bg, card_border, match_tag = "#ffffff", "#22c55e", ""
+
+                        badge_info = f"Conf: {t_row.get('AI_Confidence_Score', '')}" if "AI" in cat_name else f"Score: {t_row.get('Composite Score', 0):.1f}"
+
+                        st.markdown(
+                            f"""
+                            <div class="rec-card" style="background-color: {card_bg}; border: 1.2px solid {card_border};">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <span style="font-weight:700; font-size:0.78rem;">#{rank_i+1} {sym}</span>
+                                    <span class="rec-badge" style="background-color: #d4edda; color: #155724;">BUY | {badge_info}</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color:#475569; margin-top:2px;">
+                                    <span>₹{t_row['CMP (₹)']:.2f}</span>
+                                    <span>RSI: {t_row['RSI (14D)']:.1f}</span>
+                                    <span>Tgt: ₹{t_row['Target']:.1f}</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; font-size: 0.68rem; color:#64748b; margin-top:1px;">
+                                    <span>SL: ₹{t_row['Stop_Loss']:.1f}</span>
+                                    {match_tag}
+                                </div>
                             </div>
-                            <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color:#475569; margin-top:2px;">
-                                <span>₹{t_row['CMP (₹)']:.2f}</span>
-                                <span>RSI: {t_row['RSI (14D)']:.1f}</span>
-                                <span>Cover: ₹{t_row['Target']:.1f}</span>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                else:
+                    st.caption("No qualified setups.")
+
+                # TOP 3 SELL
+                st.markdown("<div style='font-size:0.74rem; font-weight:700; color:#721c24; margin-top:6px; margin-bottom:3px;'>🔴 TOP 3 SELL (Distribution)</div>", unsafe_allow_html=True)
+                top_sell_df = category_picks[cat_name]["sell"]
+                if top_sell_df is not None and not top_sell_df.empty:
+                    for rank_i, (_, t_row) in enumerate(top_sell_df.iterrows()):
+                        sym = t_row["Ticker"]
+                        freq = ticker_match_count.get(sym, 1)
+                        if freq >= 3:
+                            card_bg, card_border, match_tag = "#fff9e6", "#f59e0b", "<span style='font-size:0.65rem; color:#b45309; font-weight:700;'>★ Multi-Preset Leader</span>"
+                        elif freq == 2:
+                            card_bg, card_border, match_tag = "#f0f9ff", "#0284c7", "<span style='font-size:0.65rem; color:#0369a1; font-weight:700;'>◆ Dual Match</span>"
+                        else:
+                            card_bg, card_border, match_tag = "#ffffff", "#ef4444", ""
+
+                        badge_info = f"Conf: {t_row.get('AI_Confidence_Score', '')}" if "AI" in cat_name else f"Score: {t_row.get('Composite Score', 0):.1f}"
+
+                        st.markdown(
+                            f"""
+                            <div class="rec-card" style="background-color: {card_bg}; border: 1.2px solid {card_border};">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <span style="font-weight:700; font-size:0.78rem;">#{rank_i+1} {sym}</span>
+                                    <span class="rec-badge" style="background-color: #f8d7da; color: #721c24;">SELL | {badge_info}</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color:#475569; margin-top:2px;">
+                                    <span>₹{t_row['CMP (₹)']:.2f}</span>
+                                    <span>RSI: {t_row['RSI (14D)']:.1f}</span>
+                                    <span>Cover: ₹{t_row['Target']:.1f}</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; font-size: 0.68rem; color:#64748b; margin-top:1px;">
+                                    <span>Stop: ₹{t_row['Stop_Loss']:.1f}</span>
+                                    {match_tag}
+                                </div>
                             </div>
-                            <div style="display: flex; justify-content: space-between; font-size: 0.68rem; color:#64748b; margin-top:1px;">
-                                <span>Stop: ₹{t_row['Stop_Loss']:.1f}</span>
-                                {match_tag}
-                            </div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-            else:
-                st.caption("No qualified setups.")
+                            """,
+                            unsafe_allow_html=True
+                        )
+                else:
+                    st.caption("No qualified setups.")
 
-    st.markdown("---")
+        st.markdown("---")
 
-    # Interactive Screener Table with Depth and Category Filters
-    v_col1, v_col2 = st.columns([1, 1])
-    with v_col1:
-        view_depth = st.radio("Screening Depth:", ["🎯 Top 10 High-Conviction (Default)", "⚡ Top 15 Ranked", f"🌐 Full Universe ({len(df_all)})"], horizontal=True)
-    with v_col2:
-        cat_filt = st.selectbox("Category Filter:", ["All"] + sorted(list(df_all["Category"].unique())) if not df_all.empty else ["All"])
+        # Interactive Screener Table with Depth and Category Filters
+        v_col1, v_col2 = st.columns([1, 1])
+        with v_col1:
+            view_depth = st.radio("Screening Depth:", ["🎯 Top 10 High-Conviction (Default)", "⚡ Top 15 Ranked", f"🌐 Full Universe ({len(df_all)})"], horizontal=True)
+        with v_col2:
+            cat_filt = st.selectbox("Category Filter:", ["All"] + sorted(list(df_all["Category"].unique())) if not df_all.empty else ["All"])
 
-    view_df = df_all.copy() if cat_filt == "All" else df_all[df_all["Category"] == cat_filt].copy()
-    sorted_universe = view_df.sort_values(by="Composite Buy Score", ascending=True)
-    display_slice = sorted_universe.head(10 if "Top 10" in view_depth else (15 if "Top 15" in view_depth else len(sorted_universe)))
+        view_df = df_all.copy() if cat_filt == "All" else df_all[df_all["Category"] == cat_filt].copy()
+        sorted_universe = view_df.sort_values(by="Composite Buy Score", ascending=True)
+        display_slice = sorted_universe.head(10 if "Top 10" in view_depth else (15 if "Top 15" in view_depth else len(sorted_universe)))
 
-    # Comprehensive Columns
-    cols_show = [
-        "Ticker", "Name", "Category", "CMP (₹)", "Dividend Yield %", "Dividend Status", "Composite Buy Score", "Technical Score", "Fundamental Score",
-        "RSI (14D)", "RSI Delta", "Bollinger %B", "Dist VWAP %", "Dist 20DMA %", "Dist 50DMA %", "Dist 100DMA %", "Dist 200DMA %",
-        "Dist 52W Low %", "Dist 52W High %", "Volume Surge Ratio", "RS Spread 21D %", "14D ATR (₹)", "ATR % of CMP",
-        "Volatility Stop / Target", "Falling Knife Guard", "Structural Guard / iNAV"
-    ]
-    present_cols = [c for c in cols_show if c in display_slice.columns]
+        # Comprehensive Columns
+        cols_show = [
+            "Ticker", "Name", "Category", "CMP (₹)", "Dividend Yield %", "Dividend Status", "Composite Buy Score", "Technical Score", "Fundamental Score",
+            "RSI (14D)", "RSI Delta", "Bollinger %B", "Dist VWAP %", "Dist 20DMA %", "Dist 50DMA %", "Dist 100DMA %", "Dist 200DMA %",
+            "Dist 52W Low %", "Dist 52W High %", "Volume Surge Ratio", "RS Spread 21D %", "14D ATR (₹)", "ATR % of CMP",
+            "Volatility Stop / Target", "Falling Knife Guard", "Structural Guard / iNAV"
+        ]
+        present_cols = [c for c in cols_show if c in display_slice.columns]
 
-    # Explicit Tooltips explaining What Value is Better for BUY vs SELL
-    screener_column_config = {
-        "Ticker": st.column_config.TextColumn("Ticker", help="Instrument NSE ticker symbol.", pinned=True),
-        "Name": st.column_config.TextColumn("Name", help="Instrument descriptive company or ETF fund name.", pinned=True),
-        "Category": st.column_config.TextColumn("Category", help="Sectoral or asset class categorization.", pinned=True),
-        "CMP (₹)": st.column_config.NumberColumn("CMP (₹)", format="₹%.2f", help="Current Market Price on National Stock Exchange.", pinned=True),
-        "Dividend Yield %": st.column_config.NumberColumn(
-            "Dividend Yield %", format="%.2f%%",
-            help="💰 DIVIDEND YIELD %:\n• HIGHER IS BETTER FOR BUY (Income support, defensive value, and long-term compounding)\n• GREEN = Top 5 Highest Yielders"
-        ),
-        "Dividend Status": st.column_config.TextColumn(
-            "Dividend Status",
-            help="💰 DIVIDEND TIER:\n• High Yield (>= 3.0%)\n• Moderate (1.0 - 3.0%)\n• Growth / Low (< 1.0%)"
-        ),
-        "Composite Buy Score": st.column_config.NumberColumn(
-            "Composite Buy Score", format="%.1f",
-            help="🌟 COMPOSITE CONVICTION SCORE (0 - 100):\n• LOWER IS BETTER FOR BUY (Deep value, oversold confluence, high discount)\n• HIGHER IS BETTER FOR SELL (Overbought exhaustion, extreme extension)\n• TOP 5 BUY highlighted in GREEN | TOP 5 SELL highlighted in RED"
-        ),
-        "Technical Score": st.column_config.NumberColumn(
-            "Technical Score", format="%.1f",
-            help="📐 TECHNICAL RANK (0 - 100):\n• LOWER IS BETTER FOR BUY (Deep multi-timeframe oversold pullback)\n• HIGHER IS BETTER FOR SELL (Extended overbought momentum)"
-        ),
-        "Fundamental Score": st.column_config.NumberColumn(
-            "Fundamental Score", format="%.1f",
-            help="🏛️ FUNDAMENTAL / LIQUIDITY RANK (0 - 100):\n• LOWER IS BETTER FOR BUY (Superior turnover, lower expense ratio, minimal tracking error)\n• HIGHER IS BETTER FOR SELL (Illiquid or high friction)"
-        ),
-        "RSI (14D)": st.column_config.NumberColumn(
-            "RSI (14D)", format="%.1f",
-            help="📊 14-DAY RELATIVE STRENGTH INDEX:\n• LOWER IS BETTER FOR BUY (< 35 indicates deeply oversold capitulation)\n• HIGHER IS BETTER FOR SELL (> 65 indicates overbought distribution)\n• GREEN = Top 5 Lowest | RED = Top 5 Highest"
-        ),
-        "RSI Delta": st.column_config.NumberColumn(
-            "RSI Delta", format="%+.2f",
-            help="📈 1-Day change in RSI (Positive indicates bullish turning hook)."
-        ),
-        "Bollinger %B": st.column_config.NumberColumn(
-            "Bollinger %B", format="%.2f",
-            help="📉 BOLLINGER BAND POSITION:\n• LOWER IS BETTER FOR BUY (< 0.15 = Trading near or below lower 2-sigma band)\n• HIGHER IS BETTER FOR SELL (> 0.85 = Trading near or above upper 2-sigma band)"
-        ),
-        "Dist VWAP %": st.column_config.NumberColumn(
-            "Dist VWAP %", format="%+.2f%%",
-            help="📉 VOLUME WEIGHTED AVERAGE PRICE SPREAD:\n• LOWER / NEGATIVE IS BETTER FOR BUY (Discount below cumulative volume average)\n• HIGHER / POSITIVE IS BETTER FOR SELL (Premium above cumulative volume average)"
-        ),
-        "Dist 20DMA %": st.column_config.NumberColumn("Dist 20DMA %", format="%+.2f%%", help="Distance from 20-Day Moving Average. Negative = Dip; Positive = Extended."),
-        "Dist 50DMA %": st.column_config.NumberColumn("Dist 50DMA %", format="%+.2f%%", help="Distance from 50-Day Moving Average. Negative = Deep pullback; Positive = Extended."),
-        "Dist 100DMA %": st.column_config.NumberColumn("Dist 100DMA %", format="%+.2f%%", help="Distance from 100-Day Moving Average."),
-        "Dist 200DMA %": st.column_config.NumberColumn(
-            "Dist 200DMA %", format="%+.2f%%",
-            help="🏛️ 200-DAY MOVING AVERAGE DISTANCE:\n• NEGATIVE = Structural discount test (High-probability institutional dip)\n• POSITIVE > +15% = Extended rally (Prone to mean-reversion)"
-        ),
-        "Dist 52W Low %": st.column_config.NumberColumn(
-            "Dist 52W Low %", format="+%.2f%%",
-            help="🛡️ DISTANCE FROM 52-WEEK LOW:\n• LOWER IS BETTER FOR BUY (< 6% indicates major structural base with tight risk)\n• HIGHER IS BETTER FOR SELL (> 40% indicates mature extended cycle)"
-        ),
-        "Dist 52W High %": st.column_config.NumberColumn(
-            "Dist 52W High %", format="%+.2f%%",
-            help="🚀 DISTANCE FROM 52-WEEK HIGH:\n• Closer to 0% = Strong momentum breakout candidates\n• Deeper negative = Value recovery potential"
-        ),
-        "Volume Surge Ratio": st.column_config.NumberColumn(
-            "Volume Surge Ratio", format="%.2fx",
-            help="🔥 TODAY'S VOLUME / 20D AVERAGE:\n• HIGHER IS BETTER FOR BUY CONFIRMATION (> 1.5x indicates institutional accumulation)"
-        ),
-        "RS Spread 21D %": st.column_config.NumberColumn(
-            "RS Spread 21D %", format="%+.2f%%",
-            help="⚡ RELATIVE STRENGTH SPREAD VS NIFTY 50 (21D):\n• HIGHER IS BETTER FOR BUY (Positive spread indicates alpha leadership outperforming index)"
-        ),
-        "14D ATR (₹)": st.column_config.NumberColumn("14D ATR (₹)", format="₹%.2f", help="14-Day Average True Range (Daily rupee volatility)."),
-        "ATR % of CMP": st.column_config.NumberColumn("ATR % of CMP", format="%.2f%%", help="Volatility percentage of price."),
-        "Falling Knife Guard": st.column_config.TextColumn("Falling Knife Guard", help="🟢 Reversal Hook (Safe to enter) vs ⚠️ Falling Knife (Wait for support)."),
-        "Structural Guard / iNAV": st.column_config.TextColumn("Structural Guard / iNAV", help="Confirms whether stock is above 200DMA or ETF is trading clean of premium.")
-    }
+        # Explicit Tooltips explaining What Value is Better for BUY vs SELL
+        screener_column_config = {
+            "Ticker": st.column_config.TextColumn("Ticker", help="Instrument NSE ticker symbol.", pinned=True),
+            "Name": st.column_config.TextColumn("Name", help="Instrument descriptive company or ETF fund name.", pinned=True),
+            "Category": st.column_config.TextColumn("Category", help="Sectoral or asset class categorization.", pinned=True),
+            "CMP (₹)": st.column_config.NumberColumn("CMP (₹)", format="₹%.2f", help="Current Market Price on National Stock Exchange.", pinned=True),
+            "Dividend Yield %": st.column_config.NumberColumn(
+                "Dividend Yield %", format="%.2f%%",
+                help="💰 DIVIDEND YIELD %:\n• HIGHER IS BETTER FOR BUY (Income support, defensive value, and long-term compounding)\n• GREEN = Top 5 Highest Yielders"
+            ),
+            "Dividend Status": st.column_config.TextColumn(
+                "Dividend Status",
+                help="💰 DIVIDEND TIER:\n• High Yield (>= 3.0%)\n• Moderate (1.0 - 3.0%)\n• Growth / Low (< 1.0%)"
+            ),
+            "Composite Buy Score": st.column_config.NumberColumn(
+                "Composite Buy Score", format="%.1f",
+                help="🌟 COMPOSITE CONVICTION SCORE (0 - 100):\n• LOWER IS BETTER FOR BUY (Deep value, oversold confluence, high discount)\n• HIGHER IS BETTER FOR SELL (Overbought exhaustion, extreme extension)\n• TOP 5 BUY highlighted in GREEN | TOP 5 SELL highlighted in RED"
+            ),
+            "Technical Score": st.column_config.NumberColumn(
+                "Technical Score", format="%.1f",
+                help="📐 TECHNICAL RANK (0 - 100):\n• LOWER IS BETTER FOR BUY (Deep multi-timeframe oversold pullback)\n• HIGHER IS BETTER FOR SELL (Extended overbought momentum)"
+            ),
+            "Fundamental Score": st.column_config.NumberColumn(
+                "Fundamental Score", format="%.1f",
+                help="🏛️ FUNDAMENTAL / LIQUIDITY RANK (0 - 100):\n• LOWER IS BETTER FOR BUY (Superior turnover, lower expense ratio, minimal tracking error)\n• HIGHER IS BETTER FOR SELL (Illiquid or high friction)"
+            ),
+            "RSI (14D)": st.column_config.NumberColumn(
+                "RSI (14D)", format="%.1f",
+                help="📊 14-DAY RELATIVE STRENGTH INDEX:\n• LOWER IS BETTER FOR BUY (< 35 indicates deeply oversold capitulation)\n• HIGHER IS BETTER FOR SELL (> 65 indicates overbought distribution)\n• GREEN = Top 5 Lowest | RED = Top 5 Highest"
+            ),
+            "RSI Delta": st.column_config.NumberColumn(
+                "RSI Delta", format="%+.2f",
+                help="📈 1-Day change in RSI (Positive indicates bullish turning hook)."
+            ),
+            "Bollinger %B": st.column_config.NumberColumn(
+                "Bollinger %B", format="%.2f",
+                help="📉 BOLLINGER BAND POSITION:\n• LOWER IS BETTER FOR BUY (< 0.15 = Trading near or below lower 2-sigma band)\n• HIGHER IS BETTER FOR SELL (> 0.85 = Trading near or above upper 2-sigma band)"
+            ),
+            "Dist VWAP %": st.column_config.NumberColumn(
+                "Dist VWAP %", format="%+.2f%%",
+                help="📉 VOLUME WEIGHTED AVERAGE PRICE SPREAD:\n• LOWER / NEGATIVE IS BETTER FOR BUY (Discount below cumulative volume average)\n• HIGHER / POSITIVE IS BETTER FOR SELL (Premium above cumulative volume average)"
+            ),
+            "Dist 20DMA %": st.column_config.NumberColumn("Dist 20DMA %", format="%+.2f%%", help="Distance from 20-Day Moving Average. Negative = Dip; Positive = Extended."),
+            "Dist 50DMA %": st.column_config.NumberColumn("Dist 50DMA %", format="%+.2f%%", help="Distance from 50-Day Moving Average. Negative = Deep pullback; Positive = Extended."),
+            "Dist 100DMA %": st.column_config.NumberColumn("Dist 100DMA %", format="%+.2f%%", help="Distance from 100-Day Moving Average."),
+            "Dist 200DMA %": st.column_config.NumberColumn(
+                "Dist 200DMA %", format="%+.2f%%",
+                help="🏛️ 200-DAY MOVING AVERAGE DISTANCE:\n• NEGATIVE = Structural discount test (High-probability institutional dip)\n• POSITIVE > +15% = Extended rally (Prone to mean-reversion)"
+            ),
+            "Dist 52W Low %": st.column_config.NumberColumn(
+                "Dist 52W Low %", format="+%.2f%%",
+                help="🛡️ DISTANCE FROM 52-WEEK LOW:\n• LOWER IS BETTER FOR BUY (< 6% indicates major structural base with tight risk)\n• HIGHER IS BETTER FOR SELL (> 40% indicates mature extended cycle)"
+            ),
+            "Dist 52W High %": st.column_config.NumberColumn(
+                "Dist 52W High %", format="%+.2f%%",
+                help="🚀 DISTANCE FROM 52-WEEK HIGH:\n• Closer to 0% = Strong momentum breakout candidates\n• Deeper negative = Value recovery potential"
+            ),
+            "Volume Surge Ratio": st.column_config.NumberColumn(
+                "Volume Surge Ratio", format="%.2fx",
+                help="🔥 TODAY'S VOLUME / 20D AVERAGE:\n• HIGHER IS BETTER FOR BUY CONFIRMATION (> 1.5x indicates institutional accumulation)"
+            ),
+            "RS Spread 21D %": st.column_config.NumberColumn(
+                "RS Spread 21D %", format="%+.2f%%",
+                help="⚡ RELATIVE STRENGTH SPREAD VS NIFTY 50 (21D):\n• HIGHER IS BETTER FOR BUY (Positive spread indicates alpha leadership outperforming index)"
+            ),
+            "14D ATR (₹)": st.column_config.NumberColumn("14D ATR (₹)", format="₹%.2f", help="14-Day Average True Range (Daily rupee volatility)."),
+            "ATR % of CMP": st.column_config.NumberColumn("ATR % of CMP", format="%.2f%%", help="Volatility percentage of price."),
+            "Falling Knife Guard": st.column_config.TextColumn("Falling Knife Guard", help="🟢 Reversal Hook (Safe to enter) vs ⚠️ Falling Knife (Wait for support)."),
+            "Structural Guard / iNAV": st.column_config.TextColumn("Structural Guard / iNAV", help="Confirms whether stock is above 200DMA or ETF is trading clean of premium.")
+        }
 
-    render_top_scrollbar_sync()
+        render_top_scrollbar_sync()
 
-    st.dataframe(
-        display_slice[present_cols].style.apply(apply_advanced_table_styling, axis=None).format({
-            "CMP (₹)": "₹{:.2f}",
-            "Dividend Yield %": "{:.2f}%",
-            "Composite Buy Score": "{:.1f}",
-            "Technical Score": "{:.1f}",
-            "Fundamental Score": "{:.1f}",
-            "RSI (14D)": "{:.1f}",
-            "RSI Delta": "{:+.2f}",
-            "Bollinger %B": "{:.2f}",
-            "Dist VWAP %": "{:+.2f}%",
-            "Dist 20DMA %": "{:+.2f}%",
-            "Dist 50DMA %": "{:+.2f}%",
-            "Dist 100DMA %": "{:+.2f}%",
-            "Dist 200DMA %": "{:+.2f}%",
-            "Dist 52W Low %": "+{:.2f}%",
-            "Dist 52W High %": "{:+.2f}%",
-            "Volume Surge Ratio": "{:.2f}x",
-            "RS Spread 21D %": "{:+.2f}%",
-            "14D ATR (₹)": "₹{:.2f}",
-            "ATR % of CMP": "{:.2f}%"
-        }),
-        column_config=screener_column_config,
-        use_container_width=True,
-        height=450
-    )
+        st.dataframe(
+            display_slice[present_cols].style.apply(apply_advanced_table_styling, axis=None).format({
+                "CMP (₹)": "₹{:.2f}",
+                "Dividend Yield %": "{:.2f}%",
+                "Composite Buy Score": "{:.1f}",
+                "Technical Score": "{:.1f}",
+                "Fundamental Score": "{:.1f}",
+                "RSI (14D)": "{:.1f}",
+                "RSI Delta": "{:+.2f}",
+                "Bollinger %B": "{:.2f}",
+                "Dist VWAP %": "{:+.2f}%",
+                "Dist 20DMA %": "{:+.2f}%",
+                "Dist 50DMA %": "{:+.2f}%",
+                "Dist 100DMA %": "{:+.2f}%",
+                "Dist 200DMA %": "{:+.2f}%",
+                "Dist 52W Low %": "+{:.2f}%",
+                "Dist 52W High %": "{:+.2f}%",
+                "Volume Surge Ratio": "{:.2f}x",
+                "RS Spread 21D %": "{:+.2f}%",
+                "14D ATR (₹)": "₹{:.2f}",
+                "ATR % of CMP": "{:.2f}%"
+            }),
+            column_config=screener_column_config,
+            use_container_width=True,
+            height=450
+        )
 
 # =====================================================================
 # TAB 2: PAPER TRADING & MULTI-REGIME PERFORMANCE KPI LEDGER
@@ -1093,6 +1242,7 @@ elif active_tab == "📈 Paper Trading & Multi-Regime Ledger":
             open_cols = [
                 "Trade_ID", "Ticker", "Asset_Class", "Strategy_Preset", "Entry_Price", "Live_CMP",
                 "Executed_Qty", "Stop_Loss", "Target", "PnL_Rs", "PnL_Pct", "Hold_Duration_Days",
+                "Empirical_Win_Rate_At_Entry", "Predictability_Rating",
                 "RSI_At_Entry", "Composite_Score_At_Entry", "Market_Regime_At_Entry"
             ]
             valid_open_cols = [c for c in open_cols if c in open_trades.columns]
@@ -1124,6 +1274,7 @@ elif active_tab == "📈 Paper Trading & Multi-Regime Ledger":
             closed_cols = [
                 "Trade_ID", "Ticker", "Asset_Class", "Strategy_Preset", "Status", "Exit_Reason",
                 "Entry_Price", "Exit_Price", "Executed_Qty", "Hold_Duration_Days", "PnL_Rs", "PnL_Pct",
+                "Empirical_Win_Rate_At_Entry", "Predictability_Rating",
                 "Execution_Timestamp", "Exit_Timestamp", "RSI_At_Entry", "Composite_Score_At_Entry", "Market_Regime_At_Entry"
             ]
             valid_closed_cols = [c for c in closed_cols if c in closed_trades.columns]
@@ -1318,7 +1469,37 @@ elif active_tab == "🧱 S/R Range-Bound Lab & Multi-Factor Hub":
                 exec_col, tg_col = st.columns([1.6, 1.4])
                 with exec_col:
                     st.markdown("###### 📝 Paper Trading Execution")
-                    chosen_exec_item = st.selectbox("Select Candidate for Paper Execution:", exec_options, index=0)
+                    dispatch_tg_on_exec = st.checkbox("📲 Dispatch Telegram notification on execution", value=True, key="sr_dispatch_tg_toggle")
+
+                    # Execute Top 2 Trades Simultaneously
+                    has_at_least_2 = len(top_sr_picks) >= 2
+                    if has_at_least_2:
+                        p1 = top_sr_picks.reset_index(drop=True).iloc[0]
+                        p2 = top_sr_picks.reset_index(drop=True).iloc[1]
+                        st.markdown(
+                            f"""
+                            <div style="background-color: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px;">
+                                <b style="color: #166534;">🔥 Top 2 High-Conviction Tranches:</b><br>
+                                • <b>#1 {p1['Ticker']}:</b> 5Y Empirical Win Rate <b>{p1['5Y S/R Win Rate (%)']}%</b> ({p1.get('S/R Predictability Rating', '')}) | CMP: ₹{p1['CMP (₹)']:.2f}<br>
+                                • <b>#2 {p2['Ticker']}:</b> 5Y Empirical Win Rate <b>{p2['5Y S/R Win Rate (%)']}%</b> ({p2.get('S/R Predictability Rating', '')}) | CMP: ₹{p2['CMP (₹)']:.2f}
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                        if st.button(f"⚡ Execute Top 2 Trades ({p1['Ticker']} & {p2['Ticker']}) to Paper Ledger", type="primary", use_container_width=True, key="exec_top_2_sr"):
+                            s1_ok, m1 = execute_sr_paper_trade(str(p1['Ticker']), p1, budget=15000.0, username="Public_User", dispatch_telegram=dispatch_tg_on_exec)
+                            s2_ok, m2 = execute_sr_paper_trade(str(p2['Ticker']), p2, budget=15000.0, username="Public_User", dispatch_telegram=dispatch_tg_on_exec)
+                            if s1_ok and s2_ok:
+                                st.success(f"🎉 Successfully executed Top 2 trades!\n• 1. {p1['Ticker']} ({p1['5Y S/R Win Rate (%)']}% Win): {m1}\n• 2. {p2['Ticker']} ({p2['5Y S/R Win Rate (%)']}% Win): {m2}")
+                            elif s1_ok or s2_ok:
+                                st.info(f"• 1. {m1}\n• 2. {m2}")
+                            else:
+                                st.warning(f"⚠️ Execution failed:\n• 1. {m1}\n• 2. {m2}")
+                            st.rerun()
+
+                        st.markdown("<div style='text-align:center; color:#64748b; font-size:0.8rem; margin:6px 0;'>— OR EXECUTE SINGLE CANDIDATE —</div>", unsafe_allow_html=True)
+
+                    chosen_exec_item = st.selectbox("Select Candidate for Individual Execution:", exec_options, index=0)
                     chosen_idx = exec_options.index(chosen_exec_item)
                     target_sr_row = top_sr_picks.reset_index(drop=True).iloc[chosen_idx]
                     clean_sym = str(target_sr_row["Ticker"])
@@ -1335,9 +1516,7 @@ elif active_tab == "🧱 S/R Range-Bound Lab & Multi-Factor Hub":
                         f"5Y Empirical Win Rate: **{win_rate}%** ({target_sr_row.get('S/R Predictability Rating', '')})"
                     )
 
-                    dispatch_tg_on_exec = st.checkbox("📲 Dispatch Telegram notification on execution", value=True)
-
-                    if st.button(f"⚡ Execute {clean_sym} to Paper Ledger", type="primary", use_container_width=True):
+                    if st.button(f"⚡ Execute {clean_sym} to Paper Ledger", use_container_width=True):
                         success, msg = execute_sr_paper_trade(
                             clean_sym,
                             target_sr_row,

@@ -590,6 +590,8 @@ def execute_sr_paper_trade(clean_sym, sr_row, budget=15000.0, username="Public_U
         "Invested_Value": round(cmp_val * qty, 2),
         "Technical_Score_At_Entry": round(float(sr_row.get("RSI (14D)", 50.0)), 1),
         "Fundamental_Score_At_Entry": round(float(sr_row.get("5Y S/R Win Rate (%)", 50.0)), 1),
+        "Empirical_Win_Rate_At_Entry": f"{float(sr_row.get('5Y S/R Win Rate (%)', 50.0)):.1f}%",
+        "Predictability_Rating": str(sr_row.get("S/R Predictability Rating", "Good")),
         "RSI_At_Entry": round(float(sr_row.get("RSI (14D)", 50.0)), 1),
         "Composite_Score_At_Entry": round(float(sr_row.get("Range Position (%)", 50.0)), 1),
         "Market_Regime_At_Entry": str(sr_row.get("Regime", "🟢 Range-Bound"))

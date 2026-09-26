@@ -212,3 +212,26 @@ Tab 6 provides an interactive testbed studio allowing real-time parameter tuning
 6. **Month-over-Month Performance Comparison:**
    - Correlates monthly Win Rate %, Profit Factor, and Net PnL (₹) with parameter tuning frequencies to audit algorithmic evolution over time.
 
+---
+
+## 🌐 Dynamic Universe Analyzer & Expansion (NIFTY 250 + Non-Sectoral ETFs)
+
+The platform provides a **1-Click Universe Analyzer and Dynamic Expansion System**:
+
+1. **Dual Universe Operational Modes:**
+   - **📦 Standard Core (87 Assets):** 52 liquid largecap equities + 35 core ETFs for rapid, ultra-responsive scanning.
+   - **🚀 Expanded NIFTY 250 (297 Assets):** 250 curated Large & Midcap equities across 16 sectors + 47 non-sectoral ETFs.
+
+2. **Universal Propagation Across All Tabs:**
+   - **Tab 1 (Tactical Screener & Ladder Planner):** Ranks and filters across all 250 stocks and 47 ETFs.
+   - **Tab 2 (Paper Trading & Multi-Regime Ledger):** Scans and executes trades across the entire 297-asset universe.
+   - **Tab 3 (AI Quant Advisor & Strategy Tuner):** Synthesizes multi-factor conviction across all large and midcap constituents.
+   - **Tab 4 (S/R Range-Bound Lab & Multi-Factor Hub):** Computes algorithmic support/resistance channels and 5-year empirical bounce win rates for all 250 stocks or 47 ETFs.
+   - **Tab 5 (Quant Ecosystem & Webhook Setup):** Ingests live cron payloads matching the expanded universe.
+   - **Tab 6 (Parameter & Weights Studio):** Calibrates weights and risk bounds against the broader universe.
+
+3. **Macro Non-Sectoral ETF Philosophy:**
+   - Curated strictly to **Broad Market Indices** (Nifty 50, Next 50, Midcap 150, Smallcap 250, Nifty 500), **Smart Beta / Factor ETFs** (Momentum, Alpha, Quality, Low Volatility, Value, Equal Weight), **Commodities** (Gold & Silver BeES), and **Global Mega-Caps** (Nasdaq 100, S&P 500, NYSE FANG+).
+   - **Sectoral ETFs (Bank, IT, Auto, Pharma, Infra) are strictly excluded** to avoid uncompensated single-sector cyclical drawdown risks.
+
+

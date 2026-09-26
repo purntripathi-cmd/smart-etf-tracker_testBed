@@ -72,6 +72,16 @@ try:
         style_sr_matrix_dataframe,
         execute_sr_paper_trade
     )
+    from universe_manager import (
+        get_active_universe,
+        get_universe_mode,
+        set_universe_mode,
+        analyze_universe_coverage,
+        NIFTY_250_STOCK_CONFIG,
+        EXPANDED_NON_SECTORAL_ETF_CONFIG,
+        CORE_STOCK_CONFIG,
+        CORE_ETF_CONFIG
+    )
 except Exception as _import_err:
     import traceback
     st.set_page_config(page_title="Startup Diagnostic", layout="wide")
@@ -312,14 +322,18 @@ def save_audit_entry(entry_dict):
 
 if "strategy_toast" not in st.session_state:
     st.session_state.strategy_toast = None
+if "show_universe_modal" not in st.session_state:
+    st.session_state.show_universe_modal = False
 
-# Universe Data & Evaluation
-ALL_CONFIG_TICKERS = [x["ticker"] for x in (DEFAULT_STAGE1_ETF_CONFIG + DEFAULT_STAGE2_STOCK_CONFIG)]
+# Dynamic Universe Loading (Standard Core vs Expanded NIFTY 250 + Non-Sectoral ETFs)
+current_stock_universe, current_etf_universe = get_active_universe()
+universe_mode = get_universe_mode()
+ALL_CONFIG_TICKERS = [x["ticker"] for x in (current_etf_universe + current_stock_universe)]
 active_raw_data = load_historical_market_data(ALL_CONFIG_TICKERS)
 runtime_cfg = load_runtime_config()
 
-stocks_market_df, stock_regime = evaluate_market_metrics(active_raw_data, DEFAULT_STAGE2_STOCK_CONFIG, is_stock_mode=True)
-etfs_market_df, etf_regime = evaluate_market_metrics(active_raw_data, DEFAULT_STAGE1_ETF_CONFIG, is_stock_mode=False)
+stocks_market_df, stock_regime = evaluate_market_metrics(active_raw_data, current_stock_universe, is_stock_mode=True)
+etfs_market_df, etf_regime = evaluate_market_metrics(active_raw_data, current_etf_universe, is_stock_mode=False)
 regime_data = etf_regime
 
 # =====================================================================
@@ -345,11 +359,34 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("##### ⚙️ Universe & Asset Mode")
-    asset_mode_choice = st.radio("Active Asset Class:", ["🎯 Indian Stocks (52 Equities)", "🛡️ Broad ETFs (35 Products)"], index=0)
+    stock_count_str = f"{len(current_stock_universe)} Equities"
+    etf_count_str = f"{len(current_etf_universe)} Products"
+    asset_mode_choice = st.radio("Active Asset Class:", [f"🎯 Indian Stocks ({stock_count_str})", f"🛡️ Broad ETFs ({etf_count_str})"], index=0)
     is_stock_mode = ("Stocks" in asset_mode_choice)
     df_all = stocks_market_df if is_stock_mode else etfs_market_df
 
     base_budget = st.number_input("Tranche Budget (₹)", min_value=1000.0, max_value=500000.0, value=15000.0, step=1000.0)
+
+    st.markdown("---")
+    st.markdown("##### 🌐 Universe Scope & Expansion")
+    is_expanded_side = (universe_mode == "EXPANDED_NIFTY_250")
+    if is_expanded_side:
+        st.success(f"**Scope:** 🚀 NIFTY 250 + Broad ETFs ({len(current_stock_universe) + len(current_etf_universe)} Assets)")
+        st.caption(f"• **Stocks:** {len(current_stock_universe)} (NIFTY LargeMidcap 250)\n• **ETFs:** {len(current_etf_universe)} (Non-Sectoral Broad & Factor)")
+        if st.button("↩️ Revert to Standard Core (87)", use_container_width=True, help="Switch back to lightweight 87-asset universe."):
+            set_universe_mode("STANDARD_CORE")
+            st.cache_data.clear()
+            st.session_state.strategy_toast = "Reverted to Standard Core Universe (87 Assets)."
+            st.rerun()
+    else:
+        st.info(f"**Scope:** 📦 Standard Core ({len(current_stock_universe) + len(current_etf_universe)} Assets)")
+        st.caption(f"• **Stocks:** {len(current_stock_universe)} Largecaps\n• **ETFs:** {len(current_etf_universe)} Non-Sectoral Products")
+        if st.button("🚀 Analyze & Expand Universe", type="primary", use_container_width=True, help="Analyze and expand universe to full NIFTY 250 + Non-Sectoral ETFs across all tabs."):
+            set_universe_mode("EXPANDED_NIFTY_250")
+            st.cache_data.clear()
+            st.session_state.show_universe_modal = True
+            st.session_state.strategy_toast = "Universe Expanded to NIFTY 250 + Broad ETFs (297 Assets)!"
+            st.rerun()
 
     st.markdown("---")
     st.markdown(
@@ -472,6 +509,49 @@ def apply_advanced_table_styling(df):
 # =====================================================================
 if active_tab == "🎯 Tactical Screener & Ladder Planner":
     st.markdown("### 🎯 Tactical Screener & High-Conviction Matrix (V2)")
+
+    # Universe Intelligence & Expansion Center (NIFTY 250 + Non-Sectoral ETFs)
+    u_analysis = analyze_universe_coverage()
+    is_expanded_u = (universe_mode == "EXPANDED_NIFTY_250")
+
+    with st.expander(
+        f"🌐 Universe Intelligence & Expansion Center: {'🚀 Expanded NIFTY 250 (297 Assets Active)' if is_expanded_u else '📦 Standard Core (87 Assets Active)'}",
+        expanded=(st.session_state.get("show_universe_modal", False) or not is_expanded_u)
+    ):
+        uc_col1, uc_col2, uc_col3, uc_col4 = st.columns([1.1, 1.1, 1.1, 1.4])
+        with uc_col1:
+            st.metric("Total Platform Universe", u_analysis["expanded_total"] if is_expanded_u else u_analysis["core_total"], delta=f"+{u_analysis['newly_added_stocks_count'] + u_analysis['newly_added_etfs_count']} Expandable" if not is_expanded_u else "Full Market Coverage")
+        with uc_col2:
+            st.metric("Equities (Stocks)", u_analysis["expanded_stocks_count"] if is_expanded_u else u_analysis["core_stocks_count"], delta="NIFTY LargeMidcap 250" if is_expanded_u else "Top 52 Largecaps")
+        with uc_col3:
+            st.metric("Broad ETFs", u_analysis["expanded_etfs_count"] if is_expanded_u else u_analysis["core_etfs_count"], delta="100% Non-Sectoral" if is_expanded_u else "35 Core Products")
+        with uc_col4:
+            if not is_expanded_u:
+                if st.button("🚀 Add NIFTY 250 + Broad ETFs (All Tabs)", type="primary", use_container_width=True, key="tab1_expand_btn"):
+                    set_universe_mode("EXPANDED_NIFTY_250")
+                    st.cache_data.clear()
+                    st.session_state.show_universe_modal = False
+                    st.session_state.strategy_toast = "Universe Expanded to NIFTY 250 + Broad ETFs (297 Assets)!"
+                    st.rerun()
+            else:
+                if st.button("↩️ Revert to Standard Core (87)", use_container_width=True, key="tab1_revert_btn"):
+                    set_universe_mode("STANDARD_CORE")
+                    st.cache_data.clear()
+                    st.session_state.show_universe_modal = False
+                    st.session_state.strategy_toast = "Reverted to Standard Core Universe (87 Assets)."
+                    st.rerun()
+
+        st.markdown(
+            """
+            <div style="background-color: #f8fafc; border-left: 4px solid #1E88E5; padding: 10px 14px; border-radius: 6px; margin: 8px 0; font-size: 0.86rem; color: #334155;">
+                <b>🛡️ Macro Non-Sectoral ETF Philosophy:</b> The platform's ETF universe is strictly curated to include only <b>Broad Market Indices</b> (Nifty 50, Next 50, Midcap 150, Smallcap 250, Nifty 500), <b>Factor & Smart Beta ETFs</b> (Momentum 30, Alpha 30, Quality 30, Low Volatility 30, Value 20, Equal Weight), <b>Commodities</b> (Gold & Silver BeES), and <b>International Megacap Assets</b> (Nasdaq 100, S&P 500, NYSE FANG+). <i>Sectoral bets (Bank, Auto, IT, Pharma, Infra) are excluded</i> to avoid uncompensated single-sector cyclical drawdown risks.
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.caption(f"📊 **Economic Coverage:** {len(u_analysis['stock_category_distribution'])} Major Indian Sectors Active across all platform screeners, paper trading ledgers, and S/R labs.")
+
 
     m_col1, m_col2 = st.columns([3, 1])
     with m_col1:
@@ -868,7 +948,7 @@ elif active_tab == "📈 Paper Trading & Multi-Regime Ledger":
 
                 # S/R Range-Bound High-Fidelity Mean Reversion Candidates
                 try:
-                    sr_df_stk = compute_sr_matrix(active_raw_data, DEFAULT_STAGE2_STOCK_CONFIG, is_stock_mode=True)
+                    sr_df_stk = compute_sr_matrix(active_raw_data, current_stock_universe, is_stock_mode=True)
                     if not sr_df_stk.empty:
                         sr_cands = sr_df_stk[
                             sr_df_stk["Action Signal"].str.contains("BUY|ACCUMULATE", na=False) &
@@ -1095,7 +1175,7 @@ elif active_tab == "🧱 S/R Range-Bound Lab & Multi-Factor Hub":
     st.markdown("### 🧱 Algorithmic Support, Resistance & Range-Bound Quant Lab")
     st.caption("Empirical mean-reversion channel analysis, 5-year bounce backtesting, and full 34-parameter quantitative inspection.")
 
-    current_universe = DEFAULT_STAGE2_STOCK_CONFIG if is_stock_mode else DEFAULT_STAGE1_ETF_CONFIG
+    current_universe = current_stock_universe if is_stock_mode else current_etf_universe
 
     sr_focus = st.radio(
         "Lab Focus Mode:",
@@ -1501,12 +1581,13 @@ elif active_tab == "🎛️ Parameter & Weights Studio":
     with col_kpi1:
         st.metric("Strategy Version", active_cfg.get("parameter_version", "v2.2-Adaptive"))
     with col_kpi2:
-        sched_badge = "🟢 Weekdays Only (Mon-Fri)" if is_weekdays_only else "🟢 All 7 Days Active (Weekend Unlocked)"
-        st.metric("Schedule Guard", sched_badge)
+        u_scope_label = "🚀 NIFTY 250 (297 Assets)" if universe_mode == "EXPANDED_NIFTY_250" else "📦 Core (87 Assets)"
+        st.metric("Active Universe Scope", u_scope_label)
     with col_kpi3:
-        st.metric("Last Optimization", active_cfg.get("last_optimized_timestamp", "Baseline"))
+        sched_badge = "🟢 Mon-Fri Only" if is_weekdays_only else "🟢 7 Days Unlocked"
+        st.metric("Schedule Guard", sched_badge)
     with col_kpi4:
-        st.metric("Testbed Mode", "🧪 Interactive Calibration Mode")
+        st.metric("Last Optimization", active_cfg.get("last_optimized_timestamp", "Baseline"))
 
     st.markdown("---")
 

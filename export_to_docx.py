@@ -227,6 +227,13 @@ def generate_v2_docx_content():
     body_elements.append(build_bullet("One-click execution from Tab 4 logs trades directly into Tab 2 Paper Trading Ledger; automated 3 PM daemon also scans and executes top S/R candidates with systematic Stop Loss & Target exit monitoring.", "Paper Trading Execution:"))
     body_elements.append(build_bullet("Complete parameter laboratory showing all 34 technical, quantitative, momentum, and fundamental metrics for any selected asset.", "34-Parameter Deep Dive:"))
 
+    # Section 11: Dynamic Universe Intelligence & Expansion
+    body_elements.append(build_p("11. Universe Intelligence & Dynamic NIFTY 250 / Non-Sectoral Expansion", bold=True, color="1E3A8A", size_pt=15, space_after=120))
+    body_elements.append(build_bullet("One-click button in the Sidebar and Tab 1 expands the universe from 87 assets to 297 assets (250 Large & Midcaps + 47 Non-Sectoral ETFs) across all tabs.", "Universal 1-Click Expansion:"))
+    body_elements.append(build_bullet("Covers the top 100 largecaps and 150 high-conviction midcaps across 16 economic sectors (Industrials, Defense, IT, Banking, Auto, Pharma, FMCG, Power, Chemicals, EMS, QSR, Realty).", "NIFTY LargeMidcap 250 Coverage:"))
+    body_elements.append(build_bullet("Curated strictly to broad market indices (Nifty 50, Next 50, Midcap 150, Smallcap 250, 500), factor/smart-beta (Alpha, Quality, Momentum, Low Vol, Value, Equal Weight), commodities (Gold/Silver), and global equities (Nasdaq, S&P 500). Sectoral bets are excluded to avoid cyclical concentration.", "Macro Non-Sectoral ETF Guarantee:"))
+    body_elements.append(build_bullet("State persists cleanly in runtime_config.json and universe_config.json across browser reloads, background daemon sessions, and automated cron execution.", "Persistent Configuration:"))
+
     body_elements.append(build_p("", space_after=180))
     body_elements.append(build_p("© 2026 AGY Quantitative Research Team • Designed for Antigravity Platform", italic=True, color="94A3B8", size_pt=9))
 

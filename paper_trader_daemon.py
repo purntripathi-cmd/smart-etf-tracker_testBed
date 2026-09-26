@@ -31,6 +31,7 @@ from strategy_engine import (
     extract_ticker_df,
     get_active_runtime_config
 )
+from universe_manager import get_active_universe
 from ml_optimizer import (
     load_ai_trades,
     save_ai_trades,
@@ -159,7 +160,8 @@ def run_paper_trader_daemon(mode_override=None, force_weekend=False):
     logger.info("==================================================")
 
     # 1. Fetch Universe & Market Data
-    all_tickers = [x["ticker"] for x in (DEFAULT_STAGE1_ETF_CONFIG + DEFAULT_STAGE2_STOCK_CONFIG)]
+    active_stock_universe, active_etf_universe = get_active_universe()
+    all_tickers = [x["ticker"] for x in (active_etf_universe + active_stock_universe)]
     raw_data = download_market_data(all_tickers)
 
     if raw_data.empty:
@@ -167,11 +169,11 @@ def run_paper_trader_daemon(mode_override=None, force_weekend=False):
         return
 
     # 2. Evaluate Indicators & Market Regime
-    etfs_market_df, etf_regime = evaluate_market_metrics(raw_data, DEFAULT_STAGE1_ETF_CONFIG, is_stock_mode=False)
-    stocks_market_df, stock_regime = evaluate_market_metrics(raw_data, DEFAULT_STAGE2_STOCK_CONFIG, is_stock_mode=True)
+    etfs_market_df, etf_regime = evaluate_market_metrics(raw_data, active_etf_universe, is_stock_mode=False)
+    stocks_market_df, stock_regime = evaluate_market_metrics(raw_data, active_stock_universe, is_stock_mode=True)
     regime_name = etf_regime.get("regime", "Normal")
 
-    logger.info(f"[REGIME] Current Market Regime: {regime_name} | VIX: {etf_regime.get('vix', 15.0)}")
+    logger.info(f"[REGIME] Current Market Regime: {regime_name} | VIX: {etf_regime.get('vix', 15.0)} | Universe: {len(active_stock_universe)} Stocks, {len(active_etf_universe)} ETFs")
 
     # 3. Check and Process Inbuilt Exits First
     all_trades = load_trades()
@@ -363,7 +365,7 @@ def run_paper_trader_daemon(mode_override=None, force_weekend=False):
         # 3. S/R Range Mean Reversion Routine (Top High-Fidelity Support Bounce)
         try:
             from sr_engine import compute_sr_matrix
-            sr_stocks = compute_sr_matrix(raw_data, DEFAULT_STAGE2_STOCK_CONFIG, is_stock_mode=True)
+            sr_stocks = compute_sr_matrix(raw_data, active_stock_universe, is_stock_mode=True)
             if not sr_stocks.empty:
                 # Find top candidate with Action Signal containing BUY/ACCUMULATE and high 5Y win rate
                 sr_cand = sr_stocks[

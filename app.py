@@ -64,6 +64,12 @@ try:
         get_monthly_performance_comparison
     )
     from paper_trader_daemon import run_paper_trader_daemon
+    from sr_engine import (
+        compute_sr_matrix,
+        get_5y_fidelity_leaderboard,
+        run_live_5y_ticker_backtest,
+        get_asset_comprehensive_profile
+    )
 except Exception as _import_err:
     import traceback
     st.set_page_config(page_title="Startup Diagnostic", layout="wide")
@@ -328,7 +334,7 @@ with st.sidebar:
             "🎯 Tactical Screener & Ladder Planner",
             "📈 Paper Trading & Multi-Regime Ledger",
             "🤖 AI Quant Advisor & Strategy Tuner",
-            "📊 Advanced Quant Hub",
+            "🧱 S/R Range-Bound Lab & Multi-Factor Hub",
             "🌐 Quant Ecosystem & Webhook Setup",
             "🎛️ Parameter & Weights Studio"
         ],
@@ -1050,20 +1056,245 @@ elif active_tab == "🤖 AI Quant Advisor & Strategy Tuner":
         st.json(runtime_cfg)
 
 # =====================================================================
-# TAB 4: ADVANCED QUANT HUB
+# TAB 4: S/R RANGE-BOUND LAB & MULTI-FACTOR HUB
 # =====================================================================
-elif active_tab == "📊 Advanced Quant Hub":
-    st.markdown("### 📊 Advanced Quantitative Distributions")
-    sorted_df = df_all.sort_values(by="Composite Buy Score", ascending=True).reset_index(drop=True)
-    opts = [f"#{i+1} | {r['Ticker']} - {r['Name']}" for i, r in sorted_df.iterrows()]
-    sel_item = st.selectbox("Select Asset for Statistical Breakdown:", opts)
-    chosen_t = sorted_df.iloc[opts.index(sel_item)]["Ticker"]
+elif active_tab == "🧱 S/R Range-Bound Lab & Multi-Factor Hub":
+    st.markdown("### 🧱 Algorithmic Support, Resistance & Range-Bound Quant Lab")
+    st.caption("Empirical mean-reversion channel analysis, 5-year bounce backtesting, and full 34-parameter quantitative inspection.")
 
-    raw_sub = extract_ticker_df(active_raw_data, chosen_t)
-    if not raw_sub.empty and "Close" in raw_sub.columns:
-        c_c = raw_sub["Close"].dropna()
-        f_rsi = calculate_rsi_series(c_c)
-        st.metric(f"Current 14D RSI for {chosen_t}", f"{float(f_rsi.iloc[-1]):.1f}")
+    current_universe = DEFAULT_STAGE2_STOCK_CONFIG if is_stock_mode else DEFAULT_STAGE1_ETF_CONFIG
+
+    sr_focus = st.radio(
+        "Lab Focus Mode:",
+        [
+            "🎯 S/R Matrix & Range Buy/Sell Signals",
+            "🏆 5-Year Historical S/R Backtest & Predictability Leaderboard",
+            "🔬 Comprehensive 34-Parameter Deep-Dive Inspector"
+        ],
+        horizontal=True
+    )
+    st.markdown("---")
+
+    # =================================================================
+    # FOCUS MODE 1: S/R MATRIX & RANGE BUY/SELL SIGNALS
+    # =================================================================
+    if sr_focus == "🎯 S/R Matrix & Range Buy/Sell Signals":
+        sr_df = compute_sr_matrix(active_raw_data, current_universe, is_stock_mode=is_stock_mode)
+
+        if sr_df.empty:
+            st.warning("⚠️ Market data unavailable to compute Support & Resistance levels.")
+        else:
+            total_assets = len(sr_df)
+            range_bound_count = len(sr_df[sr_df["Regime"].str.contains("Range-Bound", na=False)])
+            buy_count = len(sr_df[sr_df["Action Signal"].str.contains("BUY", na=False)])
+            sell_count = len(sr_df[sr_df["Action Signal"].str.contains("SELL", na=False)])
+            breakout_count = len(sr_df[sr_df["Action Signal"].str.contains("BREAKOUT", na=False)])
+
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Universe Assets", total_assets)
+            c2.metric("🟢 Range-Bound (ADX < 22)", range_bound_count, help="Assets strictly oscillating between Support and Resistance.")
+            c3.metric("🎯 Buy at Support", buy_count, help="Price testing Support Zone S1 with Oversold RSI.")
+            c4.metric("🛑 Sell at Resistance", sell_count, help="Price testing Resistance Ceiling R1 with Overbought RSI.")
+            c5.metric("🚀 Breakout Runners", breakout_count, help="Price breaking above Resistance with volume surge.")
+
+            st.markdown("##### 🔍 Screener Filters")
+            f1, f2, f3 = st.columns([1.5, 1.5, 2])
+            signal_opts = ["All Signals"] + sorted(list(sr_df["Action Signal"].unique()))
+            chosen_sig = f1.selectbox("Filter Action Signal:", signal_opts)
+            regime_opts = ["All Regimes"] + sorted(list(sr_df["Regime"].unique()))
+            chosen_regime = f2.selectbox("Filter Regime:", regime_opts)
+            search_query = f3.text_input("Search Ticker or Name:", "").strip().upper()
+
+            filtered_sr = sr_df.copy()
+            if chosen_sig != "All Signals":
+                filtered_sr = filtered_sr[filtered_sr["Action Signal"] == chosen_sig]
+            if chosen_regime != "All Regimes":
+                filtered_sr = filtered_sr[filtered_sr["Regime"] == chosen_regime]
+            if search_query:
+                filtered_sr = filtered_sr[filtered_sr["Ticker"].str.contains(search_query) | filtered_sr["Name"].str.upper().str.contains(search_query)]
+
+            st.markdown(f"**Showing {len(filtered_sr)} of {total_assets} Assets:**")
+
+            st.dataframe(
+                filtered_sr,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Range Position (%)": st.column_config.ProgressColumn(
+                        "Range Position (0%=S1, 100%=R1)",
+                        min_value=0.0,
+                        max_value=100.0,
+                        format="%.1f%%"
+                    ),
+                    "5Y S/R Win Rate (%)": st.column_config.NumberColumn(
+                        "5Y Win Rate",
+                        format="%.1f%%"
+                    ),
+                    "CMP (₹)": st.column_config.NumberColumn("CMP (₹)", format="₹%.2f"),
+                    "Major Support S1 (₹)": st.column_config.NumberColumn("Support S1 (₹)", format="₹%.2f"),
+                    "Major Resistance R1 (₹)": st.column_config.NumberColumn("Resistance R1 (₹)", format="₹%.2f"),
+                    "Range Midline (₹)": st.column_config.NumberColumn("Midline (₹)", format="₹%.2f"),
+                    "Suggested SL (₹)": st.column_config.NumberColumn("SL (₹)", format="₹%.2f"),
+                    "Suggested Target (₹)": st.column_config.NumberColumn("Target (₹)", format="₹%.2f"),
+                }
+            )
+
+    # =================================================================
+    # FOCUS MODE 2: 5-YEAR S/R BACKTEST & PREDICTABILITY LEADERBOARD
+    # =================================================================
+    elif sr_focus == "🏆 5-Year Historical S/R Backtest & Predictability Leaderboard":
+        st.markdown("#### 🏆 5–6 Year Empirical Support Bounce Predictability")
+        st.markdown(
+            """
+            > **Quantitative Backtest Model:** Evaluates every historical occurrence over the last 5 years (~1,250 daily bars)
+            > where price entered within 2% of the 50-day rolling Support Zone during non-trending regimes (ADX < 32, RSI ≤ 42).
+            > A trade is logged as a **WIN** if price reached the Range Midline or gained $+1.8\\times$ ATR before touching the 1.2x ATR Stop Loss.
+            """
+        )
+
+        lead_df = get_5y_fidelity_leaderboard("Stock" if is_stock_mode else "ETF")
+        if lead_df.empty:
+            lead_df = get_5y_fidelity_leaderboard()
+
+        if not lead_df.empty:
+            top_col1, top_col2 = st.columns(2)
+            with top_col1:
+                st.markdown("##### 🥇 Top 10 Most Predictable Mean-Reverting Assets")
+                top_10 = lead_df.head(10)[["Ticker", "Name", "Success_Probability_Pct", "Historical_5Y_Trades", "Avg_Gain_Pct", "Profit_Factor", "SR_Fidelity_Rating"]]
+                st.dataframe(top_10, use_container_width=True, hide_index=True)
+
+            with top_col2:
+                st.markdown("##### ⚠️ Lowest S/R Fidelity (Trend Runners / Breakdowns)")
+                bottom_5 = lead_df.tail(10).sort_values(by="Success_Probability_Pct", ascending=True)[["Ticker", "Name", "Success_Probability_Pct", "Historical_5Y_Trades", "Avg_Gain_Pct", "Profit_Factor", "SR_Fidelity_Rating"]]
+                st.dataframe(bottom_5, use_container_width=True, hide_index=True)
+
+            st.markdown("---")
+            st.markdown("##### ⚡ Run Live 5-Year Deep Backtest on Any Asset")
+            all_opts = sorted(list(lead_df["Ticker"].unique()))
+            chosen_backtest_sym = st.selectbox("Select Asset for Live 5-Year Backtest Simulation:", all_opts, index=0)
+
+            if st.button(f"🚀 Run Deep 5-Year Backtest on {chosen_backtest_sym}", type="primary"):
+                with st.spinner(f"Downloading 5-year tick history and running systematic simulation for {chosen_backtest_sym}..."):
+                    bt_res = run_live_5y_ticker_backtest(chosen_backtest_sym)
+
+                if bt_res.get("status") == "success":
+                    st.success(f"Backtest Completed for **{chosen_backtest_sym}**!")
+                    b1, b2, b3, b4 = st.columns(4)
+                    b1.metric("Historical S/R Trades", bt_res["trades_count"])
+                    b2.metric("Bounce Success Win Rate", f"{bt_res['win_rate_pct']}%")
+                    b3.metric("Average PnL per Trade", f"{bt_res['avg_pnl_pct']}%")
+                    b4.metric("Profit Factor", bt_res["profit_factor"])
+
+                    st.markdown(f"###### 📈 Recent Price Channel & S/R Level Overlay ({chosen_backtest_sym})")
+                    raw_sub = extract_ticker_df(active_raw_data, chosen_backtest_sym)
+                    if not raw_sub.empty and "Close" in raw_sub.columns:
+                        recent_c = raw_sub["Close"].dropna().tail(120)
+                        recent_h = raw_sub["High"].dropna().tail(120) if "High" in raw_sub.columns else recent_c
+                        recent_l = raw_sub["Low"].dropna().tail(120) if "Low" in raw_sub.columns else recent_c
+                        s1_line = float(recent_l.min())
+                        r1_line = float(recent_h.max())
+                        mid_line = (s1_line + r1_line) / 2.0
+                        chart_df = pd.DataFrame({
+                            "Close Price": recent_c,
+                            "Support S1": [s1_line] * len(recent_c),
+                            "Resistance R1": [r1_line] * len(recent_c),
+                            "Midline": [mid_line] * len(recent_c)
+                        })
+                        st.line_chart(chart_df, height=320)
+
+                    if not bt_res["trades_df"].empty:
+                        st.markdown("###### 📜 Complete 5-Year Trade Execution History")
+                        st.dataframe(bt_res["trades_df"], use_container_width=True, hide_index=True)
+                else:
+                    st.error(f"Backtest error: {bt_res.get('message', 'Unknown failure')}")
+        else:
+            st.info("Leaderboard data initializing. Click the button above to run an on-demand backtest.")
+
+    # =================================================================
+    # FOCUS MODE 3: COMPREHENSIVE 34-PARAMETER DEEP-DIVE INSPECTOR
+    # =================================================================
+    elif sr_focus == "🔬 Comprehensive 34-Parameter Deep-Dive Inspector":
+        st.markdown("#### 🔬 Multi-Factor Technical & Fundamental Parameter Lab")
+        st.caption("Inspect all 34 calculated technical, quantitative, fundamental, and momentum attributes for any asset in the universe.")
+
+        sorted_df = df_all.sort_values(by="Composite Buy Score", ascending=True).reset_index(drop=True)
+        opts = [f"{r['Ticker']} - {r['Name']}" for _, r in sorted_df.iterrows()]
+        sel_item = st.selectbox("Select Asset for Comprehensive Inspection:", opts, index=0)
+        chosen_t = sorted_df.iloc[opts.index(sel_item)]["Ticker"]
+
+        target_row = df_all[df_all["Ticker"] == chosen_t]
+        if not target_row.empty:
+            prof = get_asset_comprehensive_profile(target_row)
+
+            st.markdown(
+                f"""
+                <div style='background: linear-gradient(135deg, #1e293b, #0f172a); padding: 16px 20px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #38bdf8;'>
+                    <h3 style='margin:0; color:#f8fafc;'>{prof.get('Ticker')} &nbsp;|&nbsp; <span style='font-size:18px; color:#94a3b8;'>{prof.get('Name')}</span></h3>
+                    <p style='margin:4px 0 0 0; color:#38bdf8; font-size:14px;'>Category: <b>{prof.get('Category')}</b> &nbsp;•&nbsp; CMP: <b>₹{prof.get('CMP', 0.0):.2f}</b> &nbsp;•&nbsp; 52W Range Position: <b>{prof.get('52W_Range_Pct', 50.0):.1f}%</b></p>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            col_a, col_b = st.columns(2)
+
+            with col_a:
+                st.markdown("##### 🏛️ Valuation & Capital Fundamentals")
+                f_df = pd.DataFrame([
+                    {"Parameter": "Current Market Price (CMP)", "Value": f"₹{prof.get('CMP', 0.0):.2f}", "Direction / Better": "Lower for Buy"},
+                    {"Parameter": "52-Week High", "Value": f"₹{prof.get('52W_High', 0.0):.2f}", "Direction / Better": "Benchmark"},
+                    {"Parameter": "52-Week Low", "Value": f"₹{prof.get('52W_Low', 0.0):.2f}", "Direction / Better": "Major Floor"},
+                    {"Parameter": "52-Week Range Position %", "Value": f"{prof.get('52W_Range_Pct', 0.0):.1f}%", "Direction / Better": "Lower for Buy (<30%)"},
+                    {"Parameter": "Dividend Yield %", "Value": f"{prof.get('Dividend_Yield_Pct', 0.0):.2f}%", "Direction / Better": "Higher (>2.5%)"},
+                    {"Parameter": "Dividend Quality Status", "Value": str(prof.get('Dividend_Status', 'None')), "Direction / Better": "High Cashflow"},
+                    {"Parameter": "Expense Ratio % (ETFs)", "Value": f"{prof.get('Expense_Ratio', 0.0):.2f}%" if prof.get('Expense_Ratio') is not None else "N/A (Stock)", "Direction / Better": "Lower (<0.35%)"},
+                ])
+                st.dataframe(f_df, use_container_width=True, hide_index=True)
+
+                st.markdown("##### 📈 Trend & Moving Averages Matrix")
+                t_df = pd.DataFrame([
+                    {"Parameter": "20 DMA (Short-Term)", "Value": f"₹{prof.get('20_DMA', 0.0):.2f}", "Signal": "Above" if prof.get('CMP', 0) > prof.get('20_DMA', 0) else "Below"},
+                    {"Parameter": "50 DMA (Intermediate)", "Value": f"₹{prof.get('50_DMA', 0.0):.2f}", "Signal": "Above" if prof.get('CMP', 0) > prof.get('50_DMA', 0) else "Below"},
+                    {"Parameter": "100 DMA (Structural)", "Value": f"₹{prof.get('100_DMA', 0.0):.2f}", "Signal": "Above" if prof.get('CMP', 0) > prof.get('100_DMA', 0) else "Below"},
+                    {"Parameter": "200 DMA (Long-Term Trend)", "Value": f"₹{prof.get('200_DMA', 0.0):.2f}", "Signal": "Healthy" if prof.get('CMP', 0) > prof.get('200_DMA', 0) else "Correction"},
+                    {"Parameter": "Distance from 200 DMA %", "Value": f"{prof.get('Dist_200DMA_Pct', 0.0):+.2f}%", "Signal": "Deep Value" if prof.get('Dist_200DMA_Pct', 0) < -5 else "Overextended"},
+                ])
+                st.dataframe(t_df, use_container_width=True, hide_index=True)
+
+            with col_b:
+                st.markdown("##### ⚡ Oscillators, Momentum & Reversals")
+                o_df = pd.DataFrame([
+                    {"Parameter": "14D RSI", "Value": f"{prof.get('RSI_14D', 50.0):.1f}", "Condition": "Oversold" if prof.get('RSI_14D', 50) < 35 else ("Overbought" if prof.get('RSI_14D', 50) > 65 else "Neutral")},
+                    {"Parameter": "1D RSI Delta", "Value": f"{prof.get('RSI_Delta', 0.0):+.2f}", "Condition": "Hooking Up" if prof.get('RSI_Delta', 0) > 0 else "Falling"},
+                    {"Parameter": "Reversal Status", "Value": str(prof.get('Reversal_Status', 'Normal')), "Condition": "Safety Filter"},
+                    {"Parameter": "MACD Line / Signal", "Value": f"{prof.get('MACD_Line', 0.0):.2f} / {prof.get('MACD_Signal', 0.0):.2f}", "Condition": str(prof.get('MACD_Status', 'Neutral'))},
+                    {"Parameter": "MACD Histogram", "Value": f"{prof.get('MACD_Hist', 0.0):+.2f}", "Condition": "Expanding Bullish" if prof.get('MACD_Hist', 0) > 0 else "Bearish"},
+                    {"Parameter": "Stochastic %K / %D", "Value": f"{prof.get('Stochastic_K', 50.0):.1f} / {prof.get('Stochastic_D', 50.0):.1f}", "Condition": "Bottoming" if prof.get('Stochastic_K', 50) < 20 else "Neutral"},
+                    {"Parameter": "21D Rate of Change (ROC %)", "Value": f"{prof.get('ROC_21D', 0.0):+.2f}%", "Condition": "Short Momentum"},
+                    {"Parameter": "63D Rate of Change (ROC %)", "Value": f"{prof.get('ROC_63D', 0.0):+.2f}%", "Condition": "Quarterly Trend"},
+                ])
+                st.dataframe(o_df, use_container_width=True, hide_index=True)
+
+                st.markdown("##### 🌊 Volatility, Volume & Flow Matrix")
+                v_df = pd.DataFrame([
+                    {"Parameter": "Bollinger Upper Band (20,2)", "Value": f"₹{prof.get('Bollinger_Upper', 0.0):.2f}", "Role": "Dynamic Resistance"},
+                    {"Parameter": "Bollinger Lower Band (20,2)", "Value": f"₹{prof.get('Bollinger_Lower', 0.0):.2f}", "Role": "Dynamic Support"},
+                    {"Parameter": "Bollinger %B (Band Position)", "Value": f"{prof.get('Bollinger_B', 0.5):.2f}", "Role": "Floor (<0.20) / Ceiling (>0.80)"},
+                    {"Parameter": "14D Average True Range (ATR ₹)", "Value": f"₹{prof.get('ATR_14D', 0.0):.2f}", "Role": "Daily Volatility Budget"},
+                    {"Parameter": "Cumulative VWAP (Institutional Price)", "Value": f"₹{prof.get('VWAP', 0.0):.2f}", "Role": "Institutional Anchor"},
+                    {"Parameter": "Distance from VWAP %", "Value": f"{prof.get('VWAP_Dist_Pct', 0.0):+.2f}%", "Role": "Institutional Discount"},
+                    {"Parameter": "Volume Surge Ratio (vs 20D Avg)", "Value": f"{prof.get('Volume_Surge_Ratio', 1.0):.2f}x", "Role": "Institutional Accumulation"},
+                    {"Parameter": "20D Annualized Historical Volatility", "Value": f"{prof.get('Hist_Vol', 20.0):.1f}%", "Role": "Risk Sizing"},
+                ])
+                st.dataframe(v_df, use_container_width=True, hide_index=True)
+
+            st.markdown("---")
+            st.markdown("##### 🎯 Composite Quant Scores & AI Recommendations")
+            q1, q2, q3, q4 = st.columns(4)
+            q1.metric("Composite Buy Score", f"#{int(prof.get('Composite_Buy_Score', 50))}", help="Rank 1 is the highest conviction buy.")
+            q2.metric("Composite Sell Score", f"#{int(prof.get('Composite_Sell_Score', 50))}", help="Rank 1 is the most urgent exit candidate.")
+            q3.metric("AI Buy Confidence", f"{prof.get('AI_Buy_Confidence', 50.0):.1f}%")
+            q4.metric("AI Sell Confidence", f"{prof.get('AI_Sell_Confidence', 50.0):.1f}%")
 
 # =====================================================================
 # TAB 5: QUANT ECOSYSTEM & CRON-JOB.ORG SETUP GUIDE

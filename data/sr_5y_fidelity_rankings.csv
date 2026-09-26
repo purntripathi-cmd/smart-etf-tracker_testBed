@@ -1,0 +1,82 @@
+Ticker,Full_Ticker,Name,Asset_Class,Category,Historical_5Y_Trades,Successful_Bounces,Failed_Breakdowns,Success_Probability_Pct,Avg_Gain_Pct,Profit_Factor,SR_Fidelity_Rating
+CHOLAFIN,CHOLAFIN.NS,Cholamandalam Inv,Stock,NBFC,13,11,2,84.6,5.27,12.26,⭐⭐⭐⭐⭐ Elite (>65%)
+GOLDBEES,GOLDBEES.NS,Nippon Gold BeES,ETF,Commodity,7,5,2,71.4,1.91,5.72,⭐⭐⭐⭐⭐ Elite (>65%)
+SETFGOLD,SETFGOLD.NS,SBI Gold ETF,ETF,Commodity,13,9,4,69.2,397.98,810.29,⭐⭐⭐⭐⭐ Elite (>65%)
+MONQ50,MONQ50.NS,Motilal Nasdaq Q 50,ETF,International,12,8,4,66.7,3.46,4.98,⭐⭐⭐⭐⭐ Elite (>65%)
+HDFCMID150,HDFCMID150.NS,HDFC Nifty Midcap 150,ETF,Midcap,6,4,2,66.7,1.76,2.41,⭐⭐⭐⭐⭐ Elite (>65%)
+NV20IETF,NV20IETF.NS,ICICI Nifty50 Value 20,ETF,Value,6,4,2,66.7,3.17,6.08,⭐⭐⭐⭐⭐ Elite (>65%)
+JSWSTEEL,JSWSTEEL.NS,JSW Steel,Stock,Metals,14,9,5,64.3,2.45,3.34,⭐⭐⭐⭐ Strong (55-65%)
+MARUTI,MARUTI.NS,Maruti Suzuki,Stock,Automobile,13,8,5,61.5,1.34,2.14,⭐⭐⭐⭐ Strong (55-65%)
+DRREDDY,DRREDDY.NS,Dr. Reddy's Labs,Stock,Pharma,18,11,7,61.1,2.08,3.01,⭐⭐⭐⭐ Strong (55-65%)
+MAFANG,MAFANG.NS,Mirae NYSE FANG+ ETF,ETF,International,22,13,9,59.1,3.41,3.29,⭐⭐⭐⭐ Strong (55-65%)
+PERSISTENT,PERSISTENT.NS,Persistent Systems,Stock,IT Midcap,17,10,7,58.8,4.12,3.04,⭐⭐⭐⭐ Strong (55-65%)
+TATASTEEL,TATASTEEL.NS,Tata Steel,Stock,Metals,12,7,5,58.3,2.51,3.16,⭐⭐⭐⭐ Strong (55-65%)
+M&M,M&M.NS,Mahindra & Mahindra,Stock,Automobile,14,8,6,57.1,2.67,3.02,⭐⭐⭐⭐ Strong (55-65%)
+ITC,ITC.NS,ITC Ltd,Stock,FMCG,23,13,10,56.5,0.95,1.99,⭐⭐⭐⭐ Strong (55-65%)
+SILVERBEES,SILVERBEES.NS,Nippon Silver BeES,ETF,Commodity,23,13,10,56.5,2.73,3.35,⭐⭐⭐⭐ Strong (55-65%)
+COALINDIA,COALINDIA.NS,Coal India,Stock,Mining / PSU,13,7,6,53.8,2.19,3.12,⭐⭐⭐ Moderate (45-55%)
+TECHM,TECHM.NS,Tech Mahindra,Stock,IT Services,17,9,8,52.9,1.29,1.8,⭐⭐⭐ Moderate (45-55%)
+ONGC,ONGC.NS,ONGC,Stock,Oil & Gas / PSU,18,9,9,50.0,2.63,2.74,⭐⭐⭐ Moderate (45-55%)
+WIPRO,WIPRO.NS,Wipro,Stock,IT Services,18,9,9,50.0,1.02,1.59,⭐⭐⭐ Moderate (45-55%)
+JUNIORBEES,JUNIORBEES.NS,Nippon Junior BeES,ETF,Next 50,18,9,9,50.0,2.0,2.1,⭐⭐⭐ Moderate (45-55%)
+HAL,HAL.NS,Hindustan Aeronautics,Stock,Defense / PSU,16,8,8,50.0,1.22,1.69,⭐⭐⭐ Moderate (45-55%)
+SBIN,SBIN.NS,State Bank of India,Stock,PSU Banking,14,7,7,50.0,2.05,2.63,⭐⭐⭐ Moderate (45-55%)
+AXISBANK,AXISBANK.NS,Axis Bank,Stock,Banking,14,7,7,50.0,1.29,2.01,⭐⭐⭐ Moderate (45-55%)
+NIFTYQLITY,NIFTYQLITY.NS,SBI Nifty 200 Quality 30,ETF,Smart Beta,14,7,7,50.0,0.94,1.56,⭐⭐⭐ Moderate (45-55%)
+BEL,BEL.NS,Bharat Electronics,Stock,Defense / PSU,12,6,6,50.0,2.48,2.74,⭐⭐⭐ Moderate (45-55%)
+EICHERMOT,EICHERMOT.NS,Eicher Motors,Stock,Automobile,8,4,4,50.0,0.84,1.48,⭐⭐⭐ Moderate (45-55%)
+KOTAKBANK,KOTAKBANK.NS,Kotak Mahindra Bank,Stock,Banking,21,10,11,47.6,1.23,1.93,⭐⭐⭐ Moderate (45-55%)
+MON100,MON100.NS,Motilal Nasdaq 100,ETF,International,17,8,9,47.1,0.72,1.29,⭐⭐⭐ Moderate (45-55%)
+ULTRACEMCO,ULTRACEMCO.NS,UltraTech Cement,Stock,Cement,15,7,8,46.7,1.06,1.85,⭐⭐⭐ Moderate (45-55%)
+BRITANNIA,BRITANNIA.NS,Britannia Industries,Stock,FMCG,15,7,8,46.7,0.34,1.25,⭐⭐⭐ Moderate (45-55%)
+CUMMINSIND,CUMMINSIND.NS,Cummins India,Stock,Capital Goods,13,6,7,46.2,1.01,1.53,⭐⭐⭐ Moderate (45-55%)
+QUAL30IETF,QUAL30IETF.NS,ICICI Nifty 200 Quality 30,ETF,Smart Beta,13,6,7,46.2,0.91,1.56,⭐⭐⭐ Moderate (45-55%)
+MIDCAPIETF,MIDCAPIETF.NS,Mirae Nifty Midcap 150,ETF,Midcap,22,10,12,45.5,1.03,1.61,⭐⭐⭐ Moderate (45-55%)
+NEXT50IETF,NEXT50IETF.NS,ICICI Nifty Next 50,ETF,Next 50,11,5,6,45.5,0.63,1.27,⭐⭐⭐ Moderate (45-55%)
+MASPTOP50,MASPTOP50.NS,Mirae S&P 500 Top 50,ETF,International,11,5,6,45.5,1.98,1.82,⭐⭐⭐ Moderate (45-55%)
+HINDUNILVR,HINDUNILVR.NS,Hindustan Unilever,Stock,FMCG,20,9,11,45.0,0.82,1.64,⭐⭐⭐ Moderate (45-55%)
+HDFCBANK,HDFCBANK.NS,HDFC Bank,Stock,Banking,18,8,10,44.4,0.66,1.47,⭐ Low / Trend Runner
+ICICIBANK,ICICIBANK.NS,ICICI Bank,Stock,Banking,9,4,5,44.4,0.9,1.87,⭐ Low / Trend Runner
+GRASIM,GRASIM.NS,Grasim Industries,Stock,Materials,7,3,4,42.9,0.25,1.14,⭐ Low / Trend Runner
+SMALLCAP,SMALLCAP.NS,Mirae Smallcap 250,ETF,Smallcap,7,3,4,42.9,0.24,1.2,⭐ Low / Trend Runner
+HEROMOTOCO,HEROMOTOCO.NS,Hero MotoCorp,Stock,Automobile,19,8,11,42.1,0.93,1.49,⭐ Low / Trend Runner
+APOLLOHOSP,APOLLOHOSP.NS,Apollo Hospitals,Stock,Healthcare,12,5,7,41.7,-0.19,0.91,⭐ Low / Trend Runner
+NESTLEIND,NESTLEIND.NS,Nestle India,Stock,FMCG,15,6,9,40.0,0.02,1.02,⭐ Low / Trend Runner
+BHARTIARTL,BHARTIARTL.NS,Bharti Airtel,Stock,Telecom,10,4,6,40.0,0.23,1.14,⭐ Low / Trend Runner
+SUNPHARMA,SUNPHARMA.NS,Sun Pharma,Stock,Pharma,10,4,6,40.0,-0.03,0.99,⭐ Low / Trend Runner
+ALPHAETF,ALPHAETF.NS,Mirae Nifty 200 Alpha 30,ETF,Smart Beta,5,2,3,40.0,-0.45,0.67,⭐ Low / Trend Runner
+INFY,INFY.NS,Infosys Ltd,Stock,IT Services,18,7,11,38.9,0.12,1.07,⭐ Low / Trend Runner
+ALPL30IETF,ALPL30IETF.NS,ICICI Alpha Low Vol 30,ETF,Smart Beta,18,7,11,38.9,-0.39,0.78,⭐ Low / Trend Runner
+BAJFINANCE,BAJFINANCE.NS,Bajaj Finance,Stock,NBFC,13,5,8,38.5,1.46,1.87,⭐ Low / Trend Runner
+HDFCNIFTY,HDFCNIFTY.NS,HDFC Nifty 50 ETF,ETF,Large Cap,13,5,8,38.5,-0.18,0.87,⭐ Low / Trend Runner
+CIPLA,CIPLA.NS,Cipla Ltd,Stock,Pharma,14,5,9,35.7,-0.4,0.74,⭐ Low / Trend Runner
+BAJAJFINSV,BAJAJFINSV.NS,Bajaj Finserv,Stock,Financial Services,12,4,8,33.3,0.6,1.28,⭐ Low / Trend Runner
+MOM30IETF,MOM30IETF.NS,ICICI Nifty200 Momentum 30,ETF,Smart Beta,9,3,6,33.3,-0.16,0.92,⭐ Low / Trend Runner
+RELIANCE,RELIANCE.NS,Reliance Industries,Stock,Energy & Retail,19,6,13,31.6,0.14,1.09,⭐ Low / Trend Runner
+MAHKTECH,MAHKTECH.NS,Mirae Hang Seng TECH ETF,ETF,International,19,6,13,31.6,0.28,1.12,⭐ Low / Trend Runner
+POWERGRID,POWERGRID.NS,Power Grid Corp,Stock,Power / PSU,16,5,11,31.2,-0.75,0.62,⭐ Low / Trend Runner
+MOVALUE,MOVALUE.NS,Motilal Enhanced Value,ETF,Value,13,4,9,30.8,-0.03,0.99,⭐ Low / Trend Runner
+ASIANPAINT,ASIANPAINT.NS,Asian Paints,Stock,Paints / Consumer,23,7,16,30.4,0.14,1.08,⭐ Low / Trend Runner
+HCLTECH,HCLTECH.NS,HCL Technologies,Stock,IT Services,20,6,14,30.0,-0.04,0.98,⭐ Low / Trend Runner
+TATACONSUM,TATACONSUM.NS,Tata Consumer Products,Stock,FMCG,21,6,15,28.6,-0.55,0.7,⭐ Low / Trend Runner
+NTPC,NTPC.NS,NTPC Ltd,Stock,Power / PSU,14,4,10,28.6,-0.21,0.88,⭐ Low / Trend Runner
+ADANIENT,ADANIENT.NS,Adani Enterprises,Stock,Conglomerate,14,4,10,28.6,-0.81,0.68,⭐ Low / Trend Runner
+HDFCSML250,HDFCSML250.NS,HDFC Smallcap 250,ETF,Smallcap,14,4,10,28.6,-0.89,0.62,⭐ Low / Trend Runner
+HINDALCO,HINDALCO.NS,Hindalco Industries,Stock,Metals,7,2,5,28.6,0.63,1.25,⭐ Low / Trend Runner
+BPCL,BPCL.NS,BPCL,Stock,Oil & Gas / PSU,18,5,13,27.8,-1.23,0.51,⭐ Low / Trend Runner
+CPSEETF,CPSEETF.NS,CPSE ETF (Nippon),ETF,CPSE / PSU,11,3,8,27.3,-0.22,0.9,⭐ Low / Trend Runner
+NIFTYBEES,NIFTYBEES.NS,Nippon Nifty 50 BeES,ETF,Large Cap,15,4,11,26.7,0.1,1.06,⭐ Low / Trend Runner
+DIVOPPBEES,DIVOPPBEES.NS,Nippon Dividend Opp 50,ETF,Dividend,15,4,11,26.7,-0.96,0.68,⭐ Low / Trend Runner
+TCS,TCS.NS,Tata Consultancy Services,Stock,IT Services,23,6,17,26.1,-0.51,0.73,⭐ Low / Trend Runner
+SETFNIF50,SETFNIF50.NS,SBI Nifty 50 ETF,ETF,Large Cap,16,4,12,25.0,-0.34,0.77,⭐ Low / Trend Runner
+ADANIPORTS,ADANIPORTS.NS,Adani Ports & SEZ,Stock,Infrastructure,12,3,9,25.0,-0.54,0.76,⭐ Low / Trend Runner
+VBL,VBL.NS,Varun Beverages,Stock,Beverages,12,3,9,25.0,-0.39,0.86,⭐ Low / Trend Runner
+POLYCAB,POLYCAB.NS,Polycab India,Stock,Cables & Electricals,8,2,6,25.0,-1.29,0.55,⭐ Low / Trend Runner
+DIXON,DIXON.NS,Dixon Technologies,Stock,EMS / Electronics,8,2,6,25.0,0.24,1.09,⭐ Low / Trend Runner
+ICICIB22,ICICIB22.NS,ICICI BHARAT 22 ETF,ETF,CPSE / PSU,13,3,10,23.1,-1.16,0.5,⭐ Low / Trend Runner
+TITAN,TITAN.NS,Titan Company,Stock,Consumer Discretionary,9,2,7,22.2,-0.54,0.79,⭐ Low / Trend Runner
+HNGSNGBEES,HNGSNGBEES.NS,Nippon Hang Seng BeES,ETF,International,25,5,20,20.0,-1.33,0.38,⭐ Low / Trend Runner
+SILVERIETF,SILVERIETF.NS,ICICI Silver ETF,ETF,Commodity,5,1,4,20.0,-2.01,0.49,⭐ Low / Trend Runner
+TRENT,TRENT.NS,Trent Ltd,Stock,Retail,6,1,5,16.7,-1.29,0.6,⭐ Low / Trend Runner
+MOMENTUM50,MOMENTUM50.NS,Nippon Nifty 500 Momentum 50,ETF,Smart Beta,6,1,5,16.7,-2.18,0.09,⭐ Low / Trend Runner
+LT,LT.NS,Larsen & Toubro,Stock,Infrastructure,10,1,9,10.0,-1.87,0.28,⭐ Low / Trend Runner

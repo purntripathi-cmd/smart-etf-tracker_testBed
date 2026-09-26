@@ -360,6 +360,45 @@ def run_paper_trader_daemon(mode_override=None, force_weekend=False):
                     active_ticker_set.add(sym)
                     logger.info(f"[STOCK] [{p_name}] {sym}: BUY @ ₹{cmp_val:.2f} | Qty: {final_qty} | SL: ₹{r['Stop_Loss']} | Tgt: ₹{r['Target']}")
 
+        # 3. S/R Range Mean Reversion Routine (Top High-Fidelity Support Bounce)
+        try:
+            from sr_engine import compute_sr_matrix
+            sr_stocks = compute_sr_matrix(raw_data, DEFAULT_STAGE2_STOCK_CONFIG, is_stock_mode=True)
+            if not sr_stocks.empty:
+                # Find top candidate with Action Signal containing BUY/ACCUMULATE and high 5Y win rate
+                sr_cand = sr_stocks[
+                    sr_stocks["Action Signal"].str.contains("BUY|ACCUMULATE", na=False) &
+                    (sr_stocks["5Y S/R Win Rate (%)"] >= 55.0)
+                ]
+                if not sr_cand.empty:
+                    top_sr = sr_cand.iloc[0]
+                    sym = str(top_sr["Ticker"]).replace(".NS", "").strip()
+                    cmp_val = float(top_sr["CMP (₹)"])
+                    if sym not in active_ticker_set and cmp_val > 0:
+                        qty = max(1, int(15000 // cmp_val))
+                        sl_val = float(top_sr["Suggested SL (₹)"])
+                        tgt_val = float(top_sr["Suggested Target (₹)"])
+                        trade_id = f"V2_SR_{int(datetime.datetime.now(IST).timestamp())}_{sym}"
+                        rec = {
+                            "Trade_ID": trade_id, "Username": "V2_Daemon", "Ticker": sym,
+                            "Asset_Class": "Stock", "Trigger_Type": "SR_SUPPORT_BUY", "Strategy_Preset": "S/R Range Mean Reversion",
+                            "Status": "ACTIVE", "Entry_Price": cmp_val, "Live_CMP": cmp_val, "Executed_Qty": qty,
+                            "Stop_Loss": sl_val, "Target": tgt_val,
+                            "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                            "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                            "Invested_Value": round(cmp_val * qty, 2),
+                            "Technical_Score_At_Entry": round(float(top_sr.get("RSI (14D)", 50.0)), 1),
+                            "Fundamental_Score_At_Entry": round(float(top_sr.get("5Y S/R Win Rate (%)", 50.0)), 1),
+                            "RSI_At_Entry": round(float(top_sr.get("RSI (14D)", 50.0)), 1),
+                            "Composite_Score_At_Entry": round(float(top_sr.get("Range Position (%)", 50.0)), 1),
+                            "Market_Regime_At_Entry": str(top_sr.get("Regime", regime_name))
+                        }
+                        created_records.append(rec)
+                        active_ticker_set.add(sym)
+                        logger.info(f"[SR_RANGE] [STOCK] {sym}: BUY @ ₹{cmp_val:.2f} | 5Y Win Rate: {top_sr.get('5Y S/R Win Rate (%)')}% | Qty: {qty} | SL: ₹{sl_val} | Tgt: ₹{tgt_val}")
+        except Exception as ex:
+            logger.error(f"S/R Range Mean Reversion routine error: {ex}")
+
     # 4. Save New Trades to Local CSV
     if created_records:
         new_trades_df = pd.DataFrame(created_records)

@@ -1,0 +1,2 @@
+Timestamp_IST,Trigger_Source,Preset,Recommended_BUY,Recommended_SELL,Execution_Status,Reason_Summary
+2026-09-26 13:13:59,V2_SR_EXEC_TestRunner,S/R Range Mean Reversion,TESTTICKER,None,🟢 Logged (150 Qty @ ₹100.00),"S/R Entry triggered. SL: ₹95.00, Target: ₹108.00, 5Y Win Rate: 75.0%."

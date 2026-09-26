@@ -68,7 +68,9 @@ try:
         compute_sr_matrix,
         get_5y_fidelity_leaderboard,
         run_live_5y_ticker_backtest,
-        get_asset_comprehensive_profile
+        get_asset_comprehensive_profile,
+        style_sr_matrix_dataframe,
+        execute_sr_paper_trade
     )
 except Exception as _import_err:
     import traceback
@@ -863,6 +865,37 @@ elif active_tab == "📈 Paper Trading & Multi-Regime Ledger":
                             "Market_Regime_At_Entry": regime_name
                         })
                         active_syms.add(sym)
+
+                # S/R Range-Bound High-Fidelity Mean Reversion Candidates
+                try:
+                    sr_df_stk = compute_sr_matrix(active_raw_data, DEFAULT_STAGE2_STOCK_CONFIG, is_stock_mode=True)
+                    if not sr_df_stk.empty:
+                        sr_cands = sr_df_stk[
+                            sr_df_stk["Action Signal"].str.contains("BUY|ACCUMULATE", na=False) &
+                            (sr_df_stk["5Y S/R Win Rate (%)"] >= 55.0)
+                        ]
+                        for _, r in sr_cands.head(2).iterrows():
+                            sym = str(r["Ticker"]).replace(".NS", "")
+                            cmp_v = float(r["CMP (₹)"])
+                            if sym in active_syms or cmp_v <= 0: continue
+                            q = max(1, int(15000 // cmp_v))
+                            created.append({
+                                "Trade_ID": f"V2_SR_{int(datetime.datetime.now(IST).timestamp())}_{sym}", "Username": "Public_User", "Ticker": sym,
+                                "Asset_Class": "Stock", "Trigger_Type": "SR_SUPPORT_BUY", "Strategy_Preset": "S/R Range Mean Reversion",
+                                "Status": "ACTIVE", "Entry_Price": cmp_v, "Live_CMP": cmp_v, "Executed_Qty": q,
+                                "Stop_Loss": r["Suggested SL (₹)"], "Target": r["Suggested Target (₹)"],
+                                "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                                "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                                "Invested_Value": round(cmp_v * q, 2),
+                                "Technical_Score_At_Entry": round(float(r.get("RSI (14D)", 50.0)), 1),
+                                "Fundamental_Score_At_Entry": round(float(r.get("5Y S/R Win Rate (%)", 50.0)), 1),
+                                "RSI_At_Entry": round(float(r.get("RSI (14D)", 50.0)), 1),
+                                "Composite_Score_At_Entry": round(float(r.get("Range Position (%)", 50.0)), 1),
+                                "Market_Regime_At_Entry": str(r.get("Regime", regime_name))
+                            })
+                            active_syms.add(sym)
+                except Exception as _sr_man_err:
+                    pass
             else:
                 all_t = evaluate_trade_exits(all_t, active_raw_data, force_squareoff_intraday=True)
 
@@ -1097,13 +1130,25 @@ elif active_tab == "🧱 S/R Range-Bound Lab & Multi-Factor Hub":
             c4.metric("🛑 Sell at Resistance", sell_count, help="Price testing Resistance Ceiling R1 with Overbought RSI.")
             c5.metric("🚀 Breakout Runners", breakout_count, help="Price breaking above Resistance with volume surge.")
 
-            st.markdown("##### 🔍 Screener Filters")
+            st.markdown("##### 🔍 Screener Filters & Priority Sorting")
             f1, f2, f3 = st.columns([1.5, 1.5, 2])
             signal_opts = ["All Signals"] + sorted(list(sr_df["Action Signal"].unique()))
             chosen_sig = f1.selectbox("Filter Action Signal:", signal_opts)
             regime_opts = ["All Regimes"] + sorted(list(sr_df["Regime"].unique()))
             chosen_regime = f2.selectbox("Filter Regime:", regime_opts)
             search_query = f3.text_input("Search Ticker or Name:", "").strip().upper()
+
+            sort_mode = st.radio(
+                "Sort Table By:",
+                [
+                    "🎯 Best Picks (5Y Success Probability % Descending)",
+                    "🟢 Buy Signals First (BUY AT SUPPORT & ACCUMULATE)",
+                    "🔴 Exit Signals First (SELL AT RESISTANCE & DISTRIBUTION)",
+                    "📏 Nearest to Support Floor (Lowest Range %)",
+                    "🔤 Alphabetical (Ticker A-Z)"
+                ],
+                horizontal=True
+            )
 
             filtered_sr = sr_df.copy()
             if chosen_sig != "All Signals":
@@ -1113,31 +1158,95 @@ elif active_tab == "🧱 S/R Range-Bound Lab & Multi-Factor Hub":
             if search_query:
                 filtered_sr = filtered_sr[filtered_sr["Ticker"].str.contains(search_query) | filtered_sr["Name"].str.upper().str.contains(search_query)]
 
-            st.markdown(f"**Showing {len(filtered_sr)} of {total_assets} Assets:**")
+            # Apply user-selected sort
+            if sort_mode == "🎯 Best Picks (5Y Success Probability % Descending)":
+                filtered_sr = filtered_sr.sort_values(by=["5Y S/R Win Rate (%)", "Range Position (%)"], ascending=[False, True]).reset_index(drop=True)
+            elif sort_mode == "🟢 Buy Signals First (BUY AT SUPPORT & ACCUMULATE)":
+                def _buy_rank(sig):
+                    if "BUY" in str(sig): return 1
+                    if "ACCUMULATE" in str(sig): return 2
+                    return 3
+                filtered_sr["_rank"] = filtered_sr["Action Signal"].apply(_buy_rank)
+                filtered_sr = filtered_sr.sort_values(by=["_rank", "5Y S/R Win Rate (%)"], ascending=[True, False]).drop(columns=["_rank"]).reset_index(drop=True)
+            elif sort_mode == "🔴 Exit Signals First (SELL AT RESISTANCE & DISTRIBUTION)":
+                def _sell_rank(sig):
+                    if "SELL" in str(sig): return 1
+                    if "DISTRIBUTION" in str(sig): return 2
+                    return 3
+                filtered_sr["_rank"] = filtered_sr["Action Signal"].apply(_sell_rank)
+                filtered_sr = filtered_sr.sort_values(by=["_rank", "Range Position (%)"], ascending=[True, False]).drop(columns=["_rank"]).reset_index(drop=True)
+            elif sort_mode == "📏 Nearest to Support Floor (Lowest Range %)":
+                filtered_sr = filtered_sr.sort_values(by="Range Position (%)", ascending=True).reset_index(drop=True)
+            elif sort_mode == "🔤 Alphabetical (Ticker A-Z)":
+                filtered_sr = filtered_sr.sort_values(by="Ticker", ascending=True).reset_index(drop=True)
+
+            st.markdown(f"**Showing {len(filtered_sr)} of {total_assets} Assets (Best Probability on Top):**")
+            st.caption(r"🎨 **Color Coding Legend:** 🟢 **Soft Green** = Favourable Buy Indicators (`BUY AT SUPPORT`, `ACCUMULATE`, Range Position $\le 30\%$, Exit Target Objective, 5Y Win Rate $\ge 60\%$) | 🔴 **Soft Red** = Exit / Risk Indicators (`SELL AT RESISTANCE`, `DISTRIBUTION`, Range Position $\ge 70\%$, Stop Loss Boundary, RSI $\ge 65$).")
+
+            # Format dictionary for styled rendering
+            format_dict = {}
+            for col in ["CMP (₹)", "Major Support S1 (₹)", "Structural Support S2 (₹)", "Major Resistance R1 (₹)", "Structural High R2 (₹)", "Range Midline (₹)", "Suggested SL (₹)", "Suggested Target (₹)"]:
+                if col in filtered_sr.columns:
+                    format_dict[col] = "₹{:.2f}"
+            for col in ["Dist from Support (%)", "Dist from Resistance (%)", "Range Position (%)", "Channel Width (%)", "5Y S/R Win Rate (%)"]:
+                if col in filtered_sr.columns:
+                    format_dict[col] = "{:.1f}%"
+            for col in ["RSI (14D)", "ADX (14D)"]:
+                if col in filtered_sr.columns:
+                    format_dict[col] = "{:.1f}"
 
             st.dataframe(
-                filtered_sr,
+                filtered_sr.style.apply(style_sr_matrix_dataframe, axis=None).format(format_dict),
                 use_container_width=True,
                 hide_index=True,
-                column_config={
-                    "Range Position (%)": st.column_config.ProgressColumn(
-                        "Range Position (0%=S1, 100%=R1)",
-                        min_value=0.0,
-                        max_value=100.0,
-                        format="%.1f%%"
-                    ),
-                    "5Y S/R Win Rate (%)": st.column_config.NumberColumn(
-                        "5Y Win Rate",
-                        format="%.1f%%"
-                    ),
-                    "CMP (₹)": st.column_config.NumberColumn("CMP (₹)", format="₹%.2f"),
-                    "Major Support S1 (₹)": st.column_config.NumberColumn("Support S1 (₹)", format="₹%.2f"),
-                    "Major Resistance R1 (₹)": st.column_config.NumberColumn("Resistance R1 (₹)", format="₹%.2f"),
-                    "Range Midline (₹)": st.column_config.NumberColumn("Midline (₹)", format="₹%.2f"),
-                    "Suggested SL (₹)": st.column_config.NumberColumn("SL (₹)", format="₹%.2f"),
-                    "Suggested Target (₹)": st.column_config.NumberColumn("Target (₹)", format="₹%.2f"),
-                }
+                height=450
             )
+
+            # =============================================================
+            # PAPER TRADING 1-CLICK EXECUTION SECTION
+            # =============================================================
+            st.markdown("---")
+            st.markdown("##### ⚡ Paper Trading Execution: Deploy Top S/R Candidate to Active Ledger")
+            st.caption("Execute high-conviction S/R mean-reversion setups directly into Tab 2's Paper Trading Ledger. Realized and unrealized PnL will be continuously managed with systematic Stop Loss & Target exits.")
+
+            top_sr_picks = filtered_sr[filtered_sr["Action Signal"].str.contains("BUY|ACCUMULATE", na=False)]
+            if top_sr_picks.empty:
+                top_sr_picks = filtered_sr
+
+            exec_options = [
+                f"#{i+1} | {r['Ticker']} ({r['Action Signal']} | 5Y Win: {r['5Y S/R Win Rate (%)']}% | CMP: ₹{r['CMP (₹)']:.2f})"
+                for i, r in top_sr_picks.reset_index(drop=True).iterrows()
+            ]
+
+            if exec_options:
+                p_col1, p_col2 = st.columns([3, 1])
+                with p_col1:
+                    chosen_exec_item = st.selectbox("Select Candidate for Paper Execution:", exec_options, index=0)
+                    chosen_idx = exec_options.index(chosen_exec_item)
+                    target_sr_row = top_sr_picks.reset_index(drop=True).iloc[chosen_idx]
+                    clean_sym = str(target_sr_row["Ticker"])
+                    cmp_val = float(target_sr_row["CMP (₹)"])
+                    sl_val = float(target_sr_row["Suggested SL (₹)"])
+                    tgt_val = float(target_sr_row["Suggested Target (₹)"])
+                    win_rate = target_sr_row["5Y S/R Win Rate (%)"]
+                    tranche_budget = 15000.0
+                    est_qty = max(1, int(tranche_budget // cmp_val))
+                    st.info(
+                        f"📋 **Order Parameters for {clean_sym}:** Entry CMP: **₹{cmp_val:.2f}** | "
+                        f"Allocated Qty: **{est_qty}** (Tranche: ₹{tranche_budget:,.0f}) | "
+                        f"Stop Loss: **₹{sl_val:.2f}** (Risk) | Target: **₹{tgt_val:.2f}** (Reward) | "
+                        f"5Y Empirical Win Rate: **{win_rate}%** ({target_sr_row.get('S/R Predictability Rating', '')})"
+                    )
+                with p_col2:
+                    st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                    if st.button(f"⚡ Execute {clean_sym} to Paper Ledger", type="primary", use_container_width=True):
+                        success, msg = execute_sr_paper_trade(clean_sym, target_sr_row, budget=tranche_budget, username="Public_User")
+                        if success:
+                            st.success(f"🎉 {msg}")
+                            st.session_state.strategy_toast = f"Executed {clean_sym} to Paper Ledger!"
+                            st.rerun()
+                        else:
+                            st.warning(f"⚠️ {msg}")
 
     # =================================================================
     # FOCUS MODE 2: 5-YEAR S/R BACKTEST & PREDICTABILITY LEADERBOARD

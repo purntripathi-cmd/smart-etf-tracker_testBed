@@ -222,7 +222,9 @@ def generate_v2_docx_content():
     body_elements.append(build_bullet("Detects Immediate Support (S1), Structural Floor (S2), Immediate Resistance (R1), Structural Ceiling (R2), and Channel Midline.", "Algorithmic S/R Detection:"))
     body_elements.append(build_bullet("ADX < 22 and Choppiness Index identify consolidation boxes. Generates BUY AT SUPPORT, SELL AT RESISTANCE, and BREAKOUT RUNNER signals.", "Range Regime & Signals:"))
     body_elements.append(build_bullet("Simulates 5-6 years of daily data (~1,250 bars) for support bounces. Measures Win Rate %, Average PnL %, and Profit Factor.", "5-Year Empirical Backtest:"))
-    body_elements.append(build_bullet("Ranks the universe by S/R fidelity (e.g. Cholamandalam 84.6%, Gold BeES 71.4%, Maruti 61.5%, ITC 56.5%).", "Predictability Leaderboard:"))
+    body_elements.append(build_bullet("Ranks the universe by S/R fidelity (e.g. Cholamandalam 84.6%, Gold BeES 71.4%, Maruti 61.5%, ITC 56.5%) with best predictability picks sorted on top descending.", "Predictability Leaderboard & Priority Sorting:"))
+    body_elements.append(build_bullet("Soft Green highlights favourable buy values (BUY AT SUPPORT, ACCUMULATE, Range <= 30%, Target, Win Rate >= 60%) and Soft Red highlights exit values (SELL AT RESISTANCE, DISTRIBUTION, Range >= 70%, Stop Loss, RSI >= 65).", "Visual Heatmap Styling:"))
+    body_elements.append(build_bullet("One-click execution from Tab 4 logs trades directly into Tab 2 Paper Trading Ledger; automated 3 PM daemon also scans and executes top S/R candidates with systematic Stop Loss & Target exit monitoring.", "Paper Trading Execution:"))
     body_elements.append(build_bullet("Complete parameter laboratory showing all 34 technical, quantitative, momentum, and fundamental metrics for any selected asset.", "34-Parameter Deep Dive:"))
 
     body_elements.append(build_p("", space_after=180))

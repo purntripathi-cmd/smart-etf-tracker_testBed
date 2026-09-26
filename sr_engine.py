@@ -199,7 +199,15 @@ def compute_sr_matrix(raw, universe_config, is_stock_mode=False):
             "S/R Predictability Rating": fid_rating
         })
 
-    return pd.DataFrame(records)
+    res_df = pd.DataFrame(records)
+    if not res_df.empty and "5Y S/R Win Rate (%)" in res_df.columns:
+        # Default sort: Best picks on top (descending 5Y empirical success probability, then proximity to support)
+        res_df = res_df.sort_values(
+            by=["5Y S/R Win Rate (%)", "Range Position (%)"],
+            ascending=[False, True]
+        ).reset_index(drop=True)
+
+    return res_df
 
 
 # =====================================================================
@@ -432,3 +440,181 @@ def get_asset_comprehensive_profile(raw_row):
         "AI_Buy_Confidence": float(r.get("AI_Buy_Confidence", 50.0)),
         "AI_Sell_Confidence": float(r.get("AI_Sell_Confidence", 50.0))
     }
+
+
+# =====================================================================
+# 5. S/R MATRIX VISUAL STYLER (BUY IN GREEN, SELL/EXIT IN RED)
+# =====================================================================
+def style_sr_matrix_dataframe(df):
+    """
+    Applies custom visual styling to S/R Matrix:
+    - Favourable / Buy Indicating Values -> Soft Green (#d4edda background, #155724 text, bold)
+      * Action Signal: BUY AT SUPPORT, ACCUMULATE (LOWER THIRD)
+      * Range Position (%): <= 30% (Near Support)
+      * Dist from Support (%): <= 2.5%
+      * Suggested Target (₹) / Exit Range (Green profit objective)
+      * 5Y S/R Win Rate (%): >= 60% (High fidelity)
+    - Exit / Sell Indicating Values -> Soft Red (#f8d7da background, #721c24 text, bold)
+      * Action Signal: SELL AT RESISTANCE, DISTRIBUTION (UPPER THIRD)
+      * Range Position (%): >= 70% (Near Resistance)
+      * Dist from Resistance (%): <= 2.5%
+      * Suggested SL (₹): Stop loss risk boundary
+      * RSI (14D): >= 65
+    - Breakout Runner -> Soft Purple / Blue (#e0e7ff, #3730a3)
+    """
+    styles = pd.DataFrame("", index=df.index, columns=df.columns)
+
+    for idx, r in df.iterrows():
+        # 1. Action Signal
+        sig = str(r.get("Action Signal", ""))
+        if "BUY" in sig or "ACCUMULATE" in sig:
+            styles.loc[idx, "Action Signal"] = "background-color: #d4edda; color: #155724; font-weight: bold;"
+        elif "SELL" in sig or "DISTRIBUTION" in sig:
+            styles.loc[idx, "Action Signal"] = "background-color: #f8d7da; color: #721c24; font-weight: bold;"
+        elif "BREAKOUT" in sig:
+            styles.loc[idx, "Action Signal"] = "background-color: #e0e7ff; color: #3730a3; font-weight: bold;"
+        elif "MID-RANGE" in sig:
+            styles.loc[idx, "Action Signal"] = "background-color: #fef9c3; color: #854d0e; font-weight: 500;"
+
+        # 2. Range Position (%) - Favourable Buy Zone (<=30%) in Green, Exit Zone (>=70%) in Red
+        try:
+            pos = float(r.get("Range Position (%)", 50.0))
+            if pos <= 30.0:
+                styles.loc[idx, "Range Position (%)"] = "background-color: #d4edda; color: #155724; font-weight: bold;"
+            elif pos >= 70.0:
+                styles.loc[idx, "Range Position (%)"] = "background-color: #f8d7da; color: #721c24; font-weight: bold;"
+        except Exception:
+            pass
+
+        # 3. Distance from Support (%)
+        try:
+            dist_s = float(r.get("Dist from Support (%)", 50.0))
+            if dist_s <= 2.5:
+                styles.loc[idx, "Dist from Support (%)"] = "background-color: #d4edda; color: #155724; font-weight: bold;"
+        except Exception:
+            pass
+
+        # 4. Distance from Resistance (%)
+        try:
+            dist_r = float(r.get("Dist from Resistance (%)", 50.0))
+            if dist_r <= 2.5:
+                styles.loc[idx, "Dist from Resistance (%)"] = "background-color: #f8d7da; color: #721c24; font-weight: bold;"
+        except Exception:
+            pass
+
+        # 5. Suggested Target (Exit Profit Range) -> Green
+        if "Suggested Target (₹)" in df.columns:
+            styles.loc[idx, "Suggested Target (₹)"] = "background-color: #dcfce7; color: #166534; font-weight: bold;"
+
+        # 6. Suggested SL (Risk Exit Boundary) -> Red
+        if "Suggested SL (₹)" in df.columns:
+            styles.loc[idx, "Suggested SL (₹)"] = "background-color: #fee2e2; color: #991b1b; font-weight: bold;"
+
+        # 7. 5Y S/R Win Rate (%) -> Highlight High Probability >= 60% in Green
+        try:
+            wr = float(r.get("5Y S/R Win Rate (%)", 50.0))
+            if wr >= 60.0:
+                styles.loc[idx, "5Y S/R Win Rate (%)"] = "background-color: #dcfce7; color: #15803d; font-weight: bold;"
+        except Exception:
+            pass
+
+        # 8. RSI (14D) - Favourable dip (<=38) Green, Stretched (>=65) Red
+        try:
+            rsi = float(r.get("RSI (14D)", 50.0))
+            if rsi <= 38.0:
+                styles.loc[idx, "RSI (14D)"] = "background-color: #d4edda; color: #155724; font-weight: bold;"
+            elif rsi >= 65.0:
+                styles.loc[idx, "RSI (14D)"] = "background-color: #f8d7da; color: #721c24; font-weight: bold;"
+        except Exception:
+            pass
+
+    return styles
+
+
+# =====================================================================
+# 6. S/R PAPER TRADING EXECUTION CONNECTOR
+# =====================================================================
+def execute_sr_paper_trade(clean_sym, sr_row, budget=15000.0, username="Public_User"):
+    """
+    Executes an S/R Range Mean Reversion trade into the paper trading ledger (paper_trades.csv).
+    Returns (success: bool, message: str)
+    """
+    trades_path = os.path.join(os.path.dirname(__file__), "data", "paper_trades.csv")
+    audit_path = os.path.join(os.path.dirname(__file__), "data", "paper_audit_log.csv")
+
+    existing_df = pd.DataFrame()
+    if os.path.exists(trades_path) and os.path.getsize(trades_path) > 0:
+        try:
+            existing_df = pd.read_csv(trades_path)
+        except Exception:
+            existing_df = pd.DataFrame()
+
+    # Check duplicate active trade
+    if not existing_df.empty and "Status" in existing_df.columns:
+        active_dups = existing_df[(existing_df["Ticker"] == clean_sym) & (existing_df["Status"] == "ACTIVE")]
+        if not active_dups.empty:
+            return False, f"Ticker {clean_sym} already has an active trade in the Paper Trading Ledger."
+
+    cmp_val = float(sr_row.get("CMP (₹)", 0.0))
+    if cmp_val <= 0:
+        return False, f"Invalid CMP ₹{cmp_val:.2f} for {clean_sym}."
+
+    sl_val = float(sr_row.get("Suggested SL (₹)", round(cmp_val * 0.95, 2)))
+    tgt_val = float(sr_row.get("Suggested Target (₹)", round(cmp_val * 1.06, 2)))
+    qty = max(1, int(budget // cmp_val))
+    now_ist = datetime.datetime.now(IST)
+    trade_id = f"V2_SR_{int(now_ist.timestamp())}_{clean_sym}"
+    now_str = now_ist.strftime("%Y-%m-%d %H:%M:%S")
+
+    rec = {
+        "Trade_ID": trade_id,
+        "Username": username,
+        "Ticker": clean_sym,
+        "Asset_Class": sr_row.get("Category", "Stock"),
+        "Trigger_Type": "SR_SUPPORT_BUY",
+        "Strategy_Preset": "S/R Range Mean Reversion",
+        "Status": "ACTIVE",
+        "Entry_Price": cmp_val,
+        "Live_CMP": cmp_val,
+        "Executed_Qty": qty,
+        "Stop_Loss": sl_val,
+        "Target": tgt_val,
+        "Execution_Timestamp": now_str,
+        "Exit_Timestamp": "",
+        "Exit_Price": 0.0,
+        "Exit_Reason": "",
+        "Hold_Duration_Days": 0,
+        "PnL_Rs": 0.0,
+        "PnL_Pct": "0.0%",
+        "Invested_Value": round(cmp_val * qty, 2),
+        "Technical_Score_At_Entry": round(float(sr_row.get("RSI (14D)", 50.0)), 1),
+        "Fundamental_Score_At_Entry": round(float(sr_row.get("5Y S/R Win Rate (%)", 50.0)), 1),
+        "RSI_At_Entry": round(float(sr_row.get("RSI (14D)", 50.0)), 1),
+        "Composite_Score_At_Entry": round(float(sr_row.get("Range Position (%)", 50.0)), 1),
+        "Market_Regime_At_Entry": str(sr_row.get("Regime", "🟢 Range-Bound"))
+    }
+
+    combined = pd.concat([existing_df, pd.DataFrame([rec])], ignore_index=True)
+    os.makedirs(os.path.dirname(trades_path), exist_ok=True)
+    combined.to_csv(trades_path, index=False)
+
+    # Save audit log
+    audit_rec = {
+        "Timestamp_IST": now_str,
+        "Trigger_Source": f"V2_SR_EXEC_{username}",
+        "Preset": "S/R Range Mean Reversion",
+        "Recommended_BUY": clean_sym,
+        "Recommended_SELL": "None",
+        "Execution_Status": f"🟢 Logged ({qty} Qty @ ₹{cmp_val:.2f})",
+        "Reason_Summary": f"S/R Entry triggered. SL: ₹{sl_val:.2f}, Target: ₹{tgt_val:.2f}, 5Y Win Rate: {sr_row.get('5Y S/R Win Rate (%)', 50)}%."
+    }
+    audit_df = pd.DataFrame()
+    if os.path.exists(audit_path) and os.path.getsize(audit_path) > 0:
+        try:
+            audit_df = pd.read_csv(audit_path)
+        except Exception:
+            audit_df = pd.DataFrame()
+    combined_audit = pd.concat([audit_df, pd.DataFrame([audit_rec])], ignore_index=True)
+    combined_audit.to_csv(audit_path, index=False)
+
+    return True, f"Successfully executed {clean_sym} ({qty} Qty @ ₹{cmp_val:.2f}) with SL ₹{sl_val:.2f} and Target ₹{tgt_val:.2f}!"

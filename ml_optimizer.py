@@ -217,11 +217,27 @@ def get_ai_rag_conviction_candidates(metrics_df, is_stock_mode=False, limit=3):
             "Preset": "AI / RAG", "Asset_Class": "Stock" if is_stock_mode else "ETF"
         })
 
+    ai_cand_cols = [
+        "Ticker", "symbol", "Name", "Category", "Signal", "CMP (₹)", "RSI (14D)",
+        "Composite Score", "AI_Confidence_Pct", "AI_Confidence_Score", "Dist 200DMA %",
+        "Dist 52W Low %", "52W Range %", "Criteria_Met", "Stop_Loss", "Target", "Preset", "Asset_Class"
+    ]
+
     b_df = pd.DataFrame(buy_list)
     s_df = pd.DataFrame(sell_list)
 
-    top_buy = b_df.sort_values(by="AI_Confidence_Pct", ascending=False).head(limit).reset_index(drop=True) if not b_df.empty else pd.DataFrame()
-    top_sell = s_df.sort_values(by="AI_Confidence_Pct", ascending=False).head(limit).reset_index(drop=True) if not s_df.empty else pd.DataFrame()
+    top_buy = b_df.sort_values(by="AI_Confidence_Pct", ascending=False).head(limit).reset_index(drop=True) if not b_df.empty else pd.DataFrame(columns=ai_cand_cols)
+
+    # Anti-conflict rule: strictly exclude tickers in top_buy from top_sell
+    if not top_buy.empty and not s_df.empty:
+        b_syms = set(top_buy["Ticker"].astype(str).str.replace(".NS", "").str.upper())
+        s_df = s_df[~s_df["Ticker"].astype(str).str.replace(".NS", "").str.upper().isin(b_syms)]
+    
+    # Sell qualification: require overbought RSI >= 52 and bearish exhaustion
+    if not s_df.empty:
+        s_df = s_df[(s_df["RSI (14D)"] >= 52.0) & (s_df["AI_Confidence_Pct"] >= 55.0)]
+
+    top_sell = s_df.sort_values(by="AI_Confidence_Pct", ascending=False).head(limit).reset_index(drop=True) if not s_df.empty else pd.DataFrame(columns=ai_cand_cols)
 
     return top_buy, top_sell
 

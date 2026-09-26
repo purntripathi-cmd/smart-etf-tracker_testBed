@@ -127,10 +127,34 @@ EXPANDED_NON_SECTORAL_ETF_CONFIG = CORE_ETF_CONFIG + [
     {"ticker": "NIFTYEQL.NS", "name": "DSP Nifty 50 Equal Weight", "category": "Smart Beta", "expense": 0.25},
     {"ticker": "HDFCGOLD.NS", "name": "HDFC Gold ETF", "category": "Commodity", "expense": 0.55},
     {"ticker": "KOTAKGOLD.NS", "name": "Kotak Gold ETF", "category": "Commodity", "expense": 0.55},
+    {"ticker": "ICICIGOLD.NS", "name": "ICICI Prudential Gold ETF", "category": "Commodity", "expense": 0.50},
+    {"ticker": "AXISGOLD.NS", "name": "Axis Gold ETF", "category": "Commodity", "expense": 0.53},
+    {"ticker": "TATAGOLD.NS", "name": "Tata Gold ETF", "category": "Commodity", "expense": 0.51},
     {"ticker": "SETFSILVER.NS", "name": "SBI Silver ETF", "category": "Commodity", "expense": 0.48},
     {"ticker": "HDFCSILVER.NS", "name": "HDFC Silver ETF", "category": "Commodity", "expense": 0.48},
+    {"ticker": "KOTAKSILVE.NS", "name": "Kotak Silver ETF", "category": "Commodity", "expense": 0.48},
+    {"ticker": "AXISSILVER.NS", "name": "Axis Silver ETF", "category": "Commodity", "expense": 0.49},
+    {"ticker": "TATASILV.NS", "name": "Tata Silver ETF", "category": "Commodity", "expense": 0.48},
     {"ticker": "HDFCNIF500.NS", "name": "HDFC Nifty 500 ETF", "category": "Broad Market", "expense": 0.32},
     {"ticker": "KOTAKNV20.NS", "name": "Kotak Nifty 50 Value 20", "category": "Smart Beta", "expense": 0.30},
+]
+
+# Dedicated Multi-AMC Precious Metals (Gold & Silver) Configuration
+ALL_PRECIOUS_METALS_CONFIG = [
+    {"ticker": "GOLDBEES.NS", "name": "Nippon India Gold BeES", "amc": "Nippon Life India", "metal": "Gold", "expense": 0.79},
+    {"ticker": "SETFGOLD.NS", "name": "SBI Gold ETF", "amc": "SBI Funds Management", "metal": "Gold", "expense": 0.50},
+    {"ticker": "HDFCGOLD.NS", "name": "HDFC Gold ETF", "amc": "HDFC AMC", "metal": "Gold", "expense": 0.55},
+    {"ticker": "ICICIGOLD.NS", "name": "ICICI Prudential Gold ETF", "amc": "ICICI Prudential AMC", "metal": "Gold", "expense": 0.50},
+    {"ticker": "KOTAKGOLD.NS", "name": "Kotak Gold ETF", "amc": "Kotak Mahindra AMC", "metal": "Gold", "expense": 0.55},
+    {"ticker": "AXISGOLD.NS", "name": "Axis Gold ETF", "amc": "Axis AMC", "metal": "Gold", "expense": 0.53},
+    {"ticker": "TATAGOLD.NS", "name": "Tata Gold ETF", "amc": "Tata AMC", "metal": "Gold", "expense": 0.51},
+    {"ticker": "SILVERBEES.NS", "name": "Nippon India Silver BeES", "amc": "Nippon Life India", "metal": "Silver", "expense": 0.50},
+    {"ticker": "SILVERIETF.NS", "name": "ICICI Prudential Silver ETF", "amc": "ICICI Prudential AMC", "metal": "Silver", "expense": 0.45},
+    {"ticker": "SETFSILVER.NS", "name": "SBI Silver ETF", "amc": "SBI Funds Management", "metal": "Silver", "expense": 0.48},
+    {"ticker": "HDFCSILVER.NS", "name": "HDFC Silver ETF", "amc": "HDFC AMC", "metal": "Silver", "expense": 0.48},
+    {"ticker": "KOTAKSILVE.NS", "name": "Kotak Silver ETF", "amc": "Kotak Mahindra AMC", "metal": "Silver", "expense": 0.48},
+    {"ticker": "AXISSILVER.NS", "name": "Axis Silver ETF", "amc": "Axis AMC", "metal": "Silver", "expense": 0.49},
+    {"ticker": "TATASILV.NS", "name": "Tata Silver ETF", "amc": "Tata AMC", "metal": "Silver", "expense": 0.48},
 ]
 
 # =====================================================================

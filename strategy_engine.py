@@ -564,6 +564,38 @@ def evaluate_market_metrics(raw, universe_config, is_stock_mode=False, dynamic_w
         tot_def = max(0.01, def_t_w + def_f_w)
         df_out["Composite Buy Score"] = round(((def_t_w/tot_def) * df_out["Technical Score"]) + ((def_f_w/tot_def) * df_out["Fundamental Score"]), 1)
 
+        # Institutional Action Signal Classification
+        def _classify_action_signal(r):
+            rsi = float(r.get("RSI (14D)", 50.0))
+            d200 = float(r.get("Dist 200DMA %", 0.0))
+            fk = str(r.get("Falling Knife Guard", ""))
+            
+            # Conflict / High Breakdown Risk
+            if "Falling Knife" in fk and rsi < 35.0:
+                return "AVOID (Falling Knife Risk)"
+            if d200 < -25.0 and rsi < 35.0:
+                return "AVOID (Secular Breakdown)"
+            
+            # Accumulate / Buy Signals
+            if rsi < 38.0 and d200 < 5.0:
+                return "ACCUMULATE (Oversold Dip)"
+            if rsi < 50.0 and d200 < 0.0:
+                return "ACCUMULATE (Value Support)"
+            if rsi < 54.0 and float(r.get("Bollinger %B", 0.5)) < 0.30:
+                return "BUY (Mean Reversion)"
+                
+            # Sell / Profit Booking Signals
+            if rsi >= 70.0 or (rsi >= 65.0 and d200 > 15.0):
+                return "SELL (Overbought Exhaustion)"
+            if d200 > 22.0:
+                return "SELL (Extended Trend)"
+            if rsi >= 62.0 and float(r.get("Bollinger %B", 0.5)) > 0.90:
+                return "BOOK PROFIT (Upper Channel)"
+                
+            return "HOLD / NEUTRAL"
+
+        df_out["Action Signal"] = df_out.apply(_classify_action_signal, axis=1)
+
     regime_payload = {
         "regime": regime, "desc": regime_desc, "n500_cmp": n500_curr,
         "n500_d50": n500_d50, "n500_d200": n500_d200, "vix": current_vix,
@@ -611,6 +643,11 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
             continue
 
         rsi = float(row.get("RSI (14D)", 50.0))
+        dist_200 = float(row.get("Dist 200DMA %", 0.0))
+        dist_low = float(row.get("Dist 52W Low %", 0.0))
+        range_pct = float(row.get("52W Range %", 50.0))
+        vol_ratio = float(row.get("Volume Surge Ratio", 1.0))
+        act_sig = str(row.get("Action Signal", "ACCUMULATE"))
         atr = float(row.get("14D ATR (₹)", curr_p * 0.02))
         f_score = float(row.get("Fundamental Score", 50.0))
         t_buy = float(row.get(tech_buy_col, row.get("Technical Score", 50.0)))
@@ -638,18 +675,15 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
         else:
             buy_composite = round((w_t * t_buy) + (w_f * f_score), 1)
 
-        sell_composite = round((w_t * t_sell) + (w_f * f_score), 1)
+        # Compute true Overbought Exit Urgency Score (0 to 100)
+        # Higher score = more severely overbought / extended (Stronger sell urgency)
+        d200_norm = min(100.0, max(0.0, 50.0 + (dist_200 * 2.0)))
+        sell_exit_urgency = round((0.45 * rsi) + (0.35 * d200_norm) + (0.20 * range_pct), 1)
 
         sl_buy = round(max(0.01, curr_p - (sl_mult * atr)), 2)
         tgt_buy = round(curr_p + (tgt_mult * atr), 2)
         sl_sell = round(curr_p + (sl_mult * atr), 2)
         tgt_sell = round(max(0.01, curr_p - (tgt_mult * atr)), 2)
-
-        dist_200 = float(row.get("Dist 200DMA %", 0.0))
-        dist_low = float(row.get("Dist 52W Low %", 0.0))
-        range_pct = float(row.get("52W Range %", 50.0))
-        vol_ratio = float(row.get("Volume Surge Ratio", 1.0))
-        act_sig = str(row.get("Action Signal", "ACCUMULATE"))
 
         # Explain criteria met for Buy
         buy_criteria_items = []
@@ -681,31 +715,42 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
             sell_criteria_items.append(f"RSI {rsi:.1f} ≥ 65 (Overbought)")
         if dist_200 > 12:
             sell_criteria_items.append(f"Dist 200DMA {dist_200:+.1f}% (Extended)")
-        if range_pct >= 85:
+        if range_pct >= 80:
             sell_criteria_items.append(f"52W Range {range_pct:.1f}% (Cycle High)")
         if not sell_criteria_items:
-            sell_criteria_items.append(f"Sell Rank Score {sell_composite:.1f}")
+            sell_criteria_items.append(f"Overbought Urgency {sell_exit_urgency:.1f}/100")
         sell_crit_str = " • ".join(sell_criteria_items)
 
-        buy_candidates.append({
-            "Ticker": sym, "symbol": sym, "Name": row.get("Name", sym), "Category": row.get("Category", "General"),
-            "Signal": "BUY", "CMP (₹)": curr_p, "RSI (14D)": rsi,
-            "Composite Score": buy_composite, "Stop_Loss": sl_buy, "Target": tgt_buy,
-            "14D ATR (₹)": atr, "Volume Surge": vol_ratio,
-            "Dist 200DMA %": dist_200, "Dist 52W Low %": dist_low, "52W Range %": range_pct,
-            "Action Signal": act_sig, "Criteria_Met": buy_crit_str,
-            "Preset": preset_name, "Asset_Class": "Stock" if is_stock_mode else "ETF"
-        })
+        # 1. Buy Qualification: Disallow overbought or conflicted breakdown assets
+        if rsi < 60.0 and "AVOID" not in act_sig:
+            buy_candidates.append({
+                "Ticker": sym, "symbol": sym, "Name": row.get("Name", sym), "Category": row.get("Category", "General"),
+                "Signal": "BUY", "CMP (₹)": curr_p, "RSI (14D)": rsi,
+                "Composite Score": buy_composite, "Stop_Loss": sl_buy, "Target": tgt_buy,
+                "14D ATR (₹)": atr, "Volume Surge": vol_ratio,
+                "Dist 200DMA %": dist_200, "Dist 52W Low %": dist_low, "52W Range %": range_pct,
+                "Action Signal": act_sig, "Criteria_Met": buy_crit_str,
+                "Preset": preset_name, "Asset_Class": "Stock" if is_stock_mode else "ETF"
+            })
 
-        sell_candidates.append({
-            "Ticker": sym, "symbol": sym, "Name": row.get("Name", sym), "Category": row.get("Category", "General"),
-            "Signal": "SELL", "CMP (₹)": curr_p, "RSI (14D)": rsi,
-            "Composite Score": sell_composite, "Stop_Loss": sl_sell, "Target": tgt_sell,
-            "14D ATR (₹)": atr, "Volume Surge": vol_ratio,
-            "Dist 200DMA %": dist_200, "Dist 52W Low %": dist_low, "52W Range %": range_pct,
-            "Action Signal": act_sig, "Criteria_Met": sell_crit_str,
-            "Preset": preset_name, "Asset_Class": "Stock" if is_stock_mode else "ETF"
-        })
+        # 2. Sell Qualification: Strictly requires overbought / extension triggers (NEVER an oversold asset!)
+        is_sell_eligible = (
+            rsi >= 58.0 or
+            dist_200 >= 8.0 or
+            range_pct >= 75.0 or
+            "SELL" in act_sig or
+            "BOOK PROFIT" in act_sig
+        )
+        if is_sell_eligible and rsi >= 50.0 and "AVOID" not in act_sig:
+            sell_candidates.append({
+                "Ticker": sym, "symbol": sym, "Name": row.get("Name", sym), "Category": row.get("Category", "General"),
+                "Signal": "SELL", "CMP (₹)": curr_p, "RSI (14D)": rsi,
+                "Composite Score": sell_exit_urgency, "Stop_Loss": sl_sell, "Target": tgt_sell,
+                "14D ATR (₹)": atr, "Volume Surge": vol_ratio,
+                "Dist 200DMA %": dist_200, "Dist 52W Low %": dist_low, "52W Range %": range_pct,
+                "Action Signal": act_sig, "Criteria_Met": sell_crit_str,
+                "Preset": preset_name, "Asset_Class": "Stock" if is_stock_mode else "ETF"
+            })
 
     buy_df = pd.DataFrame(buy_candidates)
     sell_df = pd.DataFrame(sell_candidates)
@@ -715,8 +760,22 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
         healthy_tickers = set(metrics_df[healthy_mask]["Ticker"])
         buy_df = buy_df[buy_df["Ticker"].isin(healthy_tickers)]
 
-    top_buy = buy_df.sort_values(by="Composite Score", ascending=True).head(limit).reset_index(drop=True) if not buy_df.empty else pd.DataFrame()
-    top_sell = sell_df.sort_values(by="Composite Score", ascending=False).head(limit).reset_index(drop=True) if not sell_df.empty else pd.DataFrame()
+    standard_cand_cols = [
+        "Ticker", "symbol", "Name", "Category", "Signal", "CMP (₹)", "RSI (14D)",
+        "Composite Score", "Stop_Loss", "Target", "14D ATR (₹)", "Volume Surge",
+        "Dist 200DMA %", "Dist 52W Low %", "52W Range %", "Action Signal", "Criteria_Met",
+        "Preset", "Asset_Class"
+    ]
+
+    top_buy = buy_df.sort_values(by="Composite Score", ascending=True).head(limit).reset_index(drop=True) if not buy_df.empty else pd.DataFrame(columns=standard_cand_cols)
+
+    # ANTI-CONFLICT FILTER: Strictly remove any ticker already selected in top_buy from sell_df
+    if not top_buy.empty and not sell_df.empty:
+        top_buy_syms = set(top_buy["Ticker"].astype(str).str.replace(".NS", "").str.upper())
+        sell_df = sell_df[~sell_df["Ticker"].astype(str).str.replace(".NS", "").str.upper().isin(top_buy_syms)]
+
+    # Sort genuinely overbought sell candidates by highest exit urgency
+    top_sell = sell_df.sort_values(by="Composite Score", ascending=False).head(limit).reset_index(drop=True) if not sell_df.empty else pd.DataFrame(columns=standard_cand_cols)
 
     return top_buy, top_sell
 

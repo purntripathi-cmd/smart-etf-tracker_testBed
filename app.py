@@ -1154,14 +1154,14 @@ elif active_tab == "🎛️ Parameter & Weights Studio":
     weights_dict = active_cfg.get("weights", {})
     risk_dict = active_cfg.get("risk_parameters", {})
     sched_dict = active_cfg.get("execution_schedule", {})
-    is_weekdays_only = sched_dict.get("weekdays_only", True)
+    is_weekdays_only = sched_dict.get("weekdays_only", False)
 
     # Status KPI Cards
     col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
     with col_kpi1:
         st.metric("Strategy Version", active_cfg.get("parameter_version", "v2.2-Adaptive"))
     with col_kpi2:
-        sched_badge = "🟢 Weekdays Only (Mon-Fri)" if is_weekdays_only else "🟡 All 7 Days Active"
+        sched_badge = "🟢 Weekdays Only (Mon-Fri)" if is_weekdays_only else "🟢 All 7 Days Active (Weekend Unlocked)"
         st.metric("Schedule Guard", sched_badge)
     with col_kpi3:
         st.metric("Last Optimization", active_cfg.get("last_optimized_timestamp", "Baseline"))
@@ -1356,9 +1356,9 @@ elif active_tab == "🎛️ Parameter & Weights Studio":
             with sc1:
                 weekdays_toggle = st.checkbox(
                     "📅 Running Only on Weekdays (Mon - Fri)",
-                    value=bool(sched_dict.get("weekdays_only", True)),
+                    value=bool(sched_dict.get("weekdays_only", False)),
                     key="v2_wkdays_only",
-                    help="When enabled, automated cron triggers on Saturday and Sunday are safely skipped and logged to prevent weekend drift."
+                    help="When enabled, automated cron triggers on Saturday and Sunday are skipped. Disabled by default in Testbed for 24/7 testing."
                 )
                 enable_3pm = st.checkbox(
                     "🔔 Enable 3:00 PM Multi-Asset Accumulation Routine",

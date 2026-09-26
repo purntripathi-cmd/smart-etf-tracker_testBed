@@ -63,17 +63,16 @@ def start_cron_scheduler():
                 executed_today.clear()
                 last_date = current_date
 
-            # Market only operates Monday through Friday
-            if weekday < 5:
-                if current_time in SCHEDULED_TASKS and current_time not in executed_today:
-                    task_mode = SCHEDULED_TASKS[current_time]
-                    logger.info(f"⏰ Triggering scheduled event: {task_mode} at {current_time} IST...")
-                    try:
-                        run_paper_trader_daemon(mode_override=task_mode)
-                        executed_today.add(current_time)
-                        logger.info(f"✅ Successfully finished {task_mode}.")
-                    except Exception as e:
-                        logger.error(f"❌ Error during {task_mode} execution: {e}")
+            # V2 Testbed: Runs 7 days a week for testing and validation
+            if current_time in SCHEDULED_TASKS and current_time not in executed_today:
+                task_mode = SCHEDULED_TASKS[current_time]
+                logger.info(f"⏰ Triggering scheduled event: {task_mode} at {current_time} IST...")
+                try:
+                    run_paper_trader_daemon(mode_override=task_mode)
+                    executed_today.add(current_time)
+                    logger.info(f"✅ Successfully finished {task_mode}.")
+                except Exception as e:
+                    logger.error(f"❌ Error during {task_mode} execution: {e}")
 
             # Sleep 25 seconds before next time check
             time.sleep(25)

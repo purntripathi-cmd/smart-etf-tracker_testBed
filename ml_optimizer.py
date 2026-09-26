@@ -9,6 +9,11 @@ try:
     IST = ZoneInfo("Asia/Kolkata")
 except Exception:
     IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+import numpy as np
+import pandas as pd
+import logging
+
+logger = logging.getLogger("MLOptimizer_V2")
 
 LOCAL_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
@@ -58,7 +63,7 @@ DEFAULT_RUNTIME_CONFIG = {
         "oversold_rsi_buy_threshold": 38.0
     },
     "execution_schedule": {
-        "weekdays_only": True,
+        "weekdays_only": False,
         "enable_3pm_accumulation": True,
         "enable_morning_intraday": True,
         "enable_afternoon_squareoff": True
@@ -140,10 +145,16 @@ def get_ai_rag_conviction_candidates(metrics_df, is_stock_mode=False, limit=3):
 
     df = metrics_df.copy()
 
-    vol_surge = pd.to_numeric(df.get("Volume Surge Ratio", 1.0), errors="coerce").fillna(1.0)
-    rsi_val = pd.to_numeric(df.get("RSI (14D)", 50.0), errors="coerce").fillna(50.0)
-    bb_b = pd.to_numeric(df.get("Bollinger %B", 0.5), errors="coerce").fillna(0.5)
-    macd_hist = pd.to_numeric(df.get("MACD Hist", 0.0), errors="coerce").fillna(0.0)
+    def _safe_col(dframe, col_name, default_val):
+        if col_name in dframe.columns:
+            return pd.to_numeric(dframe[col_name], errors="coerce").fillna(default_val)
+        return pd.Series([default_val] * len(dframe), index=dframe.index, dtype=float)
+
+    vol_surge = _safe_col(df, "Volume Surge Ratio", 1.0)
+    rsi_val = _safe_col(df, "RSI (14D)", 50.0)
+    bb_b = _safe_col(df, "Bollinger %B", 0.5)
+    macd_hist = _safe_col(df, "MACD Hist", 0.0)
+    dist_200 = _safe_col(df, "Dist 200DMA %", 0.0)
 
     # Bullish Confluence Score
     bull_score = (
@@ -157,7 +168,7 @@ def get_ai_rag_conviction_candidates(metrics_df, is_stock_mode=False, limit=3):
     bear_score = (
         rsi_val * 0.35 +
         bb_b.clip(0, 1) * 100.0 * 0.25 +
-        np.where(df.get("Dist 200DMA %", 0) > 15.0, 20.0, 0.0) +
+        np.where(dist_200 > 15.0, 20.0, 0.0) +
         np.where(macd_hist < 0, 20.0, 0.0)
     ).clip(15.0, 98.0)
 

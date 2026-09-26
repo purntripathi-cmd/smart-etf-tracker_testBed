@@ -46,7 +46,7 @@
         "oversold_rsi_buy_threshold": 38.0
     },
     "execution_schedule": {
-        "weekdays_only": true,
+        "weekdays_only": false,
         "enable_3pm_accumulation": true,
         "enable_morning_intraday": true,
         "enable_afternoon_squareoff": true

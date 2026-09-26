@@ -148,25 +148,11 @@ def run_paper_trader_daemon(mode_override=None, force_weekend=False):
         else:
             mode = "PAPER_TRADE_3PM"
 
-    # Weekdays Only Schedule Check
-    cfg = get_active_runtime_config()
-    sched_cfg = cfg.get("execution_schedule", {})
-    weekdays_only = sched_cfg.get("weekdays_only", True)
-    is_weekend = now_ist.weekday() >= 5 # 5=Saturday, 6=Sunday
-
-    if weekdays_only and is_weekend and not force_weekend:
-        day_name = now_ist.strftime("%A")
-        logger.info(f"[SCHEDULE] Weekend detected ({day_name}). Scheduled weekday execution safely bypassed.")
-        save_audit({
-            "Timestamp_IST": now_str,
-            "Trigger_Source": f"DAEMON_{mode}",
-            "Preset": "Weekend Schedule Guard",
-            "Recommended_BUY": "None (Weekend)",
-            "Recommended_SELL": "None (Weekend)",
-            "Execution_Status": "⚪ Skipped (Weekend)",
-            "Reason_Summary": f"Scheduled execution skipped on {day_name} as 'weekdays_only' is enabled in runtime_config."
-        })
-        return {"status": "skipped", "reason": f"Weekend detected ({day_name}). weekdays_only=True"}
+    # V2 Testbed: Weekend schedule guard removed for 24/7 testing & validation
+    day_name = now_ist.strftime("%A")
+    is_weekend = now_ist.weekday() >= 5
+    if is_weekend:
+        logger.info(f"[SCHEDULE] Testbed active on weekend ({day_name}). Running execution against latest market session data.")
 
     logger.info("==================================================")
     logger.info(f"STARTING V2 DAEMON EXECUTION: MODE = {mode} (IST: {now_str})")

@@ -50,7 +50,7 @@ def get_active_runtime_config():
             "oversold_rsi_buy_threshold": 38.0
         },
         "execution_schedule": {
-            "weekdays_only": True,
+            "weekdays_only": False,
             "enable_3pm_accumulation": True,
             "enable_morning_intraday": True,
             "enable_afternoon_squareoff": True

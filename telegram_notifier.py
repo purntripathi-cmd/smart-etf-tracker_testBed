@@ -174,6 +174,8 @@ def send_telegram_message(message_text, bot_token=None, chat_id=None):
             return {"ok": True, "message_id": msg_id, "error": ""}
         else:
             err_msg = data.get("description", f"HTTP {resp.status_code}")
+            if "chat not found" in err_msg.lower():
+                err_msg = f"{err_msg}. (Resolution: Open this bot in Telegram and click START (/start) so the bot has permission to message you, or if posting to a group/channel, add the bot as Administrator)."
             logger.warning(f"Telegram dispatch failed: {err_msg}")
             return {"ok": False, "message_id": 0, "error": err_msg}
     except requests.exceptions.Timeout:

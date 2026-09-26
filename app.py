@@ -410,7 +410,7 @@ with st.sidebar:
 
     st.markdown("---")
     tg_sidebar_cfg = get_telegram_config()
-    if tg_sidebar_cfg["is_configured"]:
+    if tg_sidebar_cfg.get("is_configured", False):
         st.success("🤖 Telegram Bot: Active")
     else:
         st.info("🤖 Telegram Bot: Lab Test Mode")
@@ -1354,23 +1354,29 @@ elif active_tab == "🧱 S/R Range-Bound Lab & Multi-Factor Hub":
                 with tg_col:
                     st.markdown("###### 📲 Telegram S/R Alert Testing Studio")
                     tg_cfg = get_telegram_config()
-                    if tg_cfg["is_configured"]:
+                    is_cfg = tg_cfg.get("is_configured", False)
+                    masked = tg_cfg.get("masked_token", "")
+                    tok_src = tg_cfg.get("source", "Configured")
+                    curr_tok = tg_cfg.get("bot_token", "")
+                    curr_chat = tg_cfg.get("chat_id", "")
+
+                    if is_cfg:
                         st.success("🟢 Telegram Bot: Configured & Ready")
                     else:
                         st.warning("⚠️ Bot Not Configured (Enter credentials below)")
 
-                    with st.expander("⚙️ Telegram Bot Credentials (Quick Setup)", expanded=not tg_cfg["is_configured"]):
-                        if tg_cfg["masked_token"]:
-                            st.caption(f"🔒 **Security:** Active via `{tg_cfg['source']}` (`{tg_cfg['masked_token']}`). Raw secret is shielded from public DOM.")
+                    with st.expander("⚙️ Telegram Bot Credentials (Quick Setup)", expanded=not is_cfg):
+                        if masked:
+                            st.caption(f"🔒 **Security:** Active via `{tok_src}` (`{masked}`). Raw secret is shielded from public DOM.")
                         q_tok = st.text_input(
                             "Bot Token:",
-                            value="" if tg_cfg["masked_token"] else tg_cfg["bot_token"],
+                            value="" if masked else curr_tok,
                             type="password",
                             key="sr_tg_tok",
                             help="Obtain from @BotFather",
-                            placeholder="🔒 Configured securely in Secrets" if tg_cfg["masked_token"] else "123456789:ABCdefGhI..."
+                            placeholder="🔒 Configured securely in Secrets" if masked else "123456789:ABCdefGhI..."
                         )
-                        q_chat = st.text_input("Chat ID:", value=tg_cfg["chat_id"], key="sr_tg_chat", help="Personal Chat ID or Channel ID")
+                        q_chat = st.text_input("Chat ID:", value=curr_chat, key="sr_tg_chat", help="Personal Chat ID or Channel ID")
                         if st.button("💾 Save Credentials", key="sr_save_tg_btn", use_container_width=True):
                             save_telegram_config(q_tok, q_chat)
                             st.success("Credentials saved to testbed!")
@@ -1601,7 +1607,11 @@ elif active_tab == "🌐 Quant Ecosystem & Webhook Setup":
     st.caption("Integrate your personal Telegram Bot or Channel to receive real-time S/R Lab alerts, high-conviction buy/sell signals, and paper trading execution/exit notifications.")
 
     tg_lab_cfg = get_telegram_config()
-    is_tg_active = tg_lab_cfg["is_configured"]
+    is_tg_active = tg_lab_cfg.get("is_configured", False)
+    lab_masked = tg_lab_cfg.get("masked_token", "")
+    lab_src = tg_lab_cfg.get("source", "Configured")
+    lab_tok = tg_lab_cfg.get("bot_token", "")
+    lab_chat = tg_lab_cfg.get("chat_id", "")
 
     tg_status_col1, tg_status_col2 = st.columns([2.5, 1.5])
     with tg_status_col1:
@@ -1613,24 +1623,24 @@ elif active_tab == "🌐 Quant Ecosystem & Webhook Setup":
         test_conn_btn = st.button("🔍 Test Connection (getMe)", use_container_width=True)
 
     if test_conn_btn:
-        conn_res = test_bot_connection(tg_lab_cfg["bot_token"])
-        if conn_res["ok"]:
-            st.success(f"✅ Bot Verified: **{conn_res['bot_name']}** (`@{conn_res['username']}`) | Bot ID: `{conn_res['id']}`")
+        conn_res = test_bot_connection(lab_tok)
+        if conn_res.get("ok", False):
+            st.success(f"✅ Bot Verified: **{conn_res.get('bot_name', 'Bot')}** (`@{conn_res.get('username', '')}`) | Bot ID: `{conn_res.get('id', '')}`")
         else:
-            st.error(f"❌ Connection failed: {conn_res['error']}")
+            st.error(f"❌ Connection failed: {conn_res.get('error', 'Unknown error')}")
 
     with st.form("telegram_config_form"):
         st.markdown("##### 🔑 Telegram Bot Credentials")
-        if tg_lab_cfg["masked_token"]:
-            st.info(f"🔒 **Production Security Active:** Injected securely via `{tg_lab_cfg['source']}` (`{tg_lab_cfg['masked_token']}`). The raw secret token is hidden and never rendered into the public DOM.")
+        if lab_masked:
+            st.info(f"🔒 **Production Security Active:** Injected securely via `{lab_src}` (`{lab_masked}`). The raw secret token is hidden and never rendered into the public DOM.")
         f_token = st.text_input(
             "Telegram Bot Token:",
-            value="" if tg_lab_cfg["masked_token"] else tg_lab_cfg["bot_token"],
+            value="" if lab_masked else lab_tok,
             type="password",
             help="Generated by @BotFather on Telegram (e.g. 123456789:ABCdefGhI...)",
-            placeholder="🔒 Configured securely via Secrets / Vault" if tg_lab_cfg["masked_token"] else "Paste your bot token here..."
+            placeholder="🔒 Configured securely via Secrets / Vault" if lab_masked else "Paste your bot token here..."
         )
-        f_chat = st.text_input("Telegram Chat ID:", value=tg_lab_cfg["chat_id"], help="Your personal numerical Telegram ID or group/channel ID (e.g. 987654321 or -100123456789)")
+        f_chat = st.text_input("Telegram Chat ID:", value=lab_chat, help="Your personal numerical Telegram ID or group/channel ID (e.g. 987654321 or -100123456789)")
         f_enabled = st.checkbox("Enable Automated Telegram Notifications", value=tg_lab_cfg.get("enabled", True))
 
         save_btn = st.form_submit_button("💾 Save Credentials & Update Runtime Config", type="primary", use_container_width=True)

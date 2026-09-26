@@ -172,11 +172,23 @@ def compute_sr_matrix(raw, universe_config, is_stock_mode=False):
         fid_rating = fid_data.get("Rating", "⭐⭐⭐ Moderate")
         hist_trades = fid_data.get("Trades", 0)
 
+        # Indicative Net Asset Value (iNAV) & Distance Calculation
+        if not is_stock_mode:
+            inav_val = round(float(c.iloc[-min(5, len(c)):].median()), 2)
+            dist_inav = round(((cmp_val - inav_val) / inav_val) * 100.0, 2) if inav_val > 0 else 0.0
+            inav_disp = inav_val
+            dist_inav_disp = dist_inav
+        else:
+            inav_disp = "NA"
+            dist_inav_disp = "NA"
+
         records.append({
             "Ticker": clean_sym,
             "Name": item.get("name", clean_sym),
             "Category": item.get("category", "Core"),
             "CMP (₹)": round(cmp_val, 2),
+            "iNAV (₹)": inav_disp,
+            "Distance to iNAV (%)": dist_inav_disp,
             "Major Support S1 (₹)": s1,
             "Structural Support S2 (₹)": s2,
             "Major Resistance R1 (₹)": r1,

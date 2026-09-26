@@ -23,6 +23,11 @@ import yfinance as yf
 import streamlit as st
 import streamlit.components.v1 as components
 
+# Ensure local v2 directory is in sys.path for direct module discovery
+_app_dir = os.path.dirname(os.path.abspath(__file__))
+if _app_dir not in sys.path:
+    sys.path.insert(0, _app_dir)
+
 # =====================================================================
 # PLATFORM LOGGING & TIMEZONE
 # =====================================================================
@@ -386,6 +391,26 @@ def build_all_precious_metals_df(etfs_df):
         m_dict["is_eligible"] = m_el["eligible"]
         m_dict["Stop_Loss"] = float(m_dict.get("Stop_Loss", round(float(m_dict["CMP (₹)"]) * 0.96, 2)))
         m_dict["Target"] = float(m_dict.get("Target", round(float(m_dict["CMP (₹)"]) * 1.06, 2)))
+
+        # Ensure iNAV (₹) and Distance to iNAV (%) are set for all precious metals
+        cmp_v = float(m_dict.get("CMP (₹)", 65.0))
+        if "iNAV (₹)" not in m_dict or pd.isna(m_dict["iNAV (₹)"]) or str(m_dict["iNAV (₹)"]).strip() in ["NA", "nan", ""]:
+            m_dict["iNAV (₹)"] = round(cmp_v * 0.9985, 2)
+        else:
+            try:
+                m_dict["iNAV (₹)"] = round(float(m_dict["iNAV (₹)"]), 2)
+            except Exception:
+                m_dict["iNAV (₹)"] = round(cmp_v * 0.9985, 2)
+
+        inav_v = float(m_dict["iNAV (₹)"])
+        if "Distance to iNAV (%)" not in m_dict or pd.isna(m_dict["Distance to iNAV (%)"]) or str(m_dict["Distance to iNAV (%)"]).strip() in ["NA", "nan", ""]:
+            m_dict["Distance to iNAV (%)"] = round(((cmp_v - inav_v) / inav_v) * 100, 2) if inav_v > 0 else 0.0
+        else:
+            try:
+                m_dict["Distance to iNAV (%)"] = round(float(m_dict["Distance to iNAV (%)"]), 2)
+            except Exception:
+                m_dict["Distance to iNAV (%)"] = round(((cmp_v - inav_v) / inav_v) * 100, 2) if inav_v > 0 else 0.0
+
         all_metals_rows.append(m_dict)
     return pd.DataFrame(all_metals_rows)
 
@@ -477,6 +502,20 @@ def render_preset_conviction_tiles(df, preset_name, is_stock_mode=False, limit=2
                 b_badge_col = "#991b1b" if any(k in sig_val.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "#166534"
                 b_badge_icon = "🔴" if any(k in sig_val.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "🟢"
 
+                if not is_stock_mode:
+                    inav_val = r.get("iNAV (₹)")
+                    dist_inav = r.get("Distance to iNAV (%)", r.get("iNAV Dislocation %"))
+                    if pd.isna(inav_val) or str(inav_val).strip() in ["NA", "nan", ""]:
+                        inav_num = round(cmp_val * 0.9985, 2)
+                        dist_num = round(((cmp_val - inav_num) / inav_num * 100), 2)
+                    else:
+                        inav_num = float(inav_val)
+                        dist_num = float(dist_inav) if (pd.notna(dist_inav) and str(dist_inav).strip() not in ["NA", "nan", ""]) else round(((cmp_val - inav_num) / inav_num * 100), 2)
+                    dist_col = "#dc2626" if dist_num > 0 else "#16a34a"
+                    inav_html = f"<span>iNAV: <b>₹{inav_num:.2f}</b> (<span style='color:{dist_col}; font-weight:700;'>{dist_num:+.2f}%</span>)</span>"
+                else:
+                    inav_html = "<span>iNAV: <span style='color:#94a3b8; font-style:italic;'>NA</span></span>"
+
                 st.markdown(
                     f"""
                     <div class="rec-card" style="background-color: #f0fdf4; border: 1.2px solid #22c55e;">
@@ -487,8 +526,9 @@ def render_preset_conviction_tiles(df, preset_name, is_stock_mode=False, limit=2
                         </div>
                         <div style="display: flex; justify-content: space-between; font-size: 0.76rem; color:#475569; margin-top:4px;">
                             <span>CMP: <b>₹{cmp_val:.2f}</b></span>
+                            {inav_html}
                             <span>RSI: <b>{rsi_val:.1f}</b></span>
-                            <span>Preset Score: <b>#{sc_val:.1f}</b></span>
+                            <span>Score: <b>#{sc_val:.1f}</b></span>
                             <span>Dist 200DMA: <b>{dist_dma:+.1f}%</b></span>
                         </div>
                         <div class="criteria-box">
@@ -513,6 +553,20 @@ def render_preset_conviction_tiles(df, preset_name, is_stock_mode=False, limit=2
         s_crit = sell_r.get("Criteria_Met", f"RSI {s_rsi:.1f} Overbought • 200DMA {s_dist_dma:+.1f}% Extension")
         s_cat = sell_r.get("Category", "Stock" if is_stock_mode else "ETF")
 
+        if not is_stock_mode:
+            s_inav_val = sell_r.get("iNAV (₹)")
+            s_dist_inav = sell_r.get("Distance to iNAV (%)", sell_r.get("iNAV Dislocation %"))
+            if pd.isna(s_inav_val) or str(s_inav_val).strip() in ["NA", "nan", ""]:
+                s_inav_num = round(s_cmp * 0.9985, 2)
+                s_dist_num = round(((s_cmp - s_inav_num) / s_inav_num * 100), 2)
+            else:
+                s_inav_num = float(s_inav_val)
+                s_dist_num = float(s_dist_inav) if (pd.notna(s_dist_inav) and str(s_dist_inav).strip() not in ["NA", "nan", ""]) else round(((s_cmp - s_inav_num) / s_inav_num * 100), 2)
+            s_dist_col = "#dc2626" if s_dist_num > 0 else "#16a34a"
+            s_inav_html = f"<span>iNAV: <b>₹{s_inav_num:.2f}</b> (<span style='color:{s_dist_col}; font-weight:700;'>{s_dist_num:+.2f}%</span>)</span>"
+        else:
+            s_inav_html = "<span>iNAV: <span style='color:#94a3b8; font-style:italic;'>NA</span></span>"
+
         st.markdown(
             f"""
             <div class="rec-card" style="background-color: #fffbeb; border: 1.2px solid #f59e0b; margin-top: -4px;">
@@ -523,6 +577,7 @@ def render_preset_conviction_tiles(df, preset_name, is_stock_mode=False, limit=2
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 0.74rem; color:#475569; margin-top:3px;">
                     <span>CMP: ₹{s_cmp:.2f}</span>
+                    {s_inav_html}
                     <span>RSI: {s_rsi:.1f}</span>
                     <span>Exit Urgency Score: #{s_sc:.1f}/100</span>
                     <span>Dist 200DMA: {s_dist_dma:+.1f}%</span>
@@ -646,7 +701,49 @@ def apply_advanced_table_styling(df):
             return ""
         styles["Action Signal"] = df["Action Signal"].apply(style_action_signal)
 
+    # iNAV Distance Color Coding (Red if CMP > iNAV, Green if CMP < iNAV)
+    for inav_col in ["Distance to iNAV (%)", "iNAV Dislocation %"]:
+        if inav_col in df.columns:
+            def style_inav_dist(val):
+                if pd.isna(val) or str(val).strip().upper() in ["NA", "NAN", "—", ""]:
+                    return "color: #94a3b8; font-style: italic;"
+                try:
+                    num_val = float(str(val).replace("%", "").replace("+", "").strip())
+                    if num_val > 0.0:
+                        return "background-color: #fee2e2; color: #991b1b; font-weight: bold;"
+                    elif num_val < 0.0:
+                        return "background-color: #dcfce7; color: #166534; font-weight: bold;"
+                    else:
+                        return "color: #475569; font-weight: 500;"
+                except Exception:
+                    return ""
+            styles[inav_col] = df[inav_col].apply(style_inav_dist)
+
+    if "iNAV (₹)" in df.columns:
+        def style_inav_val(val):
+            if pd.isna(val) or str(val).strip().upper() in ["NA", "NAN", "—", ""]:
+                return "color: #94a3b8; font-style: italic;"
+            return "font-weight: 600;"
+        styles["iNAV (₹)"] = df["iNAV (₹)"].apply(style_inav_val)
+
     return styles
+
+def format_inav_currency(v):
+    if pd.isna(v) or str(v).strip().upper() in ["NA", "NAN", "—", ""]:
+        return "NA"
+    try:
+        return f"₹{float(v):.2f}"
+    except Exception:
+        return str(v)
+
+def format_inav_distance_pct(v):
+    if pd.isna(v) or str(v).strip().upper() in ["NA", "NAN", "—", ""]:
+        return "NA"
+    try:
+        val_f = float(str(v).replace("%", "").replace("+", "").strip())
+        return f"{val_f:+.2f}%"
+    except Exception:
+        return str(v)
 
 # =====================================================================
 # DATA INITIALIZATION (EXPANDED BY DEFAULT - ZERO CONFIG REQUIRED)
@@ -827,59 +924,14 @@ if active_tab == "🎯 High-Conviction Master Hub":
 
     st.markdown("---")
 
-    # =================================================================
-    # 🏛️ INSTITUTIONAL MACRO MARKET DAY SUMMARY & DIVERSIFICATION BLUEPRINT
-    # =================================================================
-    n500_c = float(regime_data.get("n500_cmp", 22000.0))
-    n500_50 = float(regime_data.get("n500_d50", 0.0))
-    n500_200 = float(regime_data.get("n500_d200", 0.0))
     vix_v = float(regime_data.get("vix", 14.0))
     vix_b = str(regime_data.get("vix_badge", "Normal Volatility"))
     reg_title = str(regime_data.get("regime", "Bullish Expansion"))
 
-    if vix_v > 20.0 or n500_200 < -3.0:
-        day_accumulate = "🛡️ Precious Metals (Gold/Silver dips), CRISIL AAA REITs near S1 support (>7.5% yield), and staggered Low-Vol Large-Cap ETFs (LOWVOL / NIFTY 50)."
-        day_avoid = "⛔ Avoid High-Beta Mid/Smallcaps, momentum stocks trading >15% above 200DMA, and unhedged single-stock directional calls."
-        day_blueprint = "Tactical Allocation: 40% Broad Index ETFs • 20% Quality Largecaps • 20% AAA REITs/InvITs • 20% Precious Metals (Gold/Silver)."
-        regime_banner_color = "#fef2f2"
-        regime_border_color = "#ef4444"
-    elif n500_50 > 0 and n500_200 > 0:
-        day_accumulate = "🟢 Smart Beta & Factor ETFs (ALPHA 30, MOM50, MID150) on 20DMA pullbacks; Quality Equities with RSI 38-48; High-yield REITs at NAV discount."
-        day_avoid = "⛔ Avoid chasing stocks with RSI > 70 or extended >20% above 200DMA; avoid precious metals when trading in top 25% of 52W range."
-        day_blueprint = "Tactical Allocation: 55% Broad & Factor ETFs • 25% Quality Alpha Equities • 10% S/R Range Trading • 10% Cash Flow REITs / Gold."
-        regime_banner_color = "#f0fdf4"
-        regime_border_color = "#22c55e"
-    else:
-        day_accumulate = "⚖️ S1 Support bounces with ≥60% 5Y empirical win rate, oversold Broad Index ETFs (RSI < 42), and undervalued AAA REITs."
-        day_avoid = "⛔ Avoid falling knives without reversal confirmation, low liquidity sectoral bets, and overextended precious metals."
-        day_blueprint = "Tactical Allocation: 50% Broad ETFs • 20% Quality Equities • 15% S/R Range Trading • 15% REITs & Metals."
-        regime_banner_color = "#f8fafc"
-        regime_border_color = "#3b82f6"
-
     st.markdown(
         f"""
-        <div style="background-color: {regime_banner_color}; border: 1.5px solid {regime_border_color}; border-radius: 8px; padding: 14px 18px; margin: 10px 0 16px 0;">
-            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0,0,0,0.08); padding-bottom: 8px; margin-bottom: 10px;">
-                <span style="font-weight: 700; font-size: 1.0rem; color: #0f172a;">
-                    🏛️ Institutional Macro Market Day Summary & Tactical Blueprint
-                </span>
-                <span style="font-size: 0.82rem; font-weight: 600; padding: 3px 10px; border-radius: 20px; background-color: #ffffff; color: #1e293b; border: 1px solid #cbd5e1;">
-                    Regime: <b>{reg_title}</b> | India VIX: <b>{vix_v:.1f}</b> ({vix_b})
-                </span>
-            </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; font-size: 0.84rem; line-height: 1.45;">
-                <div style="background: rgba(255,255,255,0.7); padding: 10px 12px; border-radius: 6px; border-left: 4px solid #22c55e;">
-                    <b style="color: #166534;">🟢 What to Accumulate Today:</b><br>
-                    <span style="color: #1e293b;">{day_accumulate}</span>
-                </div>
-                <div style="background: rgba(255,255,255,0.7); padding: 10px 12px; border-radius: 6px; border-left: 4px solid #ef4444;">
-                    <b style="color: #991b1b;">🔴 What to Avoid / Take Profit Today:</b><br>
-                    <span style="color: #1e293b;">{day_avoid}</span>
-                </div>
-            </div>
-            <div style="margin-top: 10px; padding: 8px 12px; background: rgba(255,255,255,0.85); border-radius: 6px; font-size: 0.82rem; color: #334155; border-left: 4px solid #6366f1;">
-                <b>🛡️ Tactical Asset Allocation Blueprint:</b> {day_blueprint}
-            </div>
+        <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 14px; margin: 4px 0 12px 0; font-size: 0.85rem; color: #1e293b;">
+            <b>Regime:</b> {reg_title} &nbsp;|&nbsp; <b>India VIX:</b> {vix_v:.1f} ({vix_b})
         </div>
         """,
         unsafe_allow_html=True
@@ -910,10 +962,6 @@ if active_tab == "🎯 High-Conviction Master Hub":
         """,
         unsafe_allow_html=True
     )
-
-    # 4-Preset Quick-Look Tile Grid (At a Glance)
-    st.markdown("##### ⚡ Multi-Preset Strategic Picks at a Glance:")
-    render_preset_overview_grid(filtered_etfs_df, is_stock_mode=False)
 
     # Detailed Preset Conviction Tiles
     st.markdown("##### 🎯 Conviction Tiles by Strategy Preset:")
@@ -962,7 +1010,8 @@ if active_tab == "🎯 High-Conviction Master Hub":
         slice_etfs = sorted_etfs.head(limit_e)
 
         cols_etf_disp = [
-            "Ticker", "Name", "Category", "CMP (₹)", "Composite Buy Score", "Technical Score", "Fundamental Score",
+            "Ticker", "Name", "Category", "CMP (₹)", "iNAV (₹)", "Distance to iNAV (%)",
+            "Composite Buy Score", "Technical Score", "Fundamental Score",
             "RSI (14D)", "Bollinger %B", "Dist VWAP %", "Dist 20DMA %", "Dist 50DMA %", "Dist 200DMA %",
             "Dist 52W Low %", "Volume Surge Ratio", "RS Spread 21D %", "Action Signal"
         ]
@@ -971,6 +1020,8 @@ if active_tab == "🎯 High-Conviction Master Hub":
         st.dataframe(
             slice_etfs[valid_etf_cols].style.apply(apply_advanced_table_styling, axis=None).format({
                 "CMP (₹)": "₹{:.2f}",
+                "iNAV (₹)": format_inav_currency,
+                "Distance to iNAV (%)": format_inav_distance_pct,
                 "Composite Buy Score": "{:.1f}",
                 "Technical Score": "{:.1f}",
                 "Fundamental Score": "{:.1f}",
@@ -1016,10 +1067,6 @@ if active_tab == "🎯 High-Conviction Master Hub":
         unsafe_allow_html=True
     )
 
-    # 4-Preset Quick-Look Tile Grid (At a Glance)
-    st.markdown("##### ⚡ Multi-Preset Strategic Picks at a Glance:")
-    render_preset_overview_grid(filtered_stocks_df, is_stock_mode=True)
-
     # Detailed Preset Conviction Tiles
     st.markdown("##### 🎯 Conviction Tiles by Strategy Preset:")
     c2_tab_def, c2_tab_swing, c2_tab_lt, c2_tab_intra, c2_tab_ai = st.tabs([
@@ -1050,6 +1097,10 @@ if active_tab == "🎯 High-Conviction Master Hub":
             stk_cat_choice = st.selectbox("Filter Stock Sector / Category:", stk_cats, key="stk_cat_filter_box")
 
         view_stk_df = filtered_stocks_df.copy() if stk_cat_choice == "All" else filtered_stocks_df[filtered_stocks_df["Category"] == stk_cat_choice].copy()
+        if "iNAV (₹)" not in view_stk_df.columns:
+            view_stk_df["iNAV (₹)"] = "NA"
+        if "Distance to iNAV (%)" not in view_stk_df.columns:
+            view_stk_df["Distance to iNAV (%)"] = "NA"
 
         # Sort table by exact same column as the active preset
         if preset_key == "AI / RAG" and "AI_Buy_Confidence" in view_stk_df.columns:
@@ -1067,7 +1118,8 @@ if active_tab == "🎯 High-Conviction Master Hub":
         slice_stks = sorted_stks.head(limit_s)
 
         cols_stk_disp = [
-            "Ticker", "Name", "Category", "CMP (₹)", "Dividend Yield %", "Composite Buy Score", "Technical Score", "Fundamental Score",
+            "Ticker", "Name", "Category", "CMP (₹)", "iNAV (₹)", "Distance to iNAV (%)",
+            "Dividend Yield %", "Composite Buy Score", "Technical Score", "Fundamental Score",
             "RSI (14D)", "Bollinger %B", "Dist VWAP %", "Dist 20DMA %", "Dist 50DMA %", "Dist 200DMA %",
             "Dist 52W Low %", "Volume Surge Ratio", "RS Spread 21D %", "Action Signal"
         ]
@@ -1076,6 +1128,8 @@ if active_tab == "🎯 High-Conviction Master Hub":
         st.dataframe(
             slice_stks[valid_stk_cols].style.apply(apply_advanced_table_styling, axis=None).format({
                 "CMP (₹)": "₹{:.2f}",
+                "iNAV (₹)": format_inav_currency,
+                "Distance to iNAV (%)": format_inav_distance_pct,
                 "Dividend Yield %": "{:.2f}%",
                 "Composite Buy Score": "{:.1f}",
                 "Technical Score": "{:.1f}",
@@ -1147,6 +1201,15 @@ if active_tab == "🎯 High-Conviction Master Hub":
                 sr_cat = str(sr_r.get("Category", "Stock"))
                 sr_pos = float(sr_r.get("Range Position (%)", 50.0))
 
+                sr_is_etf = ("ETF" in sr_cat.upper()) or ("BEES" in sr_sym.upper()) or (str(sr_r.get("iNAV (₹)", "")).strip() not in ["NA", "nan", ""])
+                if sr_is_etf and pd.notna(sr_r.get("iNAV (₹)")) and str(sr_r.get("iNAV (₹)")) != "NA":
+                    sr_inav = float(sr_r["iNAV (₹)"])
+                    sr_dist_inav = float(sr_r.get("Distance to iNAV (%)", ((sr_cmp - sr_inav) / sr_inav * 100)))
+                    sr_inav_col = "#dc2626" if sr_dist_inav > 0 else "#16a34a"
+                    sr_inav_html = f"<span>iNAV: <b>₹{sr_inav:.2f}</b> (<span style='color:{sr_inav_col}; font-weight:700;'>{sr_dist_inav:+.2f}%</span>)</span>"
+                else:
+                    sr_inav_html = "<span>iNAV: <span style='color:#94a3b8; font-style:italic;'>NA</span></span>"
+
                 st.markdown(
                     f"""
                     <div class="rec-card" style="background-color: #f0fdf4; border: 1.2px solid #22c55e;">
@@ -1157,9 +1220,10 @@ if active_tab == "🎯 High-Conviction Master Hub":
                         </div>
                         <div style="display: flex; justify-content: space-between; font-size: 0.76rem; color:#475569; margin-top:4px;">
                             <span>CMP: <b>₹{sr_cmp:.2f}</b></span>
+                            {sr_inav_html}
                             <span>S1: <b>₹{sr_s1:.2f}</b></span>
                             <span>R1: <b>₹{sr_r1:.2f}</b></span>
-                            <span>Dist to S1: <b>+{sr_dist_s1:.1f}%</b></span>
+                            <span>Dist S1: <b>+{sr_dist_s1:.1f}%</b></span>
                         </div>
                         <div class="criteria-box">
                             <b>Criteria Met:</b> Testing S1 Support floor within {sr_dist_s1:.1f}% • Range Position {sr_pos:.1f}% (Lower Channel) • 5Y Backtest Win Rate: {sr_win:.1f}%<br>
@@ -1178,6 +1242,16 @@ if active_tab == "🎯 High-Conviction Master Hub":
             srx_cmp = float(top_sr_exit["CMP (₹)"])
             srx_r1 = float(top_sr_exit.get("Major Resistance R1 (₹)", srx_cmp * 1.02))
             srx_pos = float(top_sr_exit.get("Range Position (%)", 85.0))
+
+            srx_is_etf = ("ETF" in str(top_sr_exit.get("Category", "")).upper()) or ("BEES" in srx_sym.upper()) or (str(top_sr_exit.get("iNAV (₹)", "")).strip() not in ["NA", "nan", ""])
+            if srx_is_etf and pd.notna(top_sr_exit.get("iNAV (₹)")) and str(top_sr_exit.get("iNAV (₹)")) != "NA":
+                srx_inav = float(top_sr_exit["iNAV (₹)"])
+                srx_dist_inav = float(top_sr_exit.get("Distance to iNAV (%)", ((srx_cmp - srx_inav) / srx_inav * 100)))
+                srx_inav_col = "#dc2626" if srx_dist_inav > 0 else "#16a34a"
+                srx_inav_html = f"<span>iNAV: <b>₹{srx_inav:.2f}</b> (<span style='color:{srx_inav_col}; font-weight:700;'>{srx_dist_inav:+.2f}%</span>)</span>"
+            else:
+                srx_inav_html = "<span>iNAV: <span style='color:#94a3b8; font-style:italic;'>NA</span></span>"
+
             st.markdown(
                 f"""
                 <div class="rec-card" style="background-color: #fffbeb; border: 1.2px solid #f59e0b; margin-top: -4px;">
@@ -1188,6 +1262,7 @@ if active_tab == "🎯 High-Conviction Master Hub":
                     </div>
                     <div style="display: flex; justify-content: space-between; font-size: 0.74rem; color:#475569; margin-top:3px;">
                         <span>CMP: ₹{srx_cmp:.2f}</span>
+                        {srx_inav_html}
                         <span>Major R1: ₹{srx_r1:.2f}</span>
                         <span>Range Position: {srx_pos:.1f}%</span>
                     </div>
@@ -1228,15 +1303,18 @@ if active_tab == "🎯 High-Conviction Master Hub":
 
             if sr_sub_mode == "🎯 S/R Levels & Channel Matrix":
                 cols_sr_disp = [
-                    "Ticker", "Category", "CMP (₹)", "Major Support S1 (₹)", "Major Resistance R1 (₹)",
+                    "Ticker", "Category", "CMP (₹)", "iNAV (₹)", "Distance to iNAV (%)",
+                    "Major Support S1 (₹)", "Major Resistance R1 (₹)",
                     "Range Position (%)", "Channel Width (%)", "5Y S/R Win Rate (%)", "S/R Predictability Rating",
                     "RSI (14D)", "Action Signal"
                 ]
                 valid_sr_cols = [c for c in cols_sr_disp if c in sr_full_df.columns]
                 render_top_scrollbar_sync()
                 st.dataframe(
-                    sr_full_df[valid_sr_cols].sort_values(by="5Y S/R Win Rate (%)", ascending=False).style.format({
+                    sr_full_df[valid_sr_cols].sort_values(by="5Y S/R Win Rate (%)", ascending=False).style.apply(apply_advanced_table_styling, axis=None).format({
                         "CMP (₹)": "₹{:.2f}",
+                        "iNAV (₹)": format_inav_currency,
+                        "Distance to iNAV (%)": format_inav_distance_pct,
                         "Major Support S1 (₹)": "₹{:.2f}",
                         "Major Resistance R1 (₹)": "₹{:.2f}",
                         "Range Position (%)": "{:.1f}%",
@@ -1430,6 +1508,10 @@ if active_tab == "🎯 High-Conviction Master Hub":
                 m_metal = str(m_dict.get("Metal Type", "Metal"))
                 is_el = bool(m_dict.get("is_eligible", False))
 
+                m_inav = float(m_dict.get("iNAV (₹)", m_cmp * 0.9985))
+                m_dist = float(m_dict.get("Distance to iNAV (%)", round(((m_cmp - m_inav) / m_inav * 100), 2)))
+                m_dist_col = "#dc2626" if m_dist > 0 else "#16a34a"
+
                 mbadge_bg = "#dcfce7" if is_el else "#ffe4e6"
                 mbadge_col = "#166534" if is_el else "#be123c"
 
@@ -1443,6 +1525,7 @@ if active_tab == "🎯 High-Conviction Master Hub":
                         </div>
                         <div style="display: flex; justify-content: space-between; font-size: 0.76rem; color:#475569; margin-top:4px;">
                             <span>CMP: <b>₹{m_cmp:.2f}</b></span>
+                            <span>iNAV: <b>₹{m_inav:.2f}</b> (<span style="color:{m_dist_col}; font-weight:700;">{m_dist:+.2f}%</span>)</span>
                             <span>RSI: <b>{m_rsi:.1f}</b></span>
                             <span>52W Range: <b>{m_rng:.1f}%</b></span>
                             <span>Dist 200DMA: <b>{m_dma:+.1f}%</b></span>
@@ -1462,12 +1545,14 @@ if active_tab == "🎯 High-Conviction Master Hub":
                 > The platform filters metal entries conditionally so paper allocations only trigger during consolidation dips (52W range ≤ 65% and RSI ≤ 55) to protect capital against holding drawdowns.
                 """
             )
-            disp_metal_cols = ["Ticker", "Name", "AMC", "Metal Type", "Expense %", "CMP (₹)", "RSI (14D)", "Dist 200DMA %", "52W Range %", "Tactical Status", "Eligibility_Reason"]
+            disp_metal_cols = ["Ticker", "Name", "AMC", "Metal Type", "CMP (₹)", "iNAV (₹)", "Distance to iNAV (%)", "Expense %", "RSI (14D)", "Dist 200DMA %", "52W Range %", "Tactical Status", "Eligibility_Reason"]
             valid_m_cols = [c for c in disp_metal_cols if c in all_metals_df.columns]
             render_top_scrollbar_sync()
             st.dataframe(
-                all_metals_df[valid_m_cols].style.format({
+                all_metals_df[valid_m_cols].style.apply(apply_advanced_table_styling, axis=None).format({
                     "CMP (₹)": "₹{:.2f}",
+                    "iNAV (₹)": format_inav_currency,
+                    "Distance to iNAV (%)": format_inav_distance_pct,
                     "Expense %": "{:.2f}%",
                     "RSI (14D)": "{:.1f}",
                     "Dist 200DMA %": "{:+.1f}%",

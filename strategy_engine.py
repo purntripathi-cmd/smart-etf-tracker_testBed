@@ -431,9 +431,11 @@ def evaluate_market_metrics(raw, universe_config, is_stock_mode=False, dynamic_w
             inav_dislocation_pct = round(((curr - inav_val) / inav_val) * 100.0, 2) if inav_val > 0 else 0.0
             pricing_status = "✅ Clean (<+0.35%)" if inav_dislocation_pct <= 0.35 else f"🚫 High Premium (+{inav_dislocation_pct:.2f}%)"
             fund_friction_val, fund_spread_val = (exp_ratio if not np.isnan(exp_ratio) else 0.20), max(0.0, inav_dislocation_pct)
+            dist_inav_val = inav_dislocation_pct
         else:
-            inav_val = np.nan
-            inav_dislocation_pct = np.nan
+            inav_val = "NA"
+            inav_dislocation_pct = "NA"
+            dist_inav_val = "NA"
             pricing_status = "✅ Trend Healthy (>200 DMA)" if curr > d200 else "⛔ Trend Broken (<200 DMA)"
             fund_friction_val, fund_spread_val = 0.0, 0.0
 
@@ -450,6 +452,7 @@ def evaluate_market_metrics(raw, universe_config, is_stock_mode=False, dynamic_w
         records.append({
             "Ticker": clean_sym, "symbol": clean_sym, "Full_Ticker": t, "Name": item["name"], "Category": item["category"],
             "CMP (₹)": round(curr, 2), "iNAV (₹)": inav_val, "iNAV Dislocation %": inav_dislocation_pct,
+            "Distance to iNAV (%)": dist_inav_val,
             "Today Low (₹)": round(today_low, 2), "Today High (₹)": round(today_high, 2),
             "5D Low (₹)": round(weekly_low, 2), "5D High (₹)": round(weekly_high, 2),
             "% from 5D Low": round(((curr - weekly_low) / weekly_low) * 100.0, 2) if weekly_low > 0 else 0.0,

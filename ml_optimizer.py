@@ -185,12 +185,20 @@ def get_ai_rag_conviction_candidates(metrics_df, is_stock_mode=False, limit=3):
         if cmp_val <= 0:
             continue
 
+        d200 = float(r.get("Dist 200DMA %", 0.0))
+        dlow = float(r.get("Dist 52W Low %", 0.0))
+        rng = float(r.get("52W Range %", 50.0))
+        conf_buy = float(r.get("AI_Buy_Confidence", 75.0))
+        conf_sell = float(r.get("AI_Sell_Confidence", 75.0))
+
         buy_list.append({
             "Ticker": sym, "symbol": sym, "Name": r.get("Name", sym), "Category": r.get("Category", "AI/RAG"),
             "Signal": "BUY", "CMP (₹)": cmp_val, "RSI (14D)": float(r.get("RSI (14D)", 50.0)),
-            "Composite Score": round(100.0 - float(r["AI_Buy_Confidence"]), 1),
-            "AI_Confidence_Pct": float(r["AI_Buy_Confidence"]),
-            "AI_Confidence_Score": f"{float(r['AI_Buy_Confidence']):.1f}%",
+            "Composite Score": round(100.0 - conf_buy, 1),
+            "AI_Confidence_Pct": conf_buy,
+            "AI_Confidence_Score": f"{conf_buy:.1f}%",
+            "Dist 200DMA %": d200, "Dist 52W Low %": dlow, "52W Range %": rng,
+            "Criteria_Met": f"AI Confluence {conf_buy:.1f}% • 200DMA {d200:+.1f}% • 52W Range {rng:.1f}%",
             "Stop_Loss": round(max(0.01, cmp_val - (1.6 * atr_val)), 2),
             "Target": round(cmp_val + (3.2 * atr_val), 2),
             "Preset": "AI / RAG", "Asset_Class": "Stock" if is_stock_mode else "ETF"
@@ -199,9 +207,11 @@ def get_ai_rag_conviction_candidates(metrics_df, is_stock_mode=False, limit=3):
         sell_list.append({
             "Ticker": sym, "symbol": sym, "Name": r.get("Name", sym), "Category": r.get("Category", "AI/RAG"),
             "Signal": "SELL", "CMP (₹)": cmp_val, "RSI (14D)": float(r.get("RSI (14D)", 50.0)),
-            "Composite Score": round(float(r["AI_Sell_Confidence"]), 1),
-            "AI_Confidence_Pct": float(r["AI_Sell_Confidence"]),
-            "AI_Confidence_Score": f"{float(r['AI_Sell_Confidence']):.1f}%",
+            "Composite Score": round(conf_sell, 1),
+            "AI_Confidence_Pct": conf_sell,
+            "AI_Confidence_Score": f"{conf_sell:.1f}%",
+            "Dist 200DMA %": d200, "Dist 52W Low %": dlow, "52W Range %": rng,
+            "Criteria_Met": f"AI Bearish Exhaustion {conf_sell:.1f}% • 200DMA {d200:+.1f}%",
             "Stop_Loss": round(cmp_val + (1.6 * atr_val), 2),
             "Target": round(max(0.01, cmp_val - (3.2 * atr_val)), 2),
             "Preset": "AI / RAG", "Asset_Class": "Stock" if is_stock_mode else "ETF"

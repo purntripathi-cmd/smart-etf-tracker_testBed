@@ -421,6 +421,7 @@ for item in NIFTY_250_STOCK_CONFIG:
         _seen_stk.add(item["ticker"])
         _dedup_nifty_250.append(item)
 NIFTY_250_STOCK_CONFIG = _dedup_nifty_250
+NIFTY_100_STOCK_CONFIG = _dedup_nifty_250[:100]
 
 # =====================================================================
 # 4. CONFIG LOADER & PERSISTENCE

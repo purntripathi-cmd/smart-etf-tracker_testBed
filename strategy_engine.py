@@ -626,7 +626,18 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
             sl_mult = float(risk_cfg.get("swing_sl_multiplier", 1.5))
             tgt_mult = float(risk_cfg.get("swing_target_multiplier", 3.0))
 
-        buy_composite = round((w_t * t_buy) + (w_f * f_score), 1)
+        # Determine exact buy score directly aligned with metrics_df for 100% transparent sorting
+        if p_clean == "Default" and "Composite Buy Score" in row and pd.notna(row["Composite Buy Score"]):
+            buy_composite = float(row["Composite Buy Score"])
+        elif p_clean in ["Swing / Positional", "Swing"] and "Technical Score Buy Swing" in row and pd.notna(row["Technical Score Buy Swing"]):
+            buy_composite = float(row["Technical Score Buy Swing"])
+        elif p_clean == "Long-Term" and "Technical Score Buy LongTerm" in row and pd.notna(row["Technical Score Buy LongTerm"]):
+            buy_composite = float(row["Technical Score Buy LongTerm"])
+        elif p_clean == "Intraday" and "Technical Score Buy Intraday" in row and pd.notna(row["Technical Score Buy Intraday"]):
+            buy_composite = float(row["Technical Score Buy Intraday"])
+        else:
+            buy_composite = round((w_t * t_buy) + (w_f * f_score), 1)
+
         sell_composite = round((w_t * t_sell) + (w_f * f_score), 1)
 
         sl_buy = round(max(0.01, curr_p - (sl_mult * atr)), 2)
@@ -634,11 +645,55 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
         sl_sell = round(curr_p + (sl_mult * atr), 2)
         tgt_sell = round(max(0.01, curr_p - (tgt_mult * atr)), 2)
 
+        dist_200 = float(row.get("Dist 200DMA %", 0.0))
+        dist_low = float(row.get("Dist 52W Low %", 0.0))
+        range_pct = float(row.get("52W Range %", 50.0))
+        vol_ratio = float(row.get("Volume Surge Ratio", 1.0))
+        act_sig = str(row.get("Action Signal", "ACCUMULATE"))
+
+        # Explain criteria met for Buy
+        buy_criteria_items = []
+        if rsi < 40:
+            buy_criteria_items.append(f"RSI {rsi:.1f} ≤ 40 (Oversold Dip)")
+        elif rsi < 55:
+            buy_criteria_items.append(f"RSI {rsi:.1f} (Favourable Momentum)")
+        else:
+            buy_criteria_items.append(f"RSI {rsi:.1f}")
+
+        if dist_200 < 0:
+            buy_criteria_items.append(f"Dist 200DMA {dist_200:+.1f}% (Value Discount)")
+        else:
+            buy_criteria_items.append(f"Dist 200DMA {dist_200:+.1f}% (Trend Support)")
+
+        if range_pct <= 35:
+            buy_criteria_items.append(f"52W Range {range_pct:.1f}% (Cycle Base)")
+        elif dist_low < 15:
+            buy_criteria_items.append(f"+{dist_low:.1f}% from 52W Low")
+
+        if vol_ratio >= 1.2:
+            buy_criteria_items.append(f"Volume Surge {vol_ratio:.1f}x")
+
+        buy_crit_str = " • ".join(buy_criteria_items) if buy_criteria_items else f"Score {buy_composite:.1f} Rank"
+
+        # Explain criteria met for Sell
+        sell_criteria_items = []
+        if rsi >= 65:
+            sell_criteria_items.append(f"RSI {rsi:.1f} ≥ 65 (Overbought)")
+        if dist_200 > 12:
+            sell_criteria_items.append(f"Dist 200DMA {dist_200:+.1f}% (Extended)")
+        if range_pct >= 85:
+            sell_criteria_items.append(f"52W Range {range_pct:.1f}% (Cycle High)")
+        if not sell_criteria_items:
+            sell_criteria_items.append(f"Sell Rank Score {sell_composite:.1f}")
+        sell_crit_str = " • ".join(sell_criteria_items)
+
         buy_candidates.append({
             "Ticker": sym, "symbol": sym, "Name": row.get("Name", sym), "Category": row.get("Category", "General"),
             "Signal": "BUY", "CMP (₹)": curr_p, "RSI (14D)": rsi,
             "Composite Score": buy_composite, "Stop_Loss": sl_buy, "Target": tgt_buy,
-            "14D ATR (₹)": atr, "Volume Surge": row.get("Volume Surge Ratio", 1.0),
+            "14D ATR (₹)": atr, "Volume Surge": vol_ratio,
+            "Dist 200DMA %": dist_200, "Dist 52W Low %": dist_low, "52W Range %": range_pct,
+            "Action Signal": act_sig, "Criteria_Met": buy_crit_str,
             "Preset": preset_name, "Asset_Class": "Stock" if is_stock_mode else "ETF"
         })
 
@@ -646,7 +701,9 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
             "Ticker": sym, "symbol": sym, "Name": row.get("Name", sym), "Category": row.get("Category", "General"),
             "Signal": "SELL", "CMP (₹)": curr_p, "RSI (14D)": rsi,
             "Composite Score": sell_composite, "Stop_Loss": sl_sell, "Target": tgt_sell,
-            "14D ATR (₹)": atr, "Volume Surge": row.get("Volume Surge Ratio", 1.0),
+            "14D ATR (₹)": atr, "Volume Surge": vol_ratio,
+            "Dist 200DMA %": dist_200, "Dist 52W Low %": dist_low, "52W Range %": range_pct,
+            "Action Signal": act_sig, "Criteria_Met": sell_crit_str,
             "Preset": preset_name, "Asset_Class": "Stock" if is_stock_mode else "ETF"
         })
 

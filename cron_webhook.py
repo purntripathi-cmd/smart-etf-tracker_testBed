@@ -21,7 +21,11 @@ if CURRENT_DIR not in sys.path:
 import json
 import logging
 import datetime
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo
+    IST = ZoneInfo("Asia/Kolkata")
+except Exception:
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from paper_trader_daemon import run_paper_trader_daemon

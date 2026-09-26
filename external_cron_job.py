@@ -16,12 +16,14 @@ if CURRENT_DIR not in sys.path:
 
 import time
 import datetime
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo
+    IST = ZoneInfo("Asia/Kolkata")
+except Exception:
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 import logging
 
 from paper_trader_daemon import run_paper_trader_daemon
-
-IST = ZoneInfo("Asia/Kolkata")
 
 logging.basicConfig(
     level=logging.INFO,

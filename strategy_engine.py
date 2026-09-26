@@ -4,13 +4,16 @@
 import datetime
 import os
 import json
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo
+    IST = ZoneInfo("Asia/Kolkata")
+except Exception:
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 import numpy as np
 import pandas as pd
 import logging
 
 logger = logging.getLogger("StrategyEngine_V2")
-IST = ZoneInfo("Asia/Kolkata")
 
 def get_active_runtime_config():
     """Loads active runtime_config.json or returns factory defaults."""

@@ -1,0 +1,1 @@
+Trade_ID,Username,Ticker,Asset_Class,Trigger_Type,Strategy_Preset,Status,Entry_Price,Executed_Qty,Stop_Loss,Target,Execution_Timestamp,PnL_Rs,PnL_Pct,Invested_Value,Market_Regime,RSI_At_Entry,Composite_Score_At_Entry,Exit_Timestamp,Exit_Price,Exit_Reason,Trailing_SL_Active

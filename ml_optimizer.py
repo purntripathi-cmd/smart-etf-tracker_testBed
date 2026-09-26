@@ -4,13 +4,11 @@
 import os
 import json
 import datetime
-from zoneinfo import ZoneInfo
-import numpy as np
-import pandas as pd
-import logging
-
-logger = logging.getLogger("MLOptimizer_V2")
-IST = ZoneInfo("Asia/Kolkata")
+try:
+    from zoneinfo import ZoneInfo
+    IST = ZoneInfo("Asia/Kolkata")
+except Exception:
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 LOCAL_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(LOCAL_DATA_DIR, exist_ok=True)

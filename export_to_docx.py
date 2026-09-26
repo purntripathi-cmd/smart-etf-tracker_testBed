@@ -5,9 +5,11 @@ import os
 import io
 import zipfile
 import datetime
-from zoneinfo import ZoneInfo
-
-IST = ZoneInfo("Asia/Kolkata")
+try:
+    from zoneinfo import ZoneInfo
+    IST = ZoneInfo("Asia/Kolkata")
+except Exception:
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 def escape_xml(text):
     if text is None:

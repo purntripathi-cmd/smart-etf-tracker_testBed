@@ -4,58 +4,78 @@
 import os
 import sys
 
-# Ensure v2 directory takes precedence for local module imports
+# Ensure current directory takes precedence for local module imports
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
+import importlib
+# Purge in-memory stale modules if Streamlit hot-reloaded the script
+for _m in ["strategy_engine", "ml_optimizer", "paper_trader_daemon", "export_to_docx"]:
+    if _m in sys.modules:
+        try:
+            importlib.reload(sys.modules[_m])
+        except Exception:
+            pass
+
 import json
 import logging
 import datetime
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo
+    IST = ZoneInfo("Asia/Kolkata")
+except Exception:
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
 import numpy as np
 import pandas as pd
 import yfinance as yf
 import streamlit as st
 import streamlit.components.v1 as components
 
-from strategy_engine import (
-    DEFAULT_STAGE1_ETF_CONFIG,
-    DEFAULT_STAGE2_STOCK_CONFIG,
-    DEFAULT_PRESETS,
-    PRESETS,
-    evaluate_market_metrics,
-    get_top_conviction_candidates,
-    validate_trade_execution,
-    evaluate_trade_exits,
-    calculate_rsi_series,
-    extract_ticker_df
-)
-from ml_optimizer import (
-    load_ai_trades,
-    save_ai_trades,
-    get_ai_rag_conviction_candidates,
-    evaluate_strategy_performance_and_suggest_tweaks,
-    apply_suggested_optimizations,
-    load_runtime_config,
-    save_runtime_config,
-    load_parameter_change_log,
-    log_parameter_changes,
-    get_parameter_reference_matrix,
-    generate_ai_rag_parameter_adjustments,
-    apply_all_ai_rag_recommendations,
-    save_manual_parameter_adjustments,
-    reset_runtime_config_to_defaults,
-    get_monthly_performance_comparison
-)
-from paper_trader_daemon import run_paper_trader_daemon
+try:
+    from strategy_engine import (
+        DEFAULT_STAGE1_ETF_CONFIG,
+        DEFAULT_STAGE2_STOCK_CONFIG,
+        DEFAULT_PRESETS,
+        PRESETS,
+        evaluate_market_metrics,
+        get_top_conviction_candidates,
+        validate_trade_execution,
+        evaluate_trade_exits,
+        calculate_rsi_series,
+        extract_ticker_df
+    )
+    from ml_optimizer import (
+        load_ai_trades,
+        save_ai_trades,
+        get_ai_rag_conviction_candidates,
+        evaluate_strategy_performance_and_suggest_tweaks,
+        apply_suggested_optimizations,
+        load_runtime_config,
+        save_runtime_config,
+        load_parameter_change_log,
+        log_parameter_changes,
+        get_parameter_reference_matrix,
+        generate_ai_rag_parameter_adjustments,
+        apply_all_ai_rag_recommendations,
+        save_manual_parameter_adjustments,
+        reset_runtime_config_to_defaults,
+        get_monthly_performance_comparison
+    )
+    from paper_trader_daemon import run_paper_trader_daemon
+except Exception as _import_err:
+    import traceback
+    st.set_page_config(page_title="Startup Diagnostic", layout="wide")
+    st.error(f"⚠️ Startup Module Import Error: {_import_err}")
+    st.code(traceback.format_exc())
+    st.info("Tip: Click 'Manage app' in the bottom right corner of Streamlit Cloud, then click 'Reboot app' to purge any stale cached Python modules.")
+    st.stop()
 
 try:
     from export_to_docx import export_v2_docx_file, generate_v2_docx_content
 except Exception:
     export_v2_docx_file, generate_v2_docx_content = None, None
-
-IST = ZoneInfo("Asia/Kolkata")
 LOCAL_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
 

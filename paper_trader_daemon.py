@@ -12,7 +12,11 @@ if CURRENT_DIR not in sys.path:
 import json
 import logging
 import datetime
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo
+    IST = ZoneInfo("Asia/Kolkata")
+except Exception:
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 import pandas as pd
 import numpy as np
 import yfinance as yf

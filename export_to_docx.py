@@ -234,6 +234,13 @@ def generate_v2_docx_content():
     body_elements.append(build_bullet("Curated strictly to broad market indices (Nifty 50, Next 50, Midcap 150, Smallcap 250, 500), factor/smart-beta (Alpha, Quality, Momentum, Low Vol, Value, Equal Weight), commodities (Gold/Silver), and global equities (Nasdaq, S&P 500). Sectoral bets are excluded to avoid cyclical concentration.", "Macro Non-Sectoral ETF Guarantee:"))
     body_elements.append(build_bullet("State persists cleanly in runtime_config.json and universe_config.json across browser reloads, background daemon sessions, and automated cron execution.", "Persistent Configuration:"))
 
+    # Section 12: Telegram Alert Testing & Integration Lab
+    body_elements.append(build_p("12. Telegram Alert Testing & Integration Lab (Tab 4 & Tab 5)", bold=True, color="1E3A8A", size_pt=15, space_after=120))
+    body_elements.append(build_bullet("Integrated directly into the S/R Range-Bound Lab (Tab 4) with one-click buttons to dispatch formatted S/R support bounce alerts and multi-factor diagnostics directly to Telegram.", "S/R Lab Alert Testing Studio:"))
+    body_elements.append(build_bullet("Executing paper trades from Tab 4 or via the automated daemon dispatches instantaneous trade notifications (Ticker, Entry CMP, Qty, Target, Stop Loss) to Telegram.", "Automated Execution & Exit Alerts:"))
+    body_elements.append(build_bullet("Dedicated Telegram Center in Tab 5 provides credentials management, getMe API connectivity tests, live custom test dispatchers, and setup instructions.", "Full Configuration & Diagnostic Hub:"))
+    body_elements.append(build_bullet("Credentials and alert preferences persist in runtime_config.json with zero code modifications needed.", "Persistence & Multi-Environment Support:"))
+
     body_elements.append(build_p("", space_after=180))
     body_elements.append(build_p("© 2026 AGY Quantitative Research Team • Designed for Antigravity Platform", italic=True, color="94A3B8", size_pt=9))
 

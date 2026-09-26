@@ -234,4 +234,27 @@ The platform provides a **1-Click Universe Analyzer and Dynamic Expansion System
    - Curated strictly to **Broad Market Indices** (Nifty 50, Next 50, Midcap 150, Smallcap 250, Nifty 500), **Smart Beta / Factor ETFs** (Momentum, Alpha, Quality, Low Volatility, Value, Equal Weight), **Commodities** (Gold & Silver BeES), and **Global Mega-Caps** (Nasdaq 100, S&P 500, NYSE FANG+).
    - **Sectoral ETFs (Bank, IT, Auto, Pharma, Infra) are strictly excluded** to avoid uncompensated single-sector cyclical drawdown risks.
 
+---
+
+## 🤖 Telegram Alert Testing & Integration Lab (Tab 4 & Tab 5)
+
+The platform provides an end-to-end **Telegram Bot Alert & Testing Suite**:
+
+1. **S/R Lab Testing Studio (Tab 4 Mode 1):**
+   - **Test-Dispatch Live S/R Alerts:** With a single click, format and send a rich HTML alert for the top support bounce candidate (including CMP, S1/S2 floors, R1/R2 ceilings, Range position %, 5Y Win Rate, and suggested Stop Loss / Target).
+   - **Quick In-Lab Setup Expander:** Set and save your Telegram Bot Token and Chat ID directly inside the S/R Lab without navigating away.
+   - **Automated Trade Execution Alerts:** Toggle `☑️ Dispatch Telegram alert on execution` to automatically send order execution details to Telegram whenever a paper trade is placed.
+
+2. **Multi-Factor Diagnostic Dispatch (Tab 4 Mode 3):**
+   - Click `📲 Send [TICKER] Report to Telegram` from the 34-Parameter Inspector to send a comprehensive technical, valuation, and quantitative score report to your Telegram channel.
+
+3. **Dedicated Configuration & Diagnostic Hub (Tab 5):**
+   - **Live Connectivity Test:** Ping Telegram's `getMe` API endpoint to verify your Bot Token, Bot Name, and Username.
+   - **Interactive Live Test Dispatcher:** Customize and send instant test messages with real-time market regime, VIX, and active asset counts.
+   - **Step-by-Step 2-Minute Guide:** Instructions on creating a bot with `@BotFather` and obtaining your chat ID with `@userinfobot`.
+
+4. **Background Daemon & Cron Alerts (`paper_trader_daemon.py`):**
+   - Automatically dispatches notifications on 3:00 PM routine executions, morning intraday entries, stop-loss triggers, target hits, and 3:10 PM square-offs.
+
+
 

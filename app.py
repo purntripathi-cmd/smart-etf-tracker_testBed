@@ -82,6 +82,14 @@ try:
         CORE_STOCK_CONFIG,
         CORE_ETF_CONFIG
     )
+    from telegram_notifier import (
+        get_telegram_config,
+        save_telegram_config,
+        test_bot_connection,
+        send_telegram_message,
+        format_sr_alert,
+        format_paper_trade_alert
+    )
 except Exception as _import_err:
     import traceback
     st.set_page_config(page_title="Startup Diagnostic", layout="wide")
@@ -399,6 +407,13 @@ with st.sidebar:
         """,
         unsafe_allow_html=True
     )
+
+    st.markdown("---")
+    tg_sidebar_cfg = get_telegram_config()
+    if tg_sidebar_cfg["is_configured"]:
+        st.success("🤖 Telegram Bot: Active")
+    else:
+        st.info("🤖 Telegram Bot: Lab Test Mode")
 
     st.markdown("---")
     st.markdown("##### 📄 Documentation & Export")
@@ -1283,11 +1298,11 @@ elif active_tab == "🧱 S/R Range-Bound Lab & Multi-Factor Hub":
             )
 
             # =============================================================
-            # PAPER TRADING 1-CLICK EXECUTION SECTION
+            # S/R PAPER TRADING EXECUTION & TELEGRAM LAB TESTING
             # =============================================================
             st.markdown("---")
-            st.markdown("##### ⚡ Paper Trading Execution: Deploy Top S/R Candidate to Active Ledger")
-            st.caption("Execute high-conviction S/R mean-reversion setups directly into Tab 2's Paper Trading Ledger. Realized and unrealized PnL will be continuously managed with systematic Stop Loss & Target exits.")
+            st.markdown("##### ⚡ S/R Execution & Telegram Alert Testing Lab")
+            st.caption("Deploy high-conviction S/R mean-reversion setups to Tab 2's Paper Trading Ledger and dispatch real-time signal alerts directly to your Telegram channel for live testing.")
 
             top_sr_picks = filtered_sr[filtered_sr["Action Signal"].str.contains("BUY|ACCUMULATE", na=False)]
             if top_sr_picks.empty:
@@ -1299,8 +1314,9 @@ elif active_tab == "🧱 S/R Range-Bound Lab & Multi-Factor Hub":
             ]
 
             if exec_options:
-                p_col1, p_col2 = st.columns([3, 1])
-                with p_col1:
+                exec_col, tg_col = st.columns([1.6, 1.4])
+                with exec_col:
+                    st.markdown("###### 📝 Paper Trading Execution")
                     chosen_exec_item = st.selectbox("Select Candidate for Paper Execution:", exec_options, index=0)
                     chosen_idx = exec_options.index(chosen_exec_item)
                     target_sr_row = top_sr_picks.reset_index(drop=True).iloc[chosen_idx]
@@ -1317,16 +1333,62 @@ elif active_tab == "🧱 S/R Range-Bound Lab & Multi-Factor Hub":
                         f"Stop Loss: **₹{sl_val:.2f}** (Risk) | Target: **₹{tgt_val:.2f}** (Reward) | "
                         f"5Y Empirical Win Rate: **{win_rate}%** ({target_sr_row.get('S/R Predictability Rating', '')})"
                     )
-                with p_col2:
-                    st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+
+                    dispatch_tg_on_exec = st.checkbox("📲 Dispatch Telegram notification on execution", value=True)
+
                     if st.button(f"⚡ Execute {clean_sym} to Paper Ledger", type="primary", use_container_width=True):
-                        success, msg = execute_sr_paper_trade(clean_sym, target_sr_row, budget=tranche_budget, username="Public_User")
+                        success, msg = execute_sr_paper_trade(
+                            clean_sym,
+                            target_sr_row,
+                            budget=tranche_budget,
+                            username="Public_User",
+                            dispatch_telegram=dispatch_tg_on_exec
+                        )
                         if success:
                             st.success(f"🎉 {msg}")
                             st.session_state.strategy_toast = f"Executed {clean_sym} to Paper Ledger!"
                             st.rerun()
                         else:
                             st.warning(f"⚠️ {msg}")
+
+                with tg_col:
+                    st.markdown("###### 📲 Telegram S/R Alert Testing Studio")
+                    tg_cfg = get_telegram_config()
+                    if tg_cfg["is_configured"]:
+                        st.success("🟢 Telegram Bot: Configured & Ready")
+                    else:
+                        st.warning("⚠️ Bot Not Configured (Enter credentials below)")
+
+                    with st.expander("⚙️ Telegram Bot Credentials (Quick Setup)", expanded=not tg_cfg["is_configured"]):
+                        q_tok = st.text_input("Bot Token:", value=tg_cfg["bot_token"], type="password", key="sr_tg_tok", help="Obtain from @BotFather")
+                        q_chat = st.text_input("Chat ID:", value=tg_cfg["chat_id"], key="sr_tg_chat", help="Personal Chat ID or Channel ID")
+                        if st.button("💾 Save Credentials", key="sr_save_tg_btn", use_container_width=True):
+                            save_telegram_config(q_tok, q_chat)
+                            st.success("Credentials saved to testbed!")
+                            st.rerun()
+
+                    # Direct Live S/R Alert Dispatch Button
+                    if st.button(f"📲 Test Send S/R Alert for {clean_sym} to Telegram", use_container_width=True):
+                        alert_html = format_sr_alert(
+                            ticker=clean_sym,
+                            cmp_val=cmp_val,
+                            s1=float(target_sr_row.get("Immediate Support S1 (₹)", cmp_val * 0.97)),
+                            s2=float(target_sr_row.get("Structural Floor S2 (₹)", cmp_val * 0.93)),
+                            r1=float(target_sr_row.get("Immediate Resistance R1 (₹)", cmp_val * 1.04)),
+                            r2=float(target_sr_row.get("Structural Ceiling R2 (₹)", cmp_val * 1.08)),
+                            range_pos=float(target_sr_row.get("Range Position (%)", 50.0)),
+                            win_rate=float(win_rate),
+                            action=str(target_sr_row.get("Action Signal", "BUY AT SUPPORT")),
+                            target=tgt_val,
+                            sl=sl_val,
+                            note=f"Regime: {target_sr_row.get('Regime', 'Range-Bound')} | Rating: {target_sr_row.get('S/R Predictability Rating', 'Good')}"
+                        )
+                        res = send_telegram_message(alert_html)
+                        if res["ok"]:
+                            st.success(f"✅ Telegram S/R Alert sent! (Message ID: {res['message_id']})")
+                        else:
+                            st.error(f"❌ Dispatch failed: {res['error']}")
+                            st.caption("Tip: Check Bot Token, Chat ID, and ensure you sent `/start` to your bot.")
 
     # =================================================================
     # FOCUS MODE 2: 5-YEAR S/R BACKTEST & PREDICTABILITY LEADERBOARD
@@ -1485,10 +1547,119 @@ elif active_tab == "🧱 S/R Range-Bound Lab & Multi-Factor Hub":
             q3.metric("AI Buy Confidence", f"{prof.get('AI_Buy_Confidence', 50.0):.1f}%")
             q4.metric("AI Sell Confidence", f"{prof.get('AI_Sell_Confidence', 50.0):.1f}%")
 
+            # Mode 3 Telegram Diagnostic Dispatch
+            st.markdown("---")
+            m3_col1, m3_col2 = st.columns([3, 1])
+            with m3_col1:
+                st.caption(f"Send a comprehensive multi-factor diagnostic report for **{prof.get('Ticker')}** ({prof.get('Name')}) to your configured Telegram channel.")
+            with m3_col2:
+                if st.button(f"📲 Send {prof.get('Ticker')} Report to Telegram", use_container_width=True):
+                    tg_diag_msg = f"""🔬 <b>[AGY LAB DIAGNOSTIC] 34-Parameter Deep Dive</b>
+━━━━━━━━━━━━━━━━━━━━
+🎯 <b>Asset:</b> <code>{prof.get('Ticker')}</code> - {prof.get('Name')}
+📊 <b>Category:</b> {prof.get('Category')} | <b>CMP:</b> ₹{prof.get('CMP', 0.0):,.2f}
+📈 <b>Composite Buy Score:</b> #{int(prof.get('Composite_Buy_Score', 50))} | <b>Sell Score:</b> #{int(prof.get('Composite_Sell_Score', 50))}
+🤖 <b>AI Conviction:</b> Buy {prof.get('AI_Buy_Confidence', 50.0):.1f}% | Sell {prof.get('AI_Sell_Confidence', 50.0):.1f}%
+
+📉 <b>Technical Metrics:</b>
+• RSI (14D): {prof.get('RSI_14D', 50.0):.1f}
+• Dist 200 DMA: {prof.get('Dist_200DMA_Pct', 0.0):+.1f}%
+• Dist VWAP: {prof.get('VWAP_Dist_Pct', 0.0):+.1f}%
+• Bollinger %B: {prof.get('Bollinger_B', 0.5):.2f}
+• ATR (14D): ₹{prof.get('ATR_14D', 0.0):.2f}
+• Volume Surge: {prof.get('Volume_Surge_Ratio', 1.0):.2f}x
+
+🏢 <b>Fundamental & Valuation:</b>
+• Trailing P/E: {prof.get('PE_Ratio', 0.0):.1f} | P/B: {prof.get('PB_Ratio', 0.0):.1f}
+• ROE: {prof.get('ROE', 0.0):.1f}% | Debt/Equity: {prof.get('Debt_To_Equity', 0.0):.2f}
+• Dividend Yield: {prof.get('Dividend_Yield', 0.0):.2f}%
+━━━━━━━━━━━━━━━━━━━━
+⏱️ <i>AGY Quant Platform • 2026-09-26</i>"""
+                    d_res = send_telegram_message(tg_diag_msg)
+                    if d_res["ok"]:
+                        st.success(f"✅ Diagnostic report for {prof.get('Ticker')} sent to Telegram! (Msg ID: {d_res['message_id']})")
+                    else:
+                        st.error(f"❌ Failed to send diagnostic: {d_res['error']}")
+
 # =====================================================================
 # TAB 5: QUANT ECOSYSTEM & CRON-JOB.ORG SETUP GUIDE
 # =====================================================================
 elif active_tab == "🌐 Quant Ecosystem & Webhook Setup":
+    # -------------------------------------------------------------
+    # TELEGRAM BOT CONFIGURATION & INTERACTIVE TESTING LAB
+    # -------------------------------------------------------------
+    st.markdown("### 🤖 Telegram Bot Configuration & Interactive Testing Lab")
+    st.caption("Integrate your personal Telegram Bot or Channel to receive real-time S/R Lab alerts, high-conviction buy/sell signals, and paper trading execution/exit notifications.")
+
+    tg_lab_cfg = get_telegram_config()
+    is_tg_active = tg_lab_cfg["is_configured"]
+
+    tg_status_col1, tg_status_col2 = st.columns([2.5, 1.5])
+    with tg_status_col1:
+        if is_tg_active:
+            st.success("🟢 **Telegram Status:** Configured & Active (Bot Token and Chat ID linked)")
+        else:
+            st.warning("⚠️ **Telegram Status:** Not Configured (Fill credentials below to enable live testing)")
+    with tg_status_col2:
+        test_conn_btn = st.button("🔍 Test Connection (getMe)", use_container_width=True)
+
+    if test_conn_btn:
+        conn_res = test_bot_connection(tg_lab_cfg["bot_token"])
+        if conn_res["ok"]:
+            st.success(f"✅ Bot Verified: **{conn_res['bot_name']}** (`@{conn_res['username']}`) | Bot ID: `{conn_res['id']}`")
+        else:
+            st.error(f"❌ Connection failed: {conn_res['error']}")
+
+    with st.form("telegram_config_form"):
+        st.markdown("##### 🔑 Telegram Bot Credentials")
+        f_token = st.text_input("Telegram Bot Token:", value=tg_lab_cfg["bot_token"], type="password", help="Generated by @BotFather on Telegram (e.g. 123456789:ABCdefGhI...)")
+        f_chat = st.text_input("Telegram Chat ID:", value=tg_lab_cfg["chat_id"], help="Your personal numerical Telegram ID or group/channel ID (e.g. 987654321 or -100123456789)")
+        f_enabled = st.checkbox("Enable Automated Telegram Notifications", value=tg_lab_cfg.get("enabled", True))
+
+        save_btn = st.form_submit_button("💾 Save Credentials & Update Runtime Config", type="primary", use_container_width=True)
+        if save_btn:
+            save_telegram_config(f_token, f_chat, enabled=f_enabled)
+            st.success("✅ Telegram credentials saved to runtime_config.json!")
+            st.rerun()
+
+    st.markdown("##### 🚀 Live Telegram Alert Dispatch Test")
+    t_msg_col1, t_msg_col2 = st.columns([3, 1])
+    with t_msg_col1:
+        sample_default_msg = f"""🤖 <b>[AGY QUANT TESTBED] Telegram Integration Verified!</b>
+━━━━━━━━━━━━━━━━━━━━
+✅ <b>System Status:</b> Online & Operational
+⏱️ <b>Timestamp:</b> {datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")}
+📊 <b>Market Regime:</b> {regime_data.get('regime', 'Normal')}
+📉 <b>India VIX:</b> {regime_data.get('vix', 15.0):.1f}
+🎯 <b>Universe Scope:</b> {len(current_stock_universe)} Stocks, {len(current_etf_universe)} ETFs
+━━━━━━━━━━━━━━━━━━━━
+🚀 <i>All S/R Range Lab and Paper Trading alerts will be delivered to this chat.</i>"""
+        test_custom_text = st.text_area("Test Message Content (HTML Supported):", value=sample_default_msg, height=140)
+    with t_msg_col2:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        if st.button("📲 Send Live Test Alert", type="primary", use_container_width=True):
+            dispatch_res = send_telegram_message(test_custom_text, bot_token=f_token if 'f_token' in locals() else None, chat_id=f_chat if 'f_chat' in locals() else None)
+            if dispatch_res["ok"]:
+                st.success(f"🎉 Alert delivered! Message ID: `{dispatch_res['message_id']}`")
+            else:
+                st.error(f"❌ Dispatch error: {dispatch_res['error']}")
+
+    with st.expander("📖 2-Minute Setup Guide: How to create a Telegram Bot & get your Chat ID"):
+        st.markdown("""
+        1. **Create your Bot:**
+           - Open Telegram and search for `@BotFather`.
+           - Send `/newbot`, then provide a display name (e.g. `AGY Quant Bot`) and a username ending in `bot` (e.g. `agy_mytest_bot`).
+           - Copy the HTTP API token provided by BotFather (looks like `123456789:ABCdef-ghijklmn`).
+        2. **Get your Chat ID:**
+           - Search for `@userinfobot` on Telegram and send `/start`.
+           - It will reply with your numerical `Id` (e.g. `987654321`).
+        3. **Activate the Bot:**
+           - Search for your newly created bot in Telegram and send `/start` once.
+        4. **Connect & Test:**
+           - Paste the token and chat ID into the form above, click **Save Credentials**, then click **Send Live Test Alert**!
+        """)
+
+    st.markdown("---")
     st.markdown("### 🌐 External Cron & Webhook Integration (cron-job.org)")
 
     st.markdown(

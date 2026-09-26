@@ -32,6 +32,11 @@ from strategy_engine import (
     get_active_runtime_config
 )
 from universe_manager import get_active_universe
+from telegram_notifier import (
+    send_telegram_message,
+    format_paper_trade_alert,
+    get_telegram_config
+)
 from ml_optimizer import (
     load_ai_trades,
     save_ai_trades,
@@ -187,6 +192,17 @@ def run_paper_trader_daemon(mode_override=None, force_weekend=False):
     if exited_count > 0:
         save_trades(updated_trades)
         logger.info(f"[EXITS] Successfully processed {exited_count} exits/square-offs.")
+        try:
+            tg_cfg = get_telegram_config()
+            if tg_cfg.get("is_configured"):
+                closed_now = updated_trades[
+                    (updated_trades["Status"] == "CLOSED") &
+                    (updated_trades["Exit_Timestamp"] != "")
+                ]
+                for _, c_row in closed_now.tail(exited_count).iterrows():
+                    send_telegram_message(format_paper_trade_alert(c_row.to_dict(), action_type="EXIT"))
+        except Exception as tg_ex_err:
+            logger.warning(f"Failed to dispatch Telegram exit alert: {tg_ex_err}")
 
     active_positions = updated_trades[updated_trades["Status"] == "ACTIVE"] if not updated_trades.empty else pd.DataFrame()
     active_ticker_set = set(active_positions["Ticker"].astype(str).str.replace(".NS", "").str.upper()) if not active_positions.empty else set()
@@ -407,6 +423,13 @@ def run_paper_trader_daemon(mode_override=None, force_weekend=False):
         combined_trades = pd.concat([updated_trades, new_trades_df], ignore_index=True) if not updated_trades.empty else new_trades_df
         save_trades(combined_trades)
         logger.info(f"[SUCCESS] Recorded {len(created_records)} new paper trades into {LOCAL_TRADES_CSV}.")
+        try:
+            tg_cfg = get_telegram_config()
+            if tg_cfg.get("is_configured"):
+                for n_rec in created_records:
+                    send_telegram_message(format_paper_trade_alert(n_rec, action_type="ENTRY"))
+        except Exception as tg_ent_err:
+            logger.warning(f"Failed to dispatch Telegram entry alert: {tg_ent_err}")
 
     # 5. Log Execution Audit
     buy_tickers = [r["Ticker"] for r in created_records if "BUY" in r.get("Trigger_Type", "")]

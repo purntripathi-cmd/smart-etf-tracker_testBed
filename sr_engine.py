@@ -534,9 +534,10 @@ def style_sr_matrix_dataframe(df):
 # =====================================================================
 # 6. S/R PAPER TRADING EXECUTION CONNECTOR
 # =====================================================================
-def execute_sr_paper_trade(clean_sym, sr_row, budget=15000.0, username="Public_User"):
+def execute_sr_paper_trade(clean_sym, sr_row, budget=15000.0, username="Public_User", dispatch_telegram=True):
     """
     Executes an S/R Range Mean Reversion trade into the paper trading ledger (paper_trades.csv).
+    Optionally dispatches a formatted alert to Telegram.
     Returns (success: bool, message: str)
     """
     trades_path = os.path.join(os.path.dirname(__file__), "data", "paper_trades.csv")
@@ -617,4 +618,18 @@ def execute_sr_paper_trade(clean_sym, sr_row, budget=15000.0, username="Public_U
     combined_audit = pd.concat([audit_df, pd.DataFrame([audit_rec])], ignore_index=True)
     combined_audit.to_csv(audit_path, index=False)
 
-    return True, f"Successfully executed {clean_sym} ({qty} Qty @ ₹{cmp_val:.2f}) with SL ₹{sl_val:.2f} and Target ₹{tgt_val:.2f}!"
+    # Optional Telegram Dispatch
+    tg_status_msg = ""
+    if dispatch_telegram:
+        try:
+            from telegram_notifier import send_telegram_message, format_paper_trade_alert, get_telegram_config
+            cfg = get_telegram_config()
+            if cfg.get("is_configured"):
+                tg_text = format_paper_trade_alert(rec, action_type="ENTRY")
+                tg_res = send_telegram_message(tg_text)
+                if tg_res.get("ok"):
+                    tg_status_msg = " [📲 Telegram Alert Sent]"
+        except Exception as e:
+            logger.warning(f"Telegram dispatch error during S/R trade execution: {e}")
+
+    return True, f"Successfully executed {clean_sym} ({qty} Qty @ ₹{cmp_val:.2f}) with SL ₹{sl_val:.2f} and Target ₹{tgt_val:.2f}!{tg_status_msg}"

@@ -213,9 +213,17 @@ def generate_v2_docx_content():
     body_elements.append(build_bullet("Adjust indicator weights (DMA, RSI, Low, Volume, %B, VWAP) via GUI sliders in real time without modifying source code.", "Interactive Sliders:"))
     body_elements.append(build_bullet("Clear specifications explain whether higher or lower values indicate a stronger BUY edge vs SELL edge across all 34 parameters.", "Directionality Matrix:"))
     body_elements.append(build_bullet("AI/RAG diagnoses paper ledger bottlenecks and recommends optimized parameters with a one-click apply button.", "Empirical AI/RAG Auto-Tuner:"))
-    body_elements.append(build_bullet("Automated cron background tasks run strictly on weekdays (Mon-Fri) and safely bypass weekends.", "Weekday Schedule Guard:"))
+    body_elements.append(build_bullet("Configurable schedule guard (unlocked 7 days/week in testbed for full simulation).", "Schedule Guard:"))
     body_elements.append(build_bullet("Tracks month-over-month Win Rate %, Profit Factor, Realized PnL, and parameter tuning event frequencies.", "Monthly Performance Evolution:"))
     body_elements.append(build_bullet("Chronological audit trail logging every manual adjustment, AI auto-tune, and baseline reset.", "Parameter Change Audit Log:"))
+
+    # Section 10: S/R Range-Bound Quant Lab & Multi-Factor Hub
+    body_elements.append(build_p("10. Support, Resistance & Range-Bound Quant Lab (Tab 4)", bold=True, color="1E3A8A", size_pt=15, space_after=120))
+    body_elements.append(build_bullet("Detects Immediate Support (S1), Structural Floor (S2), Immediate Resistance (R1), Structural Ceiling (R2), and Channel Midline.", "Algorithmic S/R Detection:"))
+    body_elements.append(build_bullet("ADX < 22 and Choppiness Index identify consolidation boxes. Generates BUY AT SUPPORT, SELL AT RESISTANCE, and BREAKOUT RUNNER signals.", "Range Regime & Signals:"))
+    body_elements.append(build_bullet("Simulates 5-6 years of daily data (~1,250 bars) for support bounces. Measures Win Rate %, Average PnL %, and Profit Factor.", "5-Year Empirical Backtest:"))
+    body_elements.append(build_bullet("Ranks the universe by S/R fidelity (e.g. Cholamandalam 84.6%, Gold BeES 71.4%, Maruti 61.5%, ITC 56.5%).", "Predictability Leaderboard:"))
+    body_elements.append(build_bullet("Complete parameter laboratory showing all 34 technical, quantitative, momentum, and fundamental metrics for any selected asset.", "34-Parameter Deep Dive:"))
 
     body_elements.append(build_p("", space_after=180))
     body_elements.append(build_p("© 2026 AGY Quantitative Research Team • Designed for Antigravity Platform", italic=True, color="94A3B8", size_pt=9))

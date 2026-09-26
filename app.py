@@ -96,8 +96,7 @@ st.markdown(
 try:
     from strategy_engine import (
         evaluate_market_metrics,
-        get_top_conviction_candidates,
-        get_ai_rag_conviction_candidates
+        get_top_conviction_candidates
     )
     from sr_engine import (
         compute_sr_matrix,
@@ -126,7 +125,8 @@ try:
         save_manual_parameter_adjustments,
         get_parameter_reference_matrix,
         get_monthly_performance_comparison,
-        load_parameter_change_log
+        load_parameter_change_log,
+        get_ai_rag_conviction_candidates
     )
     from paper_trader_daemon import (
         evaluate_trade_exits,

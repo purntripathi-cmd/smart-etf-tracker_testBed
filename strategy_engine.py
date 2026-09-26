@@ -817,3 +817,12 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False):
         updated.at[idx, "Hold_Duration_Days"] = hold_days
 
     return updated
+
+
+def get_ai_rag_conviction_candidates(metrics_df, is_stock_mode=False, limit=3):
+    """Bridge/re-export to ml_optimizer.get_ai_rag_conviction_candidates with fallback."""
+    try:
+        from ml_optimizer import get_ai_rag_conviction_candidates as _ai_func
+        return _ai_func(metrics_df, is_stock_mode=is_stock_mode, limit=limit)
+    except Exception:
+        return get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mode=is_stock_mode, limit=limit)

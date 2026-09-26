@@ -2,6 +2,13 @@
 # V2 AGY QUANT PLATFORM: HIGH-CONVICTION TERMINAL (PUBLIC TESTBED)
 # =====================================================================
 import os
+import sys
+
+# Ensure v2 directory takes precedence for local module imports
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
+
 import json
 import logging
 import datetime
@@ -31,13 +38,33 @@ from ml_optimizer import (
     evaluate_strategy_performance_and_suggest_tweaks,
     apply_suggested_optimizations,
     load_runtime_config,
-    save_runtime_config
+    save_runtime_config,
+    load_parameter_change_log,
+    log_parameter_changes,
+    get_parameter_reference_matrix,
+    generate_ai_rag_parameter_adjustments,
+    apply_all_ai_rag_recommendations,
+    save_manual_parameter_adjustments,
+    reset_runtime_config_to_defaults,
+    get_monthly_performance_comparison
 )
 from paper_trader_daemon import run_paper_trader_daemon
+
+try:
+    from export_to_docx import export_v2_docx_file, generate_v2_docx_content
+except Exception:
+    export_v2_docx_file, generate_v2_docx_content = None, None
 
 IST = ZoneInfo("Asia/Kolkata")
 LOCAL_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
+
+DOCX_GUIDE_FILE = os.path.join(os.path.dirname(__file__), "AGY_Quant_Platform_V2_Guide.docx")
+if export_v2_docx_file and not os.path.exists(DOCX_GUIDE_FILE):
+    try:
+        export_v2_docx_file(DOCX_GUIDE_FILE)
+    except Exception:
+        pass
 
 LOCAL_TRADES_CSV = os.path.join(LOCAL_DATA_DIR, "paper_trades.csv")
 LOCAL_AUDIT_CSV = os.path.join(LOCAL_DATA_DIR, "execution_audit_log.csv")
@@ -282,7 +309,8 @@ with st.sidebar:
             "📈 Paper Trading & Multi-Regime Ledger",
             "🤖 AI Quant Advisor & Strategy Tuner",
             "📊 Advanced Quant Hub",
-            "🌐 Quant Ecosystem & Webhook Setup"
+            "🌐 Quant Ecosystem & Webhook Setup",
+            "🎛️ Parameter & Weights Studio"
         ],
         index=0
     )
@@ -306,6 +334,29 @@ with st.sidebar:
         """,
         unsafe_allow_html=True
     )
+
+    st.markdown("---")
+    st.markdown("##### 📄 Documentation & Export")
+    docx_bytes = None
+    if os.path.exists(DOCX_GUIDE_FILE):
+        try:
+            with open(DOCX_GUIDE_FILE, "rb") as f:
+                docx_bytes = f.read()
+        except Exception:
+            pass
+    elif generate_v2_docx_content:
+        try:
+            docx_bytes = generate_v2_docx_content()
+        except Exception:
+            pass
+    if docx_bytes:
+        st.download_button(
+            label="📥 Download V2 Guide (.docx)",
+            data=docx_bytes,
+            file_name="AGY_Quant_Platform_V2_Guide.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True
+        )
 
     if st.session_state.strategy_toast:
         st.toast(st.session_state.strategy_toast)
@@ -371,7 +422,12 @@ def apply_advanced_table_styling(df):
         top_rs = df["RS Spread 21D %"].nlargest(n_top).index
         styles.loc[top_rs, "RS Spread 21D %"] = "background-color: #dcfce7; color: #15803d; font-weight: bold;"
 
-    # 8. Guards Status Columns
+    # 8. Dividend Yield % (Higher is Better for Long-Term Income & Value = Green)
+    if "Dividend Yield %" in df.columns:
+        top_div = df["Dividend Yield %"].nlargest(n_top).index
+        styles.loc[top_div, "Dividend Yield %"] = "background-color: #dcfce7; color: #166534; font-weight: bold;"
+
+    # 9. Guards Status Columns
     if "Falling Knife Guard" in df.columns:
         styles["Falling Knife Guard"] = df["Falling Knife Guard"].apply(
             lambda v: "background-color: #d4edda; color: #155724; font-weight: bold;" if "Safe" in str(v) else ("background-color: #f8d7da; color: #721c24; font-weight: bold;" if "Wait" in str(v) else "")
@@ -519,7 +575,7 @@ if active_tab == "🎯 Tactical Screener & Ladder Planner":
 
     # Comprehensive Columns
     cols_show = [
-        "Ticker", "Name", "Category", "CMP (₹)", "Composite Buy Score", "Technical Score", "Fundamental Score",
+        "Ticker", "Name", "Category", "CMP (₹)", "Dividend Yield %", "Dividend Status", "Composite Buy Score", "Technical Score", "Fundamental Score",
         "RSI (14D)", "RSI Delta", "Bollinger %B", "Dist VWAP %", "Dist 20DMA %", "Dist 50DMA %", "Dist 100DMA %", "Dist 200DMA %",
         "Dist 52W Low %", "Dist 52W High %", "Volume Surge Ratio", "RS Spread 21D %", "14D ATR (₹)", "ATR % of CMP",
         "Volatility Stop / Target", "Falling Knife Guard", "Structural Guard / iNAV"
@@ -532,6 +588,14 @@ if active_tab == "🎯 Tactical Screener & Ladder Planner":
         "Name": st.column_config.TextColumn("Name", help="Instrument descriptive company or ETF fund name.", pinned=True),
         "Category": st.column_config.TextColumn("Category", help="Sectoral or asset class categorization.", pinned=True),
         "CMP (₹)": st.column_config.NumberColumn("CMP (₹)", format="₹%.2f", help="Current Market Price on National Stock Exchange.", pinned=True),
+        "Dividend Yield %": st.column_config.NumberColumn(
+            "Dividend Yield %", format="%.2f%%",
+            help="💰 DIVIDEND YIELD %:\n• HIGHER IS BETTER FOR BUY (Income support, defensive value, and long-term compounding)\n• GREEN = Top 5 Highest Yielders"
+        ),
+        "Dividend Status": st.column_config.TextColumn(
+            "Dividend Status",
+            help="💰 DIVIDEND TIER:\n• High Yield (>= 3.0%)\n• Moderate (1.0 - 3.0%)\n• Growth / Low (< 1.0%)"
+        ),
         "Composite Buy Score": st.column_config.NumberColumn(
             "Composite Buy Score", format="%.1f",
             help="🌟 COMPOSITE CONVICTION SCORE (0 - 100):\n• LOWER IS BETTER FOR BUY (Deep value, oversold confluence, high discount)\n• HIGHER IS BETTER FOR SELL (Overbought exhaustion, extreme extension)\n• TOP 5 BUY highlighted in GREEN | TOP 5 SELL highlighted in RED"
@@ -594,6 +658,7 @@ if active_tab == "🎯 Tactical Screener & Ladder Planner":
     st.dataframe(
         display_slice[present_cols].style.apply(apply_advanced_table_styling, axis=None).format({
             "CMP (₹)": "₹{:.2f}",
+            "Dividend Yield %": "{:.2f}%",
             "Composite Buy Score": "{:.1f}",
             "Technical Score": "{:.1f}",
             "Fundamental Score": "{:.1f}",
@@ -1029,3 +1094,352 @@ elif active_tab == "🌐 Quant Ecosystem & Webhook Setup":
            ```
         """
     )
+
+    st.markdown("---")
+    st.markdown("#### 📥 Official Platform Documentation (.docx)")
+    st.write("Download the comprehensive architecture manual, quantitative scoring formulas, preset weights, exit logic, and cron-job setup instructions formatted for Microsoft Word:")
+
+    tab5_docx_bytes = None
+    if os.path.exists(DOCX_GUIDE_FILE):
+        try:
+            with open(DOCX_GUIDE_FILE, "rb") as f:
+                tab5_docx_bytes = f.read()
+        except Exception:
+            pass
+    elif generate_v2_docx_content:
+        try:
+            tab5_docx_bytes = generate_v2_docx_content()
+        except Exception:
+            pass
+
+    if tab5_docx_bytes:
+        st.download_button(
+            label="📄 Download AGY Quant Platform Guide (Microsoft Word .docx)",
+            data=tab5_docx_bytes,
+            file_name="AGY_Quant_Platform_V2_Guide.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            type="primary",
+            use_container_width=True
+        )
+
+# =====================================================================
+# TAB 6: PARAMETER & WEIGHTS STUDIO (PUBLIC TESTBED)
+# =====================================================================
+elif active_tab == "🎛️ Parameter & Weights Studio":
+    st.markdown("### 🎛️ Parameter & Weights Calibration Studio")
+    st.caption("Centralized quant control studio: fine-tune strategy weights, ATR risk multipliers, execution schedules, review AI/RAG empirical calibrations, and audit monthly evolution.")
+
+    # Refresh active config
+    active_cfg = load_runtime_config()
+    weights_dict = active_cfg.get("weights", {})
+    risk_dict = active_cfg.get("risk_parameters", {})
+    sched_dict = active_cfg.get("execution_schedule", {})
+    is_weekdays_only = sched_dict.get("weekdays_only", True)
+
+    # Status KPI Cards
+    col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
+    with col_kpi1:
+        st.metric("Strategy Version", active_cfg.get("parameter_version", "v2.2-Adaptive"))
+    with col_kpi2:
+        sched_badge = "🟢 Weekdays Only (Mon-Fri)" if is_weekdays_only else "🟡 All 7 Days Active"
+        st.metric("Schedule Guard", sched_badge)
+    with col_kpi3:
+        st.metric("Last Optimization", active_cfg.get("last_optimized_timestamp", "Baseline"))
+    with col_kpi4:
+        st.metric("Testbed Mode", "🧪 Interactive Calibration Mode")
+
+    st.markdown("---")
+
+    # -------------------------------------------------------------
+    # 1. AI/RAG STRATEGY PERFORMANCE REVIEW & AUTO-TUNER
+    # -------------------------------------------------------------
+    st.markdown("#### 🤖 AI/RAG Strategy Logic Review & Side-by-Side Recommendations")
+    st.write(
+        "The AI/RAG diagnostic engine analyzes empirical paper trades, identifies exit bottlenecks (whipsaw stop-outs, missed runner legs, low-momentum fills), "
+        "and formulates optimized parameter suggestions side-by-side with your active settings."
+    )
+
+    ai_sug_df = generate_ai_rag_parameter_adjustments()
+
+    # Action Toolbar
+    act_col1, act_col2, act_col3 = st.columns([2, 1, 1])
+    with act_col1:
+        if st.button("⚡ One-Click Apply All AI/RAG Recommendations", type="primary", use_container_width=True):
+            res = apply_all_ai_rag_recommendations(user="Testbed_User")
+            st.session_state.strategy_toast = f"🟢 Applied {res['applied_count']} AI/RAG parameter adjustments!"
+            st.cache_data.clear()
+            st.rerun()
+
+    with act_col2:
+        if st.button("🔄 Re-Run Empirical Review", use_container_width=True):
+            st.cache_data.clear()
+            st.session_state.strategy_toast = "Empirical review refreshed."
+            st.rerun()
+
+    with act_col3:
+        if st.button("🔄 Reset to Factory Baseline", use_container_width=True):
+            reset_runtime_config_to_defaults(user="Testbed_User")
+            st.session_state.strategy_toast = "Strategy reset to factory default baseline."
+            st.cache_data.clear()
+            st.rerun()
+
+    # Display AI Comparison Table
+    if not ai_sug_df.empty:
+        st.dataframe(
+            ai_sug_df[[
+                "Parameter_Name", "Category", "Current_Value", "AI_Suggested_Value",
+                "Delta", "Empirical_Rationale", "Intended_Impact"
+            ]],
+            use_container_width=True,
+            height=280
+        )
+    else:
+        st.info("No parameter adjustments suggested at this time. Current strategy logic is running at optimal calibration.")
+
+    st.markdown("---")
+
+    # -------------------------------------------------------------
+    # 2. INTERACTIVE SLIDERS FOR MANUAL ADJUSTMENT
+    # -------------------------------------------------------------
+    st.markdown("#### 🎚️ Interactive Parameter Calibration Studio")
+    st.caption("Adjust sliders directly in the GUI. All changes immediately take effect across the Screener, Paper Trader, and Daemon without modifying source code.")
+
+    with st.form("manual_parameters_studio_form_v2"):
+        # Section A: Strategy Preset Weights
+        with st.expander("🎯 Strategy Preset Indicator Weights (0% - 100%)", expanded=True):
+            st.caption("Relative weight assigned to each technical & fundamental factor when computing composite scores.")
+
+            tab_p1, tab_p2, tab_p3, tab_p4, tab_p5 = st.tabs([
+                "Default Preset", "Long-Term Preset", "Swing / Positional", "Intraday Preset", "AI / RAG Preset"
+            ])
+
+            new_weights = json.loads(json.dumps(weights_dict))
+
+            with tab_p1:
+                st.markdown("##### 📌 Default Baseline Preset")
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    w_dma_def = st.slider("200 DMA Distance (%)", 0, 100, int(weights_dict.get("Default", {}).get("w_dma", 35)), key="v2_s_def_dma")
+                with c2:
+                    w_rsi_def = st.slider("14D RSI Weight (%)", 0, 100, int(weights_dict.get("Default", {}).get("w_rsi", 30)), key="v2_s_def_rsi")
+                with c3:
+                    w_low_def = st.slider("52W Low Proximity (%)", 0, 100, int(weights_dict.get("Default", {}).get("w_low", 20)), key="v2_s_def_low")
+                with c4:
+                    w_exp_def = st.slider("Expense/Spread (%)", 0, 100, int(weights_dict.get("Default", {}).get("w_exp", 15)), key="v2_s_def_exp")
+                new_weights["Default"] = {"w_dma": w_dma_def, "w_rsi": w_rsi_def, "w_low": w_low_def, "w_exp": w_exp_def}
+
+            with tab_p2:
+                st.markdown("##### 🏛️ Long-Term Secular Accumulation Preset")
+                c1, c2, c3, c4, c5 = st.columns(5)
+                with c1:
+                    w_dma_lt = st.slider("200 DMA Trend (%)", 0, 100, int(weights_dict.get("Long-Term", {}).get("w_dma", 40)), key="v2_s_lt_dma")
+                with c2:
+                    w_div_lt = st.slider("Dividend Yield (%)", 0, 100, int(weights_dict.get("Long-Term", {}).get("w_div", 15)), key="v2_s_lt_div")
+                with c3:
+                    w_rsi_lt = st.slider("RSI Mean-Rev (%)", 0, 100, int(weights_dict.get("Long-Term", {}).get("w_rsi", 15)), key="v2_s_lt_rsi")
+                with c4:
+                    w_low_lt = st.slider("52W Low Proximity (%)", 0, 100, int(weights_dict.get("Long-Term", {}).get("w_low", 15)), key="v2_s_lt_low")
+                with c5:
+                    w_exp_lt = st.slider("Low Friction (%)", 0, 100, int(weights_dict.get("Long-Term", {}).get("w_exp", 15)), key="v2_s_lt_exp")
+                new_weights["Long-Term"] = {"w_dma": w_dma_lt, "w_div": w_div_lt, "w_rsi": w_rsi_lt, "w_low": w_low_lt, "w_exp": w_exp_lt}
+
+            with tab_p3:
+                st.markdown("##### 🌊 Swing & Positional Reversal Preset")
+                c1, c2, c3, c4, c5 = st.columns(5)
+                with c1:
+                    w_rsi_sw = st.slider("14D RSI Reversal (%)", 0, 100, int(weights_dict.get("Swing / Positional", {}).get("w_rsi", 30)), key="v2_s_sw_rsi")
+                with c2:
+                    w_dma_sw = st.slider("200 DMA Pullback (%)", 0, 100, int(weights_dict.get("Swing / Positional", {}).get("w_dma", 25)), key="v2_s_sw_dma")
+                with c3:
+                    w_bb_sw = st.slider("Bollinger %B (%)", 0, 100, int(weights_dict.get("Swing / Positional", {}).get("w_bb", 20)), key="v2_s_sw_bb")
+                with c4:
+                    w_vwap_sw = st.slider("VWAP Distance (%)", 0, 100, int(weights_dict.get("Swing / Positional", {}).get("w_vwap", 15)), key="v2_s_sw_vwap")
+                with c5:
+                    w_stoch_sw = st.slider("Stoch %K (%)", 0, 100, int(weights_dict.get("Swing / Positional", {}).get("w_stoch", 10)), key="v2_s_sw_stoch")
+                new_weights["Swing / Positional"] = {"w_rsi": w_rsi_sw, "w_dma": w_dma_sw, "w_bb": w_bb_sw, "w_vwap": w_vwap_sw, "w_stoch": w_stoch_sw}
+
+            with tab_p4:
+                st.markdown("##### ⚡ Intraday Momentum & Scalping Preset")
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    w_vol_in = st.slider("Volume Surge Ratio (%)", 0, 100, int(weights_dict.get("Intraday", {}).get("w_vol", 35)), key="v2_s_in_vol")
+                with c2:
+                    w_rsi_in = st.slider("RSI Exhaustion (%)", 0, 100, int(weights_dict.get("Intraday", {}).get("w_rsi", 30)), key="v2_s_in_rsi")
+                with c3:
+                    w_bb_in = st.slider("Bollinger %B (%)", 0, 100, int(weights_dict.get("Intraday", {}).get("w_bb", 20)), key="v2_s_in_bb")
+                with c4:
+                    w_vwap_in = st.slider("VWAP Discount (%)", 0, 100, int(weights_dict.get("Intraday", {}).get("w_vwap", 15)), key="v2_s_in_vwap")
+                new_weights["Intraday"] = {"w_vol": w_vol_in, "w_rsi": w_rsi_in, "w_bb": w_bb_in, "w_vwap": w_vwap_in}
+
+            with tab_p5:
+                st.markdown("##### 🤖 AI / RAG Multi-Factor Catalyst Preset")
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    w_rsi_ai = st.slider("Catalyst RSI (%)", 0, 100, int(weights_dict.get("AI / RAG", {}).get("w_rsi", 35)), key="v2_s_ai_rsi")
+                with c2:
+                    w_bb_ai = st.slider("Mean-Reversion %B (%)", 0, 100, int(weights_dict.get("AI / RAG", {}).get("w_bb", 25)), key="v2_s_ai_bb")
+                with c3:
+                    w_vol_ai = st.slider("Confluence Volume (%)", 0, 100, int(weights_dict.get("AI / RAG", {}).get("w_vol", 25)), key="v2_s_ai_vol")
+                with c4:
+                    w_macd_ai = st.slider("MACD Histogram (%)", 0, 100, int(weights_dict.get("AI / RAG", {}).get("w_macd", 15)), key="v2_s_ai_macd")
+                new_weights["AI / RAG"] = {"w_rsi": w_rsi_ai, "w_bb": w_bb_ai, "w_vol": w_vol_ai, "w_macd": w_macd_ai}
+
+        # Section B: Risk Parameters & Exit Rules
+        with st.expander("🛡️ Risk Multipliers, Dynamic Trailing Stops & Exit Thresholds", expanded=True):
+            st.caption("Volatility-based Stop-Loss (SL) and Profit Target ATR multipliers dynamically scaled to asset ATR.")
+
+            rc1, rc2, rc3 = st.columns(3)
+            with rc1:
+                st.markdown("##### ⚡ Intraday Trade Risk")
+                in_sl = st.slider("Intraday SL (x ATR)", 0.5, 3.0, float(risk_dict.get("intraday_sl_multiplier", 1.0)), step=0.1, key="v2_in_sl")
+                in_tgt = st.slider("Intraday Target (x ATR)", 1.0, 5.0, float(risk_dict.get("intraday_target_multiplier", 1.8)), step=0.1, key="v2_in_tgt")
+
+            with rc2:
+                st.markdown("##### 🌊 Swing Trade Risk")
+                sw_sl = st.slider("Swing SL (x ATR)", 0.5, 4.0, float(risk_dict.get("swing_sl_multiplier", 1.5)), step=0.1, key="v2_sw_sl")
+                sw_tgt = st.slider("Swing Target (x ATR)", 1.0, 8.0, float(risk_dict.get("swing_target_multiplier", 3.0)), step=0.1, key="v2_sw_tgt")
+
+            with rc3:
+                st.markdown("##### 🏛️ Long-Term Trade Risk")
+                lt_sl = st.slider("Long-Term SL (x ATR)", 1.0, 5.0, float(risk_dict.get("longterm_sl_multiplier", 2.5)), step=0.1, key="v2_lt_sl")
+                lt_tgt = st.slider("Long-Term Target (x ATR)", 2.0, 12.0, float(risk_dict.get("longterm_target_multiplier", 5.0)), step=0.1, key="v2_lt_tgt")
+
+            st.markdown("##### 🔒 Dynamic Profit Lock & Exhaustion Exits")
+            tc1, tc2, tc3, tc4 = st.columns(4)
+            with tc1:
+                trail_act = st.slider("Trailing Stop Trigger Gain (%)", 1.0, 8.0, float(risk_dict.get("trailing_stop_activation_pct", 3.0)), step=0.25, key="v2_tr_act")
+            with tc2:
+                trail_lock = st.slider("Guaranteed Profit Floor (%)", 0.1, 3.0, float(risk_dict.get("trailing_stop_lock_pct", 0.5)), step=0.1, key="v2_tr_lock")
+            with tc3:
+                ob_rsi = st.slider("Overbought RSI Exit Threshold", 65.0, 90.0, float(risk_dict.get("overbought_rsi_exit_threshold", 76.0)), step=0.5, key="v2_ob_rsi")
+            with tc4:
+                os_rsi = st.slider("Oversold Screener RSI Floor", 25.0, 50.0, float(risk_dict.get("oversold_rsi_buy_threshold", 38.0)), step=0.5, key="v2_os_rsi")
+
+            new_risk = {
+                "intraday_sl_multiplier": in_sl,
+                "intraday_target_multiplier": in_tgt,
+                "swing_sl_multiplier": sw_sl,
+                "swing_target_multiplier": sw_tgt,
+                "longterm_sl_multiplier": lt_sl,
+                "longterm_target_multiplier": lt_tgt,
+                "trailing_stop_activation_pct": trail_act,
+                "trailing_stop_lock_pct": trail_lock,
+                "overbought_rsi_exit_threshold": ob_rsi,
+                "oversold_rsi_buy_threshold": os_rsi
+            }
+
+        # Section C: Automated Execution Schedule Controls
+        with st.expander("⏱️ Automated Execution Schedule & Weekday Safeguards", expanded=True):
+            st.caption("Controls automated background cron-job triggers and safeguards against holiday/weekend market execution.")
+
+            sc1, sc2 = st.columns(2)
+            with sc1:
+                weekdays_toggle = st.checkbox(
+                    "📅 Running Only on Weekdays (Mon - Fri)",
+                    value=bool(sched_dict.get("weekdays_only", True)),
+                    key="v2_wkdays_only",
+                    help="When enabled, automated cron triggers on Saturday and Sunday are safely skipped and logged to prevent weekend drift."
+                )
+                enable_3pm = st.checkbox(
+                    "🔔 Enable 3:00 PM Multi-Asset Accumulation Routine",
+                    value=bool(sched_dict.get("enable_3pm_accumulation", True)),
+                    key="v2_en_3pm",
+                    help="Executes Top 3 BUY orders for both Stocks and ETFs during the closing liquidity window."
+                )
+            with sc2:
+                enable_intra_entry = st.checkbox(
+                    "🌅 Enable 9:45 AM High-Volume Morning Intraday Routine",
+                    value=bool(sched_dict.get("enable_morning_intraday", True)),
+                    key="v2_en_intra",
+                    help="Scans for opening 45-minute volume breakouts."
+                )
+                enable_intra_sq = st.checkbox(
+                    "🏁 Enable 3:10 PM Mandatory Intraday Auto-Squareoff",
+                    value=bool(sched_dict.get("enable_afternoon_squareoff", True)),
+                    key="v2_en_sq",
+                    help="Guarantees all intraday positions are closed flat before exchange closing."
+                )
+
+            new_sched = {
+                "weekdays_only": weekdays_toggle,
+                "enable_3pm_accumulation": enable_3pm,
+                "enable_morning_intraday": enable_intra_entry,
+                "enable_afternoon_squareoff": enable_intra_sq
+            }
+
+        # Form Submit Button
+        save_btn = st.form_submit_button("💾 Save Manual Parameter Adjustments", type="primary", use_container_width=True)
+
+    if save_btn:
+        save_res = save_manual_parameter_adjustments(new_weights, new_risk, new_sched, user="Testbed_User")
+        st.session_state.strategy_toast = f"🟢 Saved manual adjustments ({save_res['updated_count']} parameters updated)!"
+        st.cache_data.clear()
+        st.rerun()
+
+    st.markdown("---")
+
+    # -------------------------------------------------------------
+    # 3. ALL PARAMETERS & DIRECTIONALITY SPECIFICATION MATRIX
+    # -------------------------------------------------------------
+    st.markdown("#### 📐 All Strategy Parameters & Edge Directionality Matrix")
+    st.write(
+        "Complete technical and quantitative reference explaining whether **higher or lower values** indicate a stronger BUY edge vs SELL edge, "
+        "their default baselines, and intended market impact."
+    )
+
+    param_matrix_df = get_parameter_reference_matrix()
+
+    # Filter by category
+    all_cats = ["All Categories"] + list(param_matrix_df["Category"].unique())
+    selected_cat = st.selectbox("Filter Parameters by Category:", all_cats, key="v2_cat_filter")
+
+    if selected_cat != "All Categories":
+        filtered_matrix = param_matrix_df[param_matrix_df["Category"] == selected_cat].reset_index(drop=True)
+    else:
+        filtered_matrix = param_matrix_df.reset_index(drop=True)
+
+    st.dataframe(
+        filtered_matrix[[
+            "Category", "Parameter", "Current_Value", "Default_Value",
+            "BUY_Edge_Direction", "SELL_Edge_Direction", "Intended_Market_Impact"
+        ]],
+        use_container_width=True,
+        height=320
+    )
+
+    st.markdown("---")
+
+    # -------------------------------------------------------------
+    # 4. MONTH-OVER-MONTH PERFORMANCE & PARAMETER EVOLUTION
+    # -------------------------------------------------------------
+    st.markdown("#### 📅 Month-over-Month Performance & Parameter Tuning Comparison")
+    st.write(
+        "Tracks month-by-month historical trading performance against strategy parameter revisions. "
+        "Review how algorithmic calibrations directly impacted Win Rate, Profit Factor, and Net Realized PnL."
+    )
+
+    monthly_perf_df = get_monthly_performance_comparison()
+
+    if not monthly_perf_df.empty:
+        st.dataframe(monthly_perf_df, use_container_width=True)
+    else:
+        st.info("ℹ️ Trade history is accumulating. As closed trades span multiple months, monthly performance comparison and evolution tracking will display here automatically.")
+
+    st.markdown("---")
+
+    # -------------------------------------------------------------
+    # 5. PARAMETER CHANGE AUDIT LOG
+    # -------------------------------------------------------------
+    st.markdown("#### 📝 Strategy Parameter Change Audit Trail")
+    st.caption("Immutable chronological record of every manual adjustment, AI auto-tune, and baseline reset.")
+
+    param_change_log_df = load_parameter_change_log()
+    if not param_change_log_df.empty:
+        st.dataframe(
+            param_change_log_df.sort_values(by="Timestamp_IST", ascending=False).reset_index(drop=True),
+            use_container_width=True,
+            height=240
+        )
+    else:
+        st.info("No parameter adjustments logged yet. Initial adjustments will appear here.")
+

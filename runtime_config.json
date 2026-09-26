@@ -7,28 +7,30 @@
             "w_exp": 15
         },
         "Long-Term": {
-            "w_dma": 45,
+            "w_dma": 40,
+            "w_div": 15,
             "w_rsi": 15,
-            "w_low": 25,
+            "w_low": 15,
             "w_exp": 15
         },
         "Swing / Positional": {
-            "w_dma": 15,
-            "w_rsi": 55,
-            "w_low": 25,
-            "w_exp": 5
+            "w_rsi": 30,
+            "w_dma": 25,
+            "w_bb": 20,
+            "w_vwap": 15,
+            "w_stoch": 10
         },
         "Intraday": {
-            "w_dma": 5,
-            "w_rsi": 65,
-            "w_low": 5,
-            "w_exp": 25
+            "w_vol": 35,
+            "w_rsi": 30,
+            "w_bb": 20,
+            "w_vwap": 15
         },
         "AI / RAG": {
-            "w_dma": 25,
             "w_rsi": 35,
-            "w_low": 20,
-            "w_exp": 20
+            "w_bb": 25,
+            "w_vol": 25,
+            "w_macd": 15
         }
     },
     "risk_parameters": {
@@ -39,8 +41,19 @@
         "longterm_sl_multiplier": 2.5,
         "longterm_target_multiplier": 5.0,
         "trailing_stop_activation_pct": 3.0,
-        "trailing_stop_lock_pct": 0.5
+        "trailing_stop_lock_pct": 0.5,
+        "overbought_rsi_exit_threshold": 76.0,
+        "oversold_rsi_buy_threshold": 38.0
     },
-    "last_optimized_timestamp": "None",
-    "optimization_status": "V2 Public Testbed Active"
+    "execution_schedule": {
+        "weekdays_only": true,
+        "enable_3pm_accumulation": true,
+        "enable_morning_intraday": true,
+        "enable_afternoon_squareoff": true
+    },
+    "optimization_status": "V2 Factory Baseline Active",
+    "last_optimized_timestamp": "2026-09-26 11:15:22",
+    "parameter_version": "v2.2-Adaptive",
+    "success": true,
+    "status": "Reset to factory defaults"
 }

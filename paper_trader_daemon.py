@@ -3,6 +3,12 @@
 # =====================================================================
 import os
 import sys
+
+# Ensure v2 directory takes precedence for local module imports
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
+
 import json
 import logging
 import datetime
@@ -18,7 +24,8 @@ from strategy_engine import (
     get_top_conviction_candidates,
     validate_trade_execution,
     evaluate_trade_exits,
-    extract_ticker_df
+    extract_ticker_df,
+    get_active_runtime_config
 )
 from ml_optimizer import (
     load_ai_trades,
@@ -119,7 +126,7 @@ def download_market_data(all_tickers):
 # =====================================================================
 # MAIN V2 DAEMON EXECUTION
 # =====================================================================
-def run_paper_trader_daemon(mode_override=None):
+def run_paper_trader_daemon(mode_override=None, force_weekend=False):
     now_ist = datetime.datetime.now(IST)
     now_str = now_ist.strftime("%Y-%m-%d %H:%M:%S")
     time_str = now_ist.strftime("%H:%M")
@@ -136,6 +143,26 @@ def run_paper_trader_daemon(mode_override=None):
             mode = "INTRADAY_SQUAREOFF"
         else:
             mode = "PAPER_TRADE_3PM"
+
+    # Weekdays Only Schedule Check
+    cfg = get_active_runtime_config()
+    sched_cfg = cfg.get("execution_schedule", {})
+    weekdays_only = sched_cfg.get("weekdays_only", True)
+    is_weekend = now_ist.weekday() >= 5 # 5=Saturday, 6=Sunday
+
+    if weekdays_only and is_weekend and not force_weekend:
+        day_name = now_ist.strftime("%A")
+        logger.info(f"[SCHEDULE] Weekend detected ({day_name}). Scheduled weekday execution safely bypassed.")
+        save_audit({
+            "Timestamp_IST": now_str,
+            "Trigger_Source": f"DAEMON_{mode}",
+            "Preset": "Weekend Schedule Guard",
+            "Recommended_BUY": "None (Weekend)",
+            "Recommended_SELL": "None (Weekend)",
+            "Execution_Status": "⚪ Skipped (Weekend)",
+            "Reason_Summary": f"Scheduled execution skipped on {day_name} as 'weekdays_only' is enabled in runtime_config."
+        })
+        return {"status": "skipped", "reason": f"Weekend detected ({day_name}). weekdays_only=True"}
 
     logger.info("==================================================")
     logger.info(f"STARTING V2 DAEMON EXECUTION: MODE = {mode} (IST: {now_str})")

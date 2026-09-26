@@ -126,8 +126,46 @@ In Tab 1, each column has a tooltip (`?`) detailing what it measures and whether
 | **Dist 52W Low %** | **LOWER** (< 6% indicates structural base support) | **HIGHER** (> 40% indicates mature advance) |
 | **Volume Surge Ratio** | **HIGHER** (> 1.5x confirms institutional accumulation) | N/A |
 | **RS Spread 21D %** | **HIGHER** (Positive spread = outperforming Nifty 50) | **LOWER** (Negative spread = lagging benchmark) |
+| **Dividend Yield %** | **HIGHER** (Highlighted in green; cash-flow income cushion & defensive value) | N/A |
+| **Dividend Status** | **💰 High Yield (≥3.0%)** / **💵 Moderate (1-3%)** | Non-Dividend / Zero |
 | **Falling Knife Guard** | **Reversal Hook (Safe)** | **Falling Knife (Wait)** |
 | **Structural Guard / iNAV**| **Clean (<+0.35%) / Healthy (>200 DMA)** | **High Premium / Broken (<200 DMA)** |
+
+---
+
+## 📄 Downloadable Platform Guide (.docx)
+
+A complete Microsoft Word (`.docx`) platform specification is bundled with V2:
+- **Location:** `v2/AGY_Quant_Platform_V2_Guide.docx`
+- **Zero External Dependencies:** Built using standard Python OpenXML packaging (`export_to_docx.py`), requiring no third-party libraries like `python-docx`.
+- **In-App Download:** Click the **📥 Download V2 Guide (.docx)** button located directly in the Streamlit Sidebar or in Tab 5.
+
+---
+
+## 🧮 Preset Filter & Mathematical Logic
+
+The platform features 5 specialized quantitative presets with distinct weight configurations:
+
+1. **Intraday Preset:**
+   - **Formula:** `30% Rank_RSI + 35% Rank_VolSurge + 20% Rank_BB + 15% Rank_VWAP`
+   - **Risk Multipliers:** SL: $1.2 \times \text{ATR}$, Target: $2.0 \times \text{ATR}$.
+   - **Exit:** Auto-squareoff at 03:10 PM IST daily.
+
+2. **Swing / Positional Preset:**
+   - **Formula:** `30% Rank_RSI + 25% Rank_200DMA + 20% Rank_BB + 15% Rank_VWAP + 10% Rank_Stoch`
+   - **Risk Multipliers:** SL: $1.5 \times \text{ATR}$, Target: $3.0 \times \text{ATR}$.
+   - **Exit:** Target, Stop, Trailing Stop (+3% profit triggers +0.5% lock), or Overbought RSI > 76.
+
+3. **Long-Term Preset:**
+   - **Formula:** `20% Rank_RSI + 35% Rank_200DMA + 15% Rank_DivYield + 15% Rank_BB + 15% Fundamental_Score`
+   - **Risk Multipliers:** SL: $2.5 \times \text{ATR}$, Target: $5.0 \times \text{ATR}$.
+   - **Exit:** Wide structural stops, multi-quarter accumulation.
+
+4. **Default Preset:**
+   - Balanced baseline: `35% Dist_200DMA + 30% RSI + 20% 52W_Low + 15% Expense_Ratio`.
+
+5. **AI / RAG Hybrid Preset:**
+   - Confluence synthesizer: blends statistical indicator ranking with multi-agent consensus and dynamic runtime tuning.
 
 ---
 
@@ -153,3 +191,24 @@ Tab 2 slices all closed and active positions by **Strategy Preset** and **Market
 - Profit Factor
 - Net Realized PnL (₹) & Unrealized MTM (₹)
 - Average Holding Duration (Days)
+
+---
+
+## 🎛️ Parameter & Weights Studio (GUI Sliders, Auto-Tuning & Monthly Evolution)
+
+Tab 6 provides an interactive testbed studio allowing real-time parameter tuning directly in the GUI:
+
+1. **Interactive Sliders (0% - 100%):**
+   - Fine-tune quantitative factor weights across **Default, Long-Term, Swing / Positional, Intraday, and AI / RAG** presets without modifying source code.
+2. **Dynamic Risk Multipliers:**
+   - Calibrate Intraday, Swing, and Long-Term SL/Target ATR multipliers, trailing stop trigger gains, guaranteed profit locks, and overbought/oversold RSI thresholds.
+3. **Execution Schedule & Weekday Guard:**
+   - `weekdays_only`: Safely bypasses Saturday and Sunday cron executions to prevent weekend drift.
+4. **All Parameters & Directionality Matrix:**
+   - 34-parameter reference table indicating whether **higher or lower** values are better for BUY vs SELL, along with intended market impacts.
+5. **AI/RAG Empirical Review & One-Click Tuning:**
+   - Analyzes paper ledger trade distributions and suggests calibrated parameter adjustments.
+   - **"⚡ One-Click Apply All AI/RAG Recommendations"** instantly updates `runtime_config.json`.
+6. **Month-over-Month Performance Comparison:**
+   - Correlates monthly Win Rate %, Profit Factor, and Net PnL (₹) with parameter tuning frequencies to audit algorithmic evolution over time.
+

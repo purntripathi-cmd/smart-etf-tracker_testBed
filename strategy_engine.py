@@ -2,6 +2,8 @@
 # V2 STRATEGY ENGINE: PUBLIC TESTBED (NO EXTERNAL SECRETS REQUIRED)
 # =====================================================================
 import datetime
+import os
+import json
 from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
@@ -10,13 +12,55 @@ import logging
 logger = logging.getLogger("StrategyEngine_V2")
 IST = ZoneInfo("Asia/Kolkata")
 
+def get_active_runtime_config():
+    """Loads active runtime_config.json or returns factory defaults."""
+    cfg_paths = [
+        os.path.join(os.path.dirname(__file__), "runtime_config.json"),
+        "runtime_config.json",
+        os.path.join(os.path.dirname(__file__), "..", "runtime_config.json")
+    ]
+    for p in cfg_paths:
+        if os.path.exists(p) and os.path.getsize(p) > 0:
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+    return {
+        "weights": {
+            "Default": {"w_dma": 35, "w_rsi": 30, "w_low": 20, "w_exp": 15},
+            "Long-Term": {"w_dma": 40, "w_div": 15, "w_rsi": 15, "w_low": 15, "w_exp": 15},
+            "Swing / Positional": {"w_rsi": 30, "w_dma": 25, "w_bb": 20, "w_vwap": 15, "w_stoch": 10},
+            "Intraday": {"w_vol": 35, "w_rsi": 30, "w_bb": 20, "w_vwap": 15},
+            "AI / RAG": {"w_rsi": 35, "w_bb": 25, "w_vol": 25, "w_macd": 15}
+        },
+        "risk_parameters": {
+            "intraday_sl_multiplier": 1.0,
+            "intraday_target_multiplier": 1.8,
+            "swing_sl_multiplier": 1.5,
+            "swing_target_multiplier": 3.0,
+            "longterm_sl_multiplier": 2.5,
+            "longterm_target_multiplier": 5.0,
+            "trailing_stop_activation_pct": 3.0,
+            "trailing_stop_lock_pct": 0.5,
+            "overbought_rsi_exit_threshold": 76.0,
+            "oversold_rsi_buy_threshold": 38.0
+        },
+        "execution_schedule": {
+            "weekdays_only": True,
+            "enable_3pm_accumulation": True,
+            "enable_morning_intraday": True,
+            "enable_afternoon_squareoff": True
+        }
+    }
+
 # Default Presets & Conviction Weights
 DEFAULT_PRESETS = {
     "Default": {"w_dma": 35, "w_rsi": 30, "w_low": 20, "w_exp": 15},
-    "Long-Term": {"w_dma": 45, "w_rsi": 15, "w_low": 25, "w_exp": 15},
-    "Swing / Positional": {"w_dma": 15, "w_rsi": 55, "w_low": 25, "w_exp": 5},
-    "Intraday": {"w_dma": 5, "w_rsi": 65, "w_low": 5, "w_exp": 25},
-    "AI / RAG": {"w_dma": 25, "w_rsi": 35, "w_low": 20, "w_exp": 20},
+    "Long-Term": {"w_dma": 40, "w_div": 15, "w_rsi": 15, "w_low": 15, "w_exp": 15},
+    "Swing / Positional": {"w_rsi": 30, "w_dma": 25, "w_bb": 20, "w_vwap": 15, "w_stoch": 10},
+    "Intraday": {"w_vol": 35, "w_rsi": 30, "w_bb": 20, "w_vwap": 15},
+    "AI / RAG": {"w_rsi": 35, "w_bb": 25, "w_vol": 25, "w_macd": 15},
 }
 PRESETS = DEFAULT_PRESETS.copy()
 
@@ -115,6 +159,39 @@ DEFAULT_STAGE2_STOCK_CONFIG = [
     {"ticker": "PERSISTENT.NS", "name": "Persistent Systems", "category": "IT Midcap", "expense": np.nan},
     {"ticker": "DIXON.NS", "name": "Dixon Technologies", "category": "EMS / Electronics", "expense": np.nan},
 ]
+
+# =====================================================================
+# DIVIDEND YIELD REFERENCE MAPPING (ESTABLISHED CASH-FLOW YIELDS %)
+# =====================================================================
+DIVIDEND_YIELD_MAP = {
+    # High Yield PSU & High Cash-Flow Value
+    "COALINDIA.NS": 8.25, "BPCL.NS": 6.10, "ONGC.NS": 5.40, "POWERGRID.NS": 3.75,
+    "NTPC.NS": 3.40, "ITC.NS": 3.65, "HCLTECH.NS": 3.20, "TECHM.NS": 2.95,
+    "TCS.NS": 2.65, "INFY.NS": 2.50, "TATASTEEL.NS": 2.80, "HEROMOTOCO.NS": 2.85,
+    # High Dividend ETFs
+    "DIVOPPBEES.NS": 4.20, "CPSEETF.NS": 4.60, "ICICIB22.NS": 3.85, "NV20IETF.NS": 1.95, "MOVALUE.NS": 1.70,
+    # Core Large Cap Stocks & ETFs
+    "NIFTYBEES.NS": 1.25, "SETFNIF50.NS": 1.25, "ICICINIFTY.NS": 1.25, "HDFCNIFTY.NS": 1.25,
+    "HINDUNILVR.NS": 1.65, "SBIN.NS": 1.75, "BRITANNIA.NS": 1.55, "NESTLEIND.NS": 1.35,
+    "HDFCBANK.NS": 1.25, "ICICIBANK.NS": 0.85, "KOTAKBANK.NS": 0.15, "AXISBANK.NS": 0.15,
+    "M&M.NS": 0.90, "MARUTI.NS": 1.15, "TATAMOTORS.NS": 0.65, "LT.NS": 0.95,
+    "BHARTIARTL.NS": 0.70, "RELIANCE.NS": 0.35, "SUNPHARMA.NS": 0.85, "CIPLA.NS": 0.80,
+    "DRREDDY.NS": 0.70, "TITAN.NS": 0.40, "BAJFINANCE.NS": 0.45, "BAJAJFINSV.NS": 0.15,
+    "EICHERMOT.NS": 1.10, "BEL.NS": 0.75, "HAL.NS": 0.80, "TRENT.NS": 0.10,
+    "VBL.NS": 0.25, "CHOLAFIN.NS": 0.30, "CUMMINSIND.NS": 1.10, "POLYCAB.NS": 0.45,
+    "PERSISTENT.NS": 0.80, "DIXON.NS": 0.10, "ULTRACEMCO.NS": 0.35, "GRASIM.NS": 0.40,
+    "WIPRO.NS": 0.20, "APOLLOHOSP.NS": 0.25, "ASIANPAINT.NS": 1.10, "TATACONSUM.NS": 0.85,
+    "JSWSTEEL.NS": 0.75, "HINDALCO.NS": 0.70, "ADANIENT.NS": 0.10, "ADANIPORTS.NS": 0.45,
+    # Broad & Sector ETFs
+    "JUNIORBEES.NS": 0.90, "NEXT50IETF.NS": 0.90, "MID150BEES.NS": 0.75, "MIDCAPIETF.NS": 0.75,
+    "HDFCMID150.NS": 0.75, "SMALLCAP.NS": 0.50, "HDFCSML250.NS": 0.50, "NIFTYQLITY.NS": 1.30,
+    "QUAL30IETF.NS": 1.30, "ALPHAETF.NS": 0.65, "ALPL30IETF.NS": 1.10, "KOTAKALPHA.NS": 0.65,
+    "MOM30IETF.NS": 0.50, "MOMENTUM50.NS": 0.50, "HDFCMOM30.NS": 0.50, "MOM500.NS": 0.80,
+    # Non-Dividend Assets
+    "GOLDBEES.NS": 0.0, "SETFGOLD.NS": 0.0, "SILVERBEES.NS": 0.0, "SILVERIETF.NS": 0.0,
+    "MON100.NS": 0.15, "MONQ50.NS": 0.15, "MASPTOP50.NS": 0.45, "MAFANG.NS": 0.0,
+    "HNGSNGBEES.NS": 1.80, "MAHKTECH.NS": 0.20,
+}
 
 # =====================================================================
 # TECHNICAL INDICATOR MATHEMATICS
@@ -353,6 +430,16 @@ def evaluate_market_metrics(raw, universe_config, is_stock_mode=False, dynamic_w
             pricing_status = "✅ Trend Healthy (>200 DMA)" if curr > d200 else "⛔ Trend Broken (<200 DMA)"
             fund_friction_val, fund_spread_val = 0.0, 0.0
 
+        div_yield = float(DIVIDEND_YIELD_MAP.get(t, DIVIDEND_YIELD_MAP.get(clean_sym + ".NS", 0.0)))
+        if div_yield >= 3.0:
+            div_status = f"💰 High ({div_yield:.1f}%)"
+        elif div_yield >= 1.0:
+            div_status = f"💵 Moderate ({div_yield:.1f}%)"
+        elif div_yield > 0.0:
+            div_status = f"🌱 Growth ({div_yield:.1f}%)"
+        else:
+            div_status = "⚪ Zero"
+
         records.append({
             "Ticker": clean_sym, "symbol": clean_sym, "Full_Ticker": t, "Name": item["name"], "Category": item["category"],
             "CMP (₹)": round(curr, 2), "iNAV (₹)": inav_val, "iNAV Dislocation %": inav_dislocation_pct,
@@ -362,7 +449,8 @@ def evaluate_market_metrics(raw, universe_config, is_stock_mode=False, dynamic_w
             "14D ATR (₹)": round(atr_val, 2), "Dynamic Vol SL (₹)": sl_price, "Dynamic Vol Target (₹)": tgt_price,
             "Volatility Stop / Target": f"SL: ₹{sl_price:.2f} | Tgt: ₹{tgt_price:.2f}",
             "Falling Knife Guard": reversal_status, "Structural Guard / iNAV": pricing_status,
-            "Expense %": exp_ratio, "20 DMA": round(d20, 2), "Dist 20DMA %": round(((curr - d20) / d20) * 100.0, 2),
+            "Expense %": exp_ratio, "Dividend Yield %": div_yield, "Dividend Status": div_status,
+            "20 DMA": round(d20, 2), "Dist 20DMA %": round(((curr - d20) / d20) * 100.0, 2),
             "50 DMA": round(d50, 2), "Dist 50DMA %": round(((curr - d50) / d50) * 100.0, 2),
             "100 DMA": round(d100, 2), "Dist 100DMA %": round(((curr - d100) / d100) * 100.0, 2),
             "200 DMA": round(d200, 2), "Dist 200DMA %": round(((curr - d200) / d200) * 100.0, 2),
@@ -391,6 +479,7 @@ def evaluate_market_metrics(raw, universe_config, is_stock_mode=False, dynamic_w
         df_out["Rank_VWAP_Buy"] = df_out["Dist VWAP %"].rank(ascending=True, pct=True) * 100.0
         df_out["Rank_Vol_Buy"] = df_out["Volume Surge Ratio"].rank(ascending=False, pct=True) * 100.0
         df_out["Rank_Stoch_Buy"] = df_out["Stoch %K"].rank(ascending=True, pct=True) * 100.0
+        df_out["Rank_Div_Buy"] = df_out["Dividend Yield %"].rank(ascending=False, pct=True) * 100.0
 
         df_out["Rank_RSI_Sell"] = df_out["RSI (14D)"].rank(ascending=False, pct=True) * 100.0
         df_out["Rank_200DMA_Sell"] = df_out["Dist 200DMA %"].rank(ascending=False, pct=True) * 100.0
@@ -407,20 +496,66 @@ def evaluate_market_metrics(raw, universe_config, is_stock_mode=False, dynamic_w
             trend_bonus = np.where(df_out["CMP (₹)"] > df_out["200 DMA"], 15.0, 75.0)
             df_out["Fundamental Score"] = round((0.70 * df_out["Rank_Liq"]) + (0.30 * trend_bonus), 1)
 
+        cfg = get_active_runtime_config()
+        weights_cfg = cfg.get("weights", {})
+        
+        # Intraday dynamic weights
+        intra_w = weights_cfg.get("Intraday", {})
+        w_ivol = float(intra_w.get("w_vol", 35))
+        w_irsi = float(intra_w.get("w_rsi", 30))
+        w_ibb = float(intra_w.get("w_bb", 20))
+        w_ivwap = float(intra_w.get("w_vwap", 15))
+        tot_intra = max(0.01, w_ivol + w_irsi + w_ibb + w_ivwap)
+        
+        # Swing dynamic weights
+        swing_w = weights_cfg.get("Swing / Positional", {})
+        w_srsi = float(swing_w.get("w_rsi", 30))
+        w_sdma = float(swing_w.get("w_dma", 25))
+        w_sbb = float(swing_w.get("w_bb", 20))
+        w_svwap = float(swing_w.get("w_vwap", 15))
+        w_sstoch = float(swing_w.get("w_stoch", 10))
+        tot_swing = max(0.01, w_srsi + w_sdma + w_sbb + w_svwap + w_sstoch)
+
+        # Long-Term dynamic weights
+        lt_w = weights_cfg.get("Long-Term", {})
+        w_ldma = float(lt_w.get("w_dma", 40))
+        w_ldiv = float(lt_w.get("w_div", 15))
+        w_lrsi = float(lt_w.get("w_rsi", 15))
+        w_lbb = float(lt_w.get("w_bb", 15))
+        w_lexp = float(lt_w.get("w_exp", 15))
+        tot_lt = max(0.01, w_ldma + w_ldiv + w_lrsi + w_lbb + w_lexp)
+
         df_out["Technical Score Buy Intraday"] = round(
-            (0.30 * df_out["Rank_RSI_Buy"]) + (0.35 * df_out["Rank_Vol_Buy"]) + (0.20 * df_out["Rank_BB_Buy"]) + (0.15 * df_out["Rank_VWAP_Buy"]), 1
+            ((w_irsi/tot_intra) * df_out["Rank_RSI_Buy"]) + 
+            ((w_ivol/tot_intra) * df_out["Rank_Vol_Buy"]) + 
+            ((w_ibb/tot_intra) * df_out["Rank_BB_Buy"]) + 
+            ((w_ivwap/tot_intra) * df_out["Rank_VWAP_Buy"]), 1
         )
         df_out["Technical Score Buy Swing"] = round(
-            (0.30 * df_out["Rank_RSI_Buy"]) + (0.25 * df_out["Rank_200DMA_Buy"]) + (0.20 * df_out["Rank_BB_Buy"]) + (0.15 * df_out["Rank_VWAP_Buy"]) + (0.10 * df_out["Rank_Stoch_Buy"]), 1
+            ((w_srsi/tot_swing) * df_out["Rank_RSI_Buy"]) + 
+            ((w_sdma/tot_swing) * df_out["Rank_200DMA_Buy"]) + 
+            ((w_sbb/tot_swing) * df_out["Rank_BB_Buy"]) + 
+            ((w_svwap/tot_swing) * df_out["Rank_VWAP_Buy"]) + 
+            ((w_sstoch/tot_swing) * df_out["Rank_Stoch_Buy"]), 1
         )
         df_out["Technical Score Buy LongTerm"] = round(
-            (0.20 * df_out["Rank_RSI_Buy"]) + (0.45 * df_out["Rank_200DMA_Buy"]) + (0.20 * df_out["Rank_BB_Buy"]) + (0.15 * df_out["Fundamental Score"]), 1
+            ((w_lrsi/tot_lt) * df_out["Rank_RSI_Buy"]) + 
+            ((w_ldma/tot_lt) * df_out["Rank_200DMA_Buy"]) + 
+            ((w_ldiv/tot_lt) * df_out["Rank_Div_Buy"]) + 
+            ((w_lbb/tot_lt) * df_out["Rank_BB_Buy"]) + 
+            ((w_lexp/tot_lt) * df_out["Fundamental Score"]), 1
         )
         df_out["Technical Score Sell"] = round(
             (0.35 * df_out["Rank_RSI_Sell"]) + (0.25 * df_out["Rank_200DMA_Sell"]) + (0.20 * df_out["Rank_BB_Sell"]) + (0.10 * df_out["Rank_VWAP_Sell"]) + (0.10 * df_out["Rank_Stoch_Sell"]), 1
         )
         df_out["Technical Score"] = df_out["Technical Score Buy Swing"]
-        df_out["Composite Buy Score"] = round((0.70 * df_out["Technical Score"]) + (0.30 * df_out["Fundamental Score"]), 1)
+        
+        # Default preset weights
+        def_w = weights_cfg.get("Default", {})
+        def_t_w = (float(def_w.get("w_dma", 35)) + float(def_w.get("w_rsi", 30)) + float(def_w.get("w_low", 20))) / 100.0
+        def_f_w = float(def_w.get("w_exp", 15)) / 100.0
+        tot_def = max(0.01, def_t_w + def_f_w)
+        df_out["Composite Buy Score"] = round(((def_t_w/tot_def) * df_out["Technical Score"]) + ((def_f_w/tot_def) * df_out["Fundamental Score"]), 1)
 
     regime_payload = {
         "regime": regime, "desc": regime_desc, "n500_cmp": n500_curr,
@@ -435,6 +570,9 @@ def evaluate_market_metrics(raw, universe_config, is_stock_mode=False, dynamic_w
 def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mode=False, limit=3):
     if metrics_df is None or metrics_df.empty:
         return pd.DataFrame(), pd.DataFrame()
+
+    cfg = get_active_runtime_config()
+    risk_cfg = cfg.get("risk_parameters", {})
 
     p_clean = preset_name.strip()
     if p_clean in ["Swing / Positional", "Swing"]:
@@ -472,11 +610,14 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
         t_sell = float(row.get("Technical Score Sell", 50.0))
 
         if p_clean == "Intraday":
-            sl_mult, tgt_mult = 1.0, 1.8
+            sl_mult = float(risk_cfg.get("intraday_sl_multiplier", 1.0))
+            tgt_mult = float(risk_cfg.get("intraday_target_multiplier", 1.8))
         elif p_clean == "Long-Term":
-            sl_mult, tgt_mult = 2.5, 5.0
+            sl_mult = float(risk_cfg.get("longterm_sl_multiplier", 2.5))
+            tgt_mult = float(risk_cfg.get("longterm_target_multiplier", 5.0))
         else:
-            sl_mult, tgt_mult = 1.5, 3.0
+            sl_mult = float(risk_cfg.get("swing_sl_multiplier", 1.5))
+            tgt_mult = float(risk_cfg.get("swing_target_multiplier", 3.0))
 
         buy_composite = round((w_t * t_buy) + (w_f * f_score), 1)
         sell_composite = round((w_t * t_sell) + (w_f * f_score), 1)
@@ -595,9 +736,15 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False):
         except Exception:
             pass
 
-        # Trailing stop: Lock in +0.5% profit once gain exceeds +3.0%
-        if pnl_pct >= 3.0:
-            trailing_floor = round(entry_p * 1.005, 2)
+        cfg = get_active_runtime_config()
+        risk_cfg = cfg.get("risk_parameters", {})
+        trail_act_pct = float(risk_cfg.get("trailing_stop_activation_pct", 3.0))
+        trail_lock_pct = float(risk_cfg.get("trailing_stop_lock_pct", 0.5))
+        overbought_rsi = float(risk_cfg.get("overbought_rsi_exit_threshold", 76.0))
+
+        # Trailing stop: Lock in profit once gain exceeds activation %
+        if pnl_pct >= trail_act_pct:
+            trailing_floor = round(entry_p * (1.0 + (trail_lock_pct / 100.0)), 2)
             if trailing_floor > stop_l:
                 updated.at[idx, "Stop_Loss"] = trailing_floor
                 stop_l = trailing_floor
@@ -641,19 +788,19 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False):
             logger.info(f"[EXIT-STOP] {sym} hit stop ₹{stop_l:.2f} at ₹{current_p:.2f} ({pnl_pct:.2f}%)")
             continue
 
-        # Exit 4: Overbought Swing Exhaustion (RSI >= 76)
+        # Exit 4: Overbought Swing Exhaustion (RSI >= overbought_rsi)
         if "SWING" in preset:
             rsi_series = calculate_rsi_series(c_series)
-            if not rsi_series.empty and float(rsi_series.iloc[-1]) >= 76.0 and pnl_pct > 1.5:
+            if not rsi_series.empty and float(rsi_series.iloc[-1]) >= overbought_rsi and pnl_pct > 1.5:
                 updated.at[idx, "Status"] = "OVERBOUGHT_EXIT"
                 updated.at[idx, "Exit_Price"] = current_p
                 updated.at[idx, "Exit_Timestamp"] = now_ist.strftime("%Y-%m-%d %H:%M:%S")
-                updated.at[idx, "Exit_Reason"] = "Overbought Exhaustion (RSI >= 76)"
+                updated.at[idx, "Exit_Reason"] = f"Overbought Exhaustion (RSI >= {overbought_rsi})"
                 updated.at[idx, "Hold_Duration_Days"] = hold_days
                 updated.at[idx, "Live_CMP"] = current_p
                 updated.at[idx, "PnL_Rs"] = pnl_rs
                 updated.at[idx, "PnL_Pct"] = f"{pnl_pct:+.2f}%"
-                logger.info(f"[EXIT-SWING-RSI] {sym} exited on overbought RSI >= 76 at ₹{current_p:.2f}")
+                logger.info(f"[EXIT-SWING-RSI] {sym} exited on overbought RSI >= {overbought_rsi} at ₹{current_p:.2f}")
                 continue
 
         # If trade remains active, update live MTM figures

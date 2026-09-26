@@ -88,7 +88,8 @@ try:
         test_bot_connection,
         send_telegram_message,
         format_sr_alert,
-        format_paper_trade_alert
+        format_paper_trade_alert,
+        fetch_latest_chat_id
     )
 except Exception as _import_err:
     import traceback
@@ -1377,10 +1378,29 @@ elif active_tab == "🧱 S/R Range-Bound Lab & Multi-Factor Hub":
                             placeholder="🔒 Configured securely in Secrets" if masked else "123456789:ABCdefGhI..."
                         )
                         q_chat = st.text_input("Chat ID:", value=curr_chat, key="sr_tg_chat", help="Personal Chat ID or Channel ID")
-                        if st.button("💾 Save Credentials", key="sr_save_tg_btn", use_container_width=True):
-                            save_telegram_config(q_tok, q_chat)
-                            st.success("Credentials saved to testbed!")
-                            st.rerun()
+
+                        v_col1, v_col2, v_col3 = st.columns([1, 1, 1])
+                        with v_col1:
+                            if st.button("💾 Save Config", key="sr_save_tg_btn", use_container_width=True):
+                                save_telegram_config(q_tok, q_chat)
+                                st.success("Credentials saved to testbed!")
+                                st.rerun()
+                        with v_col2:
+                            if st.button("🔍 Check Bot", key="sr_verify_bot_btn", use_container_width=True):
+                                conn_res = test_bot_connection(curr_tok)
+                                if conn_res.get("ok"):
+                                    st.success(f"✅ Bot: **@{conn_res.get('username')}** (`{conn_res.get('bot_name')}`)")
+                                else:
+                                    st.error(f"❌ {conn_res.get('error')}")
+                        with v_col3:
+                            if st.button("🎯 Detect Chat ID", key="sr_autodetect_btn", use_container_width=True):
+                                det_res = fetch_latest_chat_id(curr_tok)
+                                if det_res.get("ok"):
+                                    save_telegram_config(curr_tok, det_res["chat_id"])
+                                    st.success(f"✅ Linked: **{det_res['chat_name']}** (ID: `{det_res['chat_id']}`)")
+                                    st.rerun()
+                                else:
+                                    st.warning(f"⚠️ {det_res.get('error')}")
 
                     # Direct Live S/R Alert Dispatch Button
                     if st.button(f"📲 Test Send S/R Alert for {clean_sym} to Telegram", use_container_width=True):
@@ -1620,14 +1640,27 @@ elif active_tab == "🌐 Quant Ecosystem & Webhook Setup":
         else:
             st.warning("⚠️ **Telegram Status:** Not Configured (Fill credentials below to enable live testing)")
     with tg_status_col2:
-        test_conn_btn = st.button("🔍 Test Connection (getMe)", use_container_width=True)
+        btn_c1, btn_c2 = st.columns(2)
+        with btn_c1:
+            test_conn_btn = st.button("🔍 Verify Bot", use_container_width=True)
+        with btn_c2:
+            auto_detect_btn = st.button("🎯 Detect Chat ID", use_container_width=True)
 
     if test_conn_btn:
         conn_res = test_bot_connection(lab_tok)
         if conn_res.get("ok", False):
-            st.success(f"✅ Bot Verified: **{conn_res.get('bot_name', 'Bot')}** (`@{conn_res.get('username', '')}`) | Bot ID: `{conn_res.get('id', '')}`")
+            st.success(f"✅ Bot Verified: **@{conn_res.get('username', '')}** (`{conn_res.get('bot_name', 'Bot')}`) | Bot ID: `{conn_res.get('id', '')}`")
         else:
             st.error(f"❌ Connection failed: {conn_res.get('error', 'Unknown error')}")
+
+    if auto_detect_btn:
+        det_res = fetch_latest_chat_id(lab_tok)
+        if det_res.get("ok", False):
+            save_telegram_config(lab_tok, det_res["chat_id"])
+            st.success(f"✅ Detected Chat: **{det_res['chat_name']}** (ID: `{det_res['chat_id']}` [Type: {det_res['chat_type']}]) - Auto-saved to configuration!")
+            st.rerun()
+        else:
+            st.warning(f"⚠️ {det_res.get('error', 'No recent messages found')}")
 
     with st.form("telegram_config_form"):
         st.markdown("##### 🔑 Telegram Bot Credentials")

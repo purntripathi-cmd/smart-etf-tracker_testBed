@@ -628,8 +628,13 @@ def execute_sr_paper_trade(clean_sym, sr_row, budget=15000.0, username="Public_U
                 tg_text = format_paper_trade_alert(rec, action_type="ENTRY")
                 tg_res = send_telegram_message(tg_text)
                 if tg_res.get("ok"):
-                    tg_status_msg = " [📲 Telegram Alert Sent]"
+                    tg_status_msg = f" [📲 Telegram Alert Sent (Msg ID: {tg_res.get('message_id', 0)})]"
+                else:
+                    tg_status_msg = f" [⚠️ Telegram Dispatch Failed: {tg_res.get('error', 'Unknown Error')}]"
+            else:
+                tg_status_msg = " [ℹ️ Telegram Skipped: Bot Token or Chat ID not configured]"
         except Exception as e:
             logger.warning(f"Telegram dispatch error during S/R trade execution: {e}")
+            tg_status_msg = f" [⚠️ Telegram Exception: {e}]"
 
     return True, f"Successfully executed {clean_sym} ({qty} Qty @ ₹{cmp_val:.2f}) with SL ₹{sl_val:.2f} and Target ₹{tgt_val:.2f}!{tg_status_msg}"

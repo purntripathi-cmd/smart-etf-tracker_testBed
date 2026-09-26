@@ -145,6 +145,57 @@ def test_bot_connection(bot_token=None):
         return {"ok": False, "bot_name": "", "username": "", "error": str(e)}
 
 
+def fetch_latest_chat_id(bot_token=None):
+    """
+    Queries Telegram getUpdates API to automatically detect the exact Chat ID
+    of the most recent user, group, or channel that messaged or interacted with the bot.
+    """
+    token = bot_token or get_telegram_config().get("bot_token", "")
+    if not token:
+        return {"ok": False, "chat_id": "", "chat_name": "", "error": "Bot Token is missing or empty."}
+
+    url = f"https://api.telegram.org/bot{token}/getUpdates"
+    try:
+        resp = requests.get(url, params={"limit": 20, "timeout": 5}, timeout=10)
+        data = resp.json()
+        if not data.get("ok"):
+            return {"ok": False, "chat_id": "", "chat_name": "", "error": data.get("description", f"HTTP {resp.status_code}")}
+
+        results = data.get("result", [])
+        if not results:
+            return {
+                "ok": False,
+                "chat_id": "",
+                "chat_name": "",
+                "error": "No recent updates found. Please open your bot in Telegram, send /start or type 'hello', then try again."
+            }
+
+        for item in reversed(results):
+            msg = item.get("message") or item.get("channel_post") or item.get("my_chat_member")
+            if msg and "chat" in msg:
+                chat = msg["chat"]
+                cid = str(chat.get("id"))
+                cname = chat.get("title") or chat.get("first_name", "Telegram User")
+                username = f" (@{chat.get('username')})" if chat.get("username") else ""
+                ctype = chat.get("type", "private")
+                return {
+                    "ok": True,
+                    "chat_id": cid,
+                    "chat_name": f"{cname}{username}",
+                    "chat_type": ctype,
+                    "error": ""
+                }
+
+        return {
+            "ok": False,
+            "chat_id": "",
+            "chat_name": "",
+            "error": "No active chat events found in recent bot updates."
+        }
+    except Exception as e:
+        return {"ok": False, "chat_id": "", "chat_name": "", "error": str(e)}
+
+
 def send_telegram_message(message_text, bot_token=None, chat_id=None):
     """
     Dispatches an HTML-formatted message to the specified Telegram Chat ID.

@@ -385,7 +385,9 @@ def get_asset_comprehensive_profile(raw_row):
     Builds a structured dictionary of all 34 technical, quantitative, and
     fundamental parameters for a given row from df_all.
     """
-    if raw_row is None or raw_row.empty:
+    if raw_row is None:
+        return {}
+    if hasattr(raw_row, "empty") and raw_row.empty:
         return {}
 
     r = raw_row.iloc[0] if isinstance(raw_row, pd.DataFrame) else raw_row

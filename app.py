@@ -70,7 +70,8 @@ try:
         run_live_5y_ticker_backtest,
         get_asset_comprehensive_profile,
         style_sr_matrix_dataframe,
-        execute_sr_paper_trade
+        execute_sr_paper_trade,
+        get_balanced_4asset_sr_picks
     )
     from universe_manager import (
         get_active_universe,
@@ -91,7 +92,12 @@ try:
         format_paper_trade_alert,
         fetch_latest_chat_id
     )
-    from reit_scanner import scan_all_reits, REIT_FUNDAMENTALS_DB
+    from reit_scanner import (
+        scan_all_reits,
+        REIT_FUNDAMENTALS_DB,
+        check_reit_investment_eligibility,
+        check_metal_investment_eligibility
+    )
 except Exception as _import_err:
     import traceback
     st.set_page_config(page_title="Startup Diagnostic", layout="wide")
@@ -833,6 +839,182 @@ if active_tab == "🎯 Tactical Screener & Ladder Planner":
                 else:
                     st.caption("No qualified setups.")
 
+        # =============================================================
+        # SPECIALIZED TACTICAL PILLARS: S/R, REIT/INVIT & GOLD/SILVER
+        # =============================================================
+        st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
+        st.markdown(
+            "##### 🛡️ Dynamic Multi-Asset Tactical Pillars &nbsp;<span style='font-size:0.80rem; font-weight:normal; color:#64748b;'>"
+            "(S/R Mean Reversion, Premier REITs/InvITs & Precious Metals)</span>",
+            unsafe_allow_html=True
+        )
+        st.caption(
+            "📌 **Strict Value Criteria Policy:** Gold/Silver and REITs/InvITs are defensive wealth preservers and are **only** accumulated when trading at support / value dips. "
+            "If prices are overextended, near resistance, or overbought, paper trade triggers are **conditionally skipped** to prevent buying at cyclical peaks."
+        )
+
+        tactical_c1, tactical_c2, tactical_c3 = st.columns(3)
+
+        # -------------------------------------------------------------
+        # PILLAR 1: S/R MEAN REVERSION CONVICTION
+        # -------------------------------------------------------------
+        with tactical_c1:
+            st.markdown(
+                "<div style='font-size:0.82rem; font-weight:700; color:#0284c7; border-bottom: 2px solid #0284c7; padding-bottom: 2px; margin-bottom: 6px;'>"
+                "🎯 S/R Mean Reversion (Top 5Y Win Rate)</div>",
+                unsafe_allow_html=True
+            )
+            try:
+                sr_quick = compute_sr_matrix(active_raw_data, current_universe, is_stock_mode=is_stock_mode)
+                if not sr_quick.empty:
+                    sr_top = sr_quick[sr_quick["Action Signal"].str.contains("BUY|ACCUMULATE", na=False)]
+                    if sr_top.empty:
+                        sr_top = sr_quick
+                    sr_top = sr_top.sort_values(by=["5Y S/R Win Rate (%)", "Range Position (%)"], ascending=[False, True]).head(2)
+
+                    for rk_sr, (_, sr_r) in enumerate(sr_top.iterrows()):
+                        sr_sym = sr_r["Ticker"]
+                        sr_win = sr_r["5Y S/R Win Rate (%)"]
+                        sr_cmp = sr_r["CMP (₹)"]
+                        sr_sl = sr_r["Suggested SL (₹)"]
+                        sr_tgt = sr_r["Suggested Target (₹)"]
+                        st.markdown(
+                            f"""
+                            <div class="rec-card" style="background-color: #f0fdf4; border: 1.2px solid #22c55e;">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <span style="font-weight:700; font-size:0.78rem;">#{rk_sr+1} {sr_sym}</span>
+                                    <span class="rec-badge" style="background-color: #dcfce7; color: #166534;">{sr_win}% Win Rate</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color:#475569; margin-top:2px;">
+                                    <span>CMP: ₹{sr_cmp:.2f}</span>
+                                    <span>S1: ₹{sr_r['Major Support S1 (₹)']:.2f}</span>
+                                    <span>Tgt: ₹{sr_tgt:.1f}</span>
+                                </div>
+                                <div style="font-size: 0.68rem; color:#15803d; margin-top:1px; font-weight:600;">
+                                    {sr_r['Action Signal']} | SL: ₹{sr_sl:.1f}
+                                </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                else:
+                    st.caption("Calculating S/R setups...")
+            except Exception:
+                st.caption("S/R data initializing...")
+
+        # -------------------------------------------------------------
+        # PILLAR 2: INSTITUTIONAL REITS & PREMIER INVITS
+        # -------------------------------------------------------------
+        with tactical_c2:
+            st.markdown(
+                "<div style='font-size:0.82rem; font-weight:700; color:#8b5cf6; border-bottom: 2px solid #8b5cf6; padding-bottom: 2px; margin-bottom: 6px;'>"
+                "🏢 REITs & InvITs (7 Premier Trusts)</div>",
+                unsafe_allow_html=True
+            )
+            try:
+                reits_data = scan_all_reits()
+                if not reits_data.empty:
+                    top_r = reits_data.head(2)
+                    for rk_r, (_, r_it) in enumerate(top_r.iterrows()):
+                        r_sym = r_it["Ticker"]
+                        r_yd = r_it["Distribution Yield (%)"]
+                        r_cp = r_it["CMP (₹)"]
+                        r_rs = r_it["RSI (14D)"]
+                        r_el = check_reit_investment_eligibility(r_it.to_dict())
+
+                        if r_el["eligible"]:
+                            c_bg, c_bd, b_bg, b_col = "#f5f3ff", "#8b5cf6", "#ede9fe", "#5b21b6"
+                            st_html = f"<div style='font-size:0.67rem; color:#15803d; font-weight:600;'>{r_el['status']}</div>"
+                        else:
+                            c_bg, c_bd, b_bg, b_col = "#fff1f2", "#f43f5e", "#ffe4e6", "#be123c"
+                            st_html = f"<div style='font-size:0.67rem; color:#be123c; font-weight:600;'>{r_el['status']}</div>"
+
+                        st.markdown(
+                            f"""
+                            <div class="rec-card" style="background-color: {c_bg}; border: 1.2px solid {c_bd};">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <span style="font-weight:700; font-size:0.78rem;">#{rk_r+1} {r_sym} ({r_it['Type'].split()[0]})</span>
+                                    <span class="rec-badge" style="background-color: {b_bg}; color: {b_col};">Yield: {r_yd:.1f}%</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color:#475569; margin-top:2px;">
+                                    <span>CMP: ₹{r_cp:.2f}</span>
+                                    <span>RSI: {r_rs:.1f}</span>
+                                    <span>Payout: 100%</span>
+                                </div>
+                                {st_html}
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                else:
+                    st.caption("No REIT data available.")
+            except Exception:
+                st.caption("REIT engine initializing...")
+
+        # -------------------------------------------------------------
+        # PILLAR 3: GOLD & SILVER (SECTORAL COMMODITY METALS)
+        # -------------------------------------------------------------
+        with tactical_c3:
+            st.markdown(
+                "<div style='font-size:0.82rem; font-weight:700; color:#d97706; border-bottom: 2px solid #d97706; padding-bottom: 2px; margin-bottom: 6px;'>"
+                "🥇 Gold & Silver (Precious Metals Sectoral)</div>",
+                unsafe_allow_html=True
+            )
+            metal_syms = ["GOLDBEES", "SILVERBEES"]
+            m_list = []
+            for msym in metal_syms:
+                m_found = etfs_market_df[etfs_market_df["Ticker"].str.contains(msym, na=False)] if not etfs_market_df.empty else pd.DataFrame()
+                if not m_found.empty:
+                    m_list.append(m_found.iloc[0].to_dict())
+                else:
+                    try:
+                        m_tk = yf.Ticker(f"{msym}.NS")
+                        m_h = m_tk.history(period="3mo")
+                        if not m_h.empty:
+                            c_p = float(m_h["Close"].dropna().iloc[-1])
+                            m_list.append({
+                                "Ticker": msym, "Name": f"Nippon {msym}",
+                                "CMP (₹)": c_p, "RSI (14D)": 50.0,
+                                "Range Position (%)": 50.0, "Action Signal": "ACCUMULATE"
+                            })
+                    except Exception:
+                        pass
+
+            if m_list:
+                for rk_m, m_it in enumerate(m_list):
+                    m_sym = m_it["Ticker"].replace(".NS", "")
+                    m_cp = float(m_it["CMP (₹)"])
+                    m_rs = float(m_it.get("RSI (14D)", 50.0))
+                    m_rg = float(m_it.get("Range Position (%)", 50.0))
+                    m_el = check_metal_investment_eligibility(m_it)
+
+                    if m_el["eligible"]:
+                        c_bg, c_bd, b_bg, b_col = "#fffbeb", "#f59e0b", "#fef3c7", "#92400e"
+                        st_html = f"<div style='font-size:0.67rem; color:#15803d; font-weight:600;'>{m_el['status']}</div>"
+                    else:
+                        c_bg, c_bd, b_bg, b_col = "#fff1f2", "#f43f5e", "#ffe4e6", "#be123c"
+                        st_html = f"<div style='font-size:0.67rem; color:#be123c; font-weight:600;'>{m_el['status']}</div>"
+
+                    st.markdown(
+                        f"""
+                        <div class="rec-card" style="background-color: {c_bg}; border: 1.2px solid {c_bd};">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span style="font-weight:700; font-size:0.78rem;">#{rk_m+1} {m_sym}</span>
+                                <span class="rec-badge" style="background-color: {b_bg}; color: {b_col};">Metal Sectoral</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color:#475569; margin-top:2px;">
+                                <span>CMP: ₹{m_cp:.2f}</span>
+                                <span>RSI: {m_rs:.1f}</span>
+                                <span>Range: {m_rg:.1f}%</span>
+                            </div>
+                            {st_html}
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+            else:
+                st.caption("Precious metals data loading...")
+
         st.markdown("---")
 
         # Interactive Screener Table with Depth and Category Filters
@@ -1111,34 +1293,87 @@ elif active_tab == "📈 Paper Trading & Multi-Regime Ledger":
                         })
                         active_syms.add(sym)
 
-                # S/R Range-Bound High-Fidelity Mean Reversion Candidates
+                # S/R Balanced 4-Asset Allocation (2 Stocks + 1 Equity ETF + 1 Metal/Global ETF conditionally)
                 try:
                     sr_df_stk = compute_sr_matrix(active_raw_data, current_stock_universe, is_stock_mode=True)
-                    if not sr_df_stk.empty:
-                        sr_cands = sr_df_stk[
-                            sr_df_stk["Action Signal"].str.contains("BUY|ACCUMULATE", na=False) &
-                            (sr_df_stk["5Y S/R Win Rate (%)"] >= 55.0)
-                        ]
-                        for _, r in sr_cands.head(2).iterrows():
-                            sym = str(r["Ticker"]).replace(".NS", "")
-                            cmp_v = float(r["CMP (₹)"])
-                            if sym in active_syms or cmp_v <= 0: continue
+                    sr_df_etf = compute_sr_matrix(active_raw_data, current_etf_universe, is_stock_mode=False)
+                    balanced_sr = get_balanced_4asset_sr_picks(sr_df_stk, sr_df_etf)
+
+                    # 1. Allocate up to 2 High-Win-Rate Stocks
+                    for stk_item in balanced_sr.get("stocks", []):
+                        sym = str(stk_item["Ticker"]).replace(".NS", "")
+                        cmp_v = float(stk_item["CMP (₹)"])
+                        if sym in active_syms or cmp_v <= 0: continue
+                        q = max(1, int(15000 // cmp_v))
+                        created.append({
+                            "Trade_ID": f"V2_SR_{int(datetime.datetime.now(IST).timestamp())}_{sym}", "Username": "Public_User", "Ticker": sym,
+                            "Asset_Class": "Stock", "Trigger_Type": "SR_SUPPORT_BUY", "Strategy_Preset": "S/R Range Mean Reversion",
+                            "Status": "ACTIVE", "Entry_Price": cmp_v, "Live_CMP": cmp_v, "Executed_Qty": q,
+                            "Stop_Loss": stk_item["Suggested SL (₹)"], "Target": stk_item["Suggested Target (₹)"],
+                            "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                            "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                            "Invested_Value": round(cmp_v * q, 2),
+                            "Technical_Score_At_Entry": round(float(stk_item.get("RSI (14D)", 50.0)), 1),
+                            "Fundamental_Score_At_Entry": round(float(stk_item.get("5Y S/R Win Rate (%)", 50.0)), 1),
+                            "RSI_At_Entry": round(float(stk_item.get("RSI (14D)", 50.0)), 1),
+                            "Composite_Score_At_Entry": round(float(stk_item.get("Range Position (%)", 50.0)), 1),
+                            "Market_Regime_At_Entry": str(stk_item.get("Regime", regime_name))
+                        })
+                        active_syms.add(sym)
+
+                    # 2. Allocate 1 Broad Equity ETF at Support
+                    eq_etf = balanced_sr.get("equity_etf")
+                    if eq_etf:
+                        sym = str(eq_etf["Ticker"]).replace(".NS", "")
+                        cmp_v = float(eq_etf["CMP (₹)"])
+                        if sym not in active_syms and cmp_v > 0:
                             q = max(1, int(15000 // cmp_v))
                             created.append({
                                 "Trade_ID": f"V2_SR_{int(datetime.datetime.now(IST).timestamp())}_{sym}", "Username": "Public_User", "Ticker": sym,
-                                "Asset_Class": "Stock", "Trigger_Type": "SR_SUPPORT_BUY", "Strategy_Preset": "S/R Range Mean Reversion",
+                                "Asset_Class": "Equity ETF", "Trigger_Type": "SR_SUPPORT_BUY", "Strategy_Preset": "S/R Range Mean Reversion",
                                 "Status": "ACTIVE", "Entry_Price": cmp_v, "Live_CMP": cmp_v, "Executed_Qty": q,
-                                "Stop_Loss": r["Suggested SL (₹)"], "Target": r["Suggested Target (₹)"],
+                                "Stop_Loss": eq_etf["Suggested SL (₹)"], "Target": eq_etf["Suggested Target (₹)"],
                                 "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
                                 "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
                                 "Invested_Value": round(cmp_v * q, 2),
-                                "Technical_Score_At_Entry": round(float(r.get("RSI (14D)", 50.0)), 1),
-                                "Fundamental_Score_At_Entry": round(float(r.get("5Y S/R Win Rate (%)", 50.0)), 1),
-                                "RSI_At_Entry": round(float(r.get("RSI (14D)", 50.0)), 1),
-                                "Composite_Score_At_Entry": round(float(r.get("Range Position (%)", 50.0)), 1),
-                                "Market_Regime_At_Entry": str(r.get("Regime", regime_name))
+                                "Technical_Score_At_Entry": round(float(eq_etf.get("RSI (14D)", 50.0)), 1),
+                                "Fundamental_Score_At_Entry": round(float(eq_etf.get("5Y S/R Win Rate (%)", 50.0)), 1),
+                                "RSI_At_Entry": round(float(eq_etf.get("RSI (14D)", 50.0)), 1),
+                                "Composite_Score_At_Entry": round(float(eq_etf.get("Range Position (%)", 50.0)), 1),
+                                "Market_Regime_At_Entry": str(eq_etf.get("Regime", regime_name))
                             })
                             active_syms.add(sym)
+
+                    # 3. Allocate 1 Metal / Global ETF (Conditionally skipped if high/overbought)
+                    met_etf = balanced_sr.get("metal_global_etf")
+                    if met_etf and balanced_sr.get("metal_eligible", True):
+                        sym = str(met_etf["Ticker"]).replace(".NS", "")
+                        cmp_v = float(met_etf["CMP (₹)"])
+                        if sym not in active_syms and cmp_v > 0:
+                            q = max(1, int(15000 // cmp_v))
+                            created.append({
+                                "Trade_ID": f"V2_SR_{int(datetime.datetime.now(IST).timestamp())}_{sym}", "Username": "Public_User", "Ticker": sym,
+                                "Asset_Class": "Metal/Global ETF", "Trigger_Type": "SR_SUPPORT_BUY", "Strategy_Preset": "S/R Range Mean Reversion",
+                                "Status": "ACTIVE", "Entry_Price": cmp_v, "Live_CMP": cmp_v, "Executed_Qty": q,
+                                "Stop_Loss": met_etf["Suggested SL (₹)"], "Target": met_etf["Suggested Target (₹)"],
+                                "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                                "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                                "Invested_Value": round(cmp_v * q, 2),
+                                "Technical_Score_At_Entry": round(float(met_etf.get("RSI (14D)", 50.0)), 1),
+                                "Fundamental_Score_At_Entry": round(float(met_etf.get("5Y S/R Win Rate (%)", 50.0)), 1),
+                                "RSI_At_Entry": round(float(met_etf.get("RSI (14D)", 50.0)), 1),
+                                "Composite_Score_At_Entry": round(float(met_etf.get("Range Position (%)", 50.0)), 1),
+                                "Market_Regime_At_Entry": str(met_etf.get("Regime", regime_name))
+                            })
+                            active_syms.add(sym)
+                    elif met_etf:
+                        save_audit_entry({
+                            "Timestamp_IST": now_str, "Trigger_Source": "V2_SR_BALANCED_ALLOCATION",
+                            "Preset": "Metal/Commodity Conditional Filter",
+                            "Recommended_BUY": "None", "Recommended_SELL": "None",
+                            "Execution_Status": f"🛑 Skipped {met_etf.get('Ticker')}",
+                            "Reason_Summary": balanced_sr.get("metal_skip_reason", "Overextended / High Peak")
+                        })
                 except Exception as _sr_man_err:
                     pass
             else:
@@ -1471,6 +1706,120 @@ elif active_tab == "🧱 S/R Range-Bound Lab & Multi-Factor Hub":
                     st.markdown("###### 📝 Paper Trading Execution")
                     dispatch_tg_on_exec = st.checkbox("📲 Dispatch Telegram notification on execution", value=True, key="sr_dispatch_tg_toggle")
 
+                    # =============================================================
+                    # BALANCED 4-ASSET TRANCHE (2 STOCKS + 1 EQUITY ETF + 1 METAL/GLOBAL ETF)
+                    # =============================================================
+                    try:
+                        stk_sr_full = compute_sr_matrix(active_raw_data, current_stock_universe, is_stock_mode=True)
+                        etf_sr_full = compute_sr_matrix(active_raw_data, current_etf_universe, is_stock_mode=False)
+                        balanced_4asset = get_balanced_4asset_sr_picks(stk_sr_full, etf_sr_full)
+                    except Exception:
+                        balanced_4asset = {"stocks": [], "equity_etf": None, "metal_global_etf": None, "metal_eligible": True, "metal_skip_reason": ""}
+
+                    b_stk1 = balanced_4asset["stocks"][0] if len(balanced_4asset.get("stocks", [])) > 0 else None
+                    b_stk2 = balanced_4asset["stocks"][1] if len(balanced_4asset.get("stocks", [])) > 1 else None
+                    b_eq = balanced_4asset.get("equity_etf")
+                    b_met = balanced_4asset.get("metal_global_etf")
+                    met_ok = balanced_4asset.get("metal_eligible", True)
+                    met_reason = balanced_4asset.get("metal_skip_reason", "")
+
+                    st.markdown(
+                        """
+                        <div style="background-color: #f8fafc; border: 1.5px solid #94a3b8; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px;">
+                            <div style="font-weight: 700; color: #0f172a; font-size: 0.88rem; margin-bottom: 2px;">
+                                🎯 Balanced 4-Asset Execution Tranche (2 Stocks + 1 Equity ETF + 1 Metal/Global ETF)
+                            </div>
+                            <div style="font-size: 0.74rem; color: #475569; margin-bottom: 8px;">
+                                Allocation: ₹15,000 / tranche = <b>₹60,000 total</b>. Combines high-win-rate equity momentum with broad index support & commodity/global hedge.
+                            </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                    sub_c1, sub_c2 = st.columns(2)
+                    with sub_c1:
+                        if b_stk1:
+                            st.markdown(
+                                f"""
+                                <div style="background-color: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; padding: 6px 8px; margin-bottom: 6px;">
+                                    <b style="color: #166534; font-size: 0.78rem;">💼 Stock #1: {b_stk1['Ticker']}</b><br>
+                                    <span style="font-size: 0.70rem; color: #334155;">
+                                        CMP: <b>₹{b_stk1['CMP (₹)']:.2f}</b> | 5Y Win: <b>{b_stk1['5Y S/R Win Rate (%)']}%</b><br>
+                                        SL: ₹{b_stk1['Suggested SL (₹)']:.1f} | Tgt: ₹{b_stk1['Suggested Target (₹)']:.1f}
+                                    </span>
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
+                        if b_eq:
+                            st.markdown(
+                                f"""
+                                <div style="background-color: #eff6ff; border: 1px solid #93c5fd; border-radius: 6px; padding: 6px 8px; margin-bottom: 6px;">
+                                    <b style="color: #1e40af; font-size: 0.78rem;">📈 Equity ETF: {b_eq['Ticker']}</b><br>
+                                    <span style="font-size: 0.70rem; color: #334155;">
+                                        CMP: <b>₹{b_eq['CMP (₹)']:.2f}</b> | 5Y Win: <b>{b_eq['5Y S/R Win Rate (%)']}%</b><br>
+                                        SL: ₹{b_eq['Suggested SL (₹)']:.1f} | Tgt: ₹{b_eq['Suggested Target (₹)']:.1f}
+                                    </span>
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
+                    with sub_c2:
+                        if b_stk2:
+                            st.markdown(
+                                f"""
+                                <div style="background-color: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; padding: 6px 8px; margin-bottom: 6px;">
+                                    <b style="color: #166534; font-size: 0.78rem;">💼 Stock #2: {b_stk2['Ticker']}</b><br>
+                                    <span style="font-size: 0.70rem; color: #334155;">
+                                        CMP: <b>₹{b_stk2['CMP (₹)']:.2f}</b> | 5Y Win: <b>{b_stk2['5Y S/R Win Rate (%)']}%</b><br>
+                                        SL: ₹{b_stk2['Suggested SL (₹)']:.1f} | Tgt: ₹{b_stk2['Suggested Target (₹)']:.1f}
+                                    </span>
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
+                        if b_met:
+                            met_badge = "🟢 CRITERIA MET" if met_ok else f"🛑 SKIPPED (High)"
+                            met_bg = "#fffbeb" if met_ok else "#fff1f2"
+                            met_border = "#fcd34d" if met_ok else "#fca5a5"
+                            met_col = "#92400e" if met_ok else "#991b1b"
+                            st.markdown(
+                                f"""
+                                <div style="background-color: {met_bg}; border: 1px solid {met_border}; border-radius: 6px; padding: 6px 8px; margin-bottom: 6px;">
+                                    <b style="color: {met_col}; font-size: 0.78rem;">🪙 Metal/Global: {b_met['Ticker']}</b><br>
+                                    <span style="font-size: 0.70rem; color: #334155;">
+                                        CMP: <b>₹{b_met['CMP (₹)']:.2f}</b> | RSI: <b>{b_met.get('RSI (14D)', 50.0):.1f}</b><br>
+                                        Status: <b>{met_badge}</b>
+                                    </span>
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
+
+                    b_label = "⚡ Execute 4-Asset Balanced Tranche (2 Stocks + 1 Equity ETF + 1 Metal/Global ETF)"
+                    if st.button(b_label, type="primary", use_container_width=True, key="exec_4asset_sr"):
+                        exec_results = []
+                        if b_stk1:
+                            ok1, m1 = execute_sr_paper_trade(str(b_stk1['Ticker']), b_stk1, budget=15000.0, username="Public_User", dispatch_telegram=dispatch_tg_on_exec)
+                            exec_results.append(f"• Stock #1 ({b_stk1['Ticker']}): {m1}")
+                        if b_stk2:
+                            ok2, m2 = execute_sr_paper_trade(str(b_stk2['Ticker']), b_stk2, budget=15000.0, username="Public_User", dispatch_telegram=dispatch_tg_on_exec)
+                            exec_results.append(f"• Stock #2 ({b_stk2['Ticker']}): {m2}")
+                        if b_eq:
+                            ok3, m3 = execute_sr_paper_trade(str(b_eq['Ticker']), b_eq, budget=15000.0, username="Public_User", dispatch_telegram=dispatch_tg_on_exec)
+                            exec_results.append(f"• Equity ETF ({b_eq['Ticker']}): {m3}")
+                        if b_met:
+                            if met_ok:
+                                ok4, m4 = execute_sr_paper_trade(str(b_met['Ticker']), b_met, budget=15000.0, username="Public_User", dispatch_telegram=dispatch_tg_on_exec)
+                                exec_results.append(f"• Metal/Global ETF ({b_met['Ticker']}): {m4}")
+                            else:
+                                exec_results.append(f"• Metal/Global ETF ({b_met['Ticker']}): 🛑 Conditionally Skipped ({met_reason})")
+
+                        st.success("🎉 Balanced Tranche Execution Processed:\n" + "\n".join(exec_results))
+                        st.rerun()
+
+                    st.markdown("<div style='text-align:center; color:#64748b; font-size:0.75rem; margin:8px 0;'>— OR EXECUTE FROM FILTERED TABLE —</div>", unsafe_allow_html=True)
+
                     # Execute Top 2 Trades Simultaneously
                     has_at_least_2 = len(top_sr_picks) >= 2
                     if has_at_least_2:
@@ -1486,7 +1835,7 @@ elif active_tab == "🧱 S/R Range-Bound Lab & Multi-Factor Hub":
                             """,
                             unsafe_allow_html=True
                         )
-                        if st.button(f"⚡ Execute Top 2 Trades ({p1['Ticker']} & {p2['Ticker']}) to Paper Ledger", type="primary", use_container_width=True, key="exec_top_2_sr"):
+                        if st.button(f"⚡ Execute Top 2 Trades ({p1['Ticker']} & {p2['Ticker']}) to Paper Ledger", use_container_width=True, key="exec_top_2_sr"):
                             s1_ok, m1 = execute_sr_paper_trade(str(p1['Ticker']), p1, budget=15000.0, username="Public_User", dispatch_telegram=dispatch_tg_on_exec)
                             s2_ok, m2 = execute_sr_paper_trade(str(p2['Ticker']), p2, budget=15000.0, username="Public_User", dispatch_telegram=dispatch_tg_on_exec)
                             if s1_ok and s2_ok:

@@ -640,3 +640,88 @@ def execute_sr_paper_trade(clean_sym, sr_row, budget=15000.0, username="Public_U
             tg_status_msg = f" [⚠️ Telegram Exception: {e}]"
 
     return True, f"Successfully executed {clean_sym} ({qty} Qty @ ₹{cmp_val:.2f}) with SL ₹{sl_val:.2f} and Target ₹{tgt_val:.2f}!{tg_status_msg}"
+
+
+def get_balanced_4asset_sr_picks(sr_stocks_df: pd.DataFrame, sr_etfs_df: pd.DataFrame) -> dict:
+    """
+    Selects a balanced 4-Asset Execution Tranche:
+      - 2 Stocks: Top 2 stocks testing Support / Lower range with highest 5Y Empirical Win Rate.
+      - 1 Equity ETF: Broad Indian Equity ETF testing Support / Lower range.
+      - 1 Metal / Global ETF: Gold/Silver (Commodity) or International ETF testing Support.
+    Evaluates conditional eligibility for Metal/Commodity assets (skip if overbought/high).
+    """
+    picks = {
+        "stocks": [],
+        "equity_etf": None,
+        "metal_global_etf": None,
+        "metal_eligible": True,
+        "metal_skip_reason": ""
+    }
+
+    # 1. Top 2 Stocks
+    if sr_stocks_df is not None and not sr_stocks_df.empty:
+        stk_sorted = sr_stocks_df.copy()
+        def _rank(sig):
+            if "BUY" in str(sig): return 1
+            if "ACCUMULATE" in str(sig): return 2
+            return 3
+        stk_sorted["_r"] = stk_sorted["Action Signal"].apply(_rank)
+        stk_sorted = stk_sorted.sort_values(
+            by=["_r", "5Y S/R Win Rate (%)", "Range Position (%)"],
+            ascending=[True, False, True]
+        ).drop(columns=["_r"]).reset_index(drop=True)
+        picks["stocks"] = [stk_sorted.iloc[i].to_dict() for i in range(min(2, len(stk_sorted)))]
+
+    # 2. 1 Equity ETF and 1 Metal / Global ETF
+    if sr_etfs_df is not None and not sr_etfs_df.empty:
+        etf_df = sr_etfs_df.copy()
+        metal_global_cats = ["Commodity", "Precious Metals", "Metal", "International"]
+
+        # Equity ETFs (Non-sectoral Broad market, Large, Mid, Small, Factor)
+        equity_etfs = etf_df[~etf_df["Category"].isin(metal_global_cats)].copy()
+        if not equity_etfs.empty:
+            def _rank(sig):
+                if "BUY" in str(sig): return 1
+                if "ACCUMULATE" in str(sig): return 2
+                return 3
+            equity_etfs["_r"] = equity_etfs["Action Signal"].apply(_rank)
+            equity_etfs = equity_etfs.sort_values(
+                by=["_r", "5Y S/R Win Rate (%)", "Range Position (%)"],
+                ascending=[True, False, True]
+            ).drop(columns=["_r"]).reset_index(drop=True)
+            picks["equity_etf"] = equity_etfs.iloc[0].to_dict()
+
+        # Metal / Global ETFs (GOLD, SILVER, NASDAQ, S&P, HANGSENG)
+        metal_etfs = etf_df[etf_df["Category"].isin(metal_global_cats)].copy()
+        if not metal_etfs.empty:
+            def _rank(sig):
+                if "BUY" in str(sig): return 1
+                if "ACCUMULATE" in str(sig): return 2
+                return 3
+            metal_etfs["_r"] = metal_etfs["Action Signal"].apply(_rank)
+            metal_etfs = metal_etfs.sort_values(
+                by=["_r", "5Y S/R Win Rate (%)", "Range Position (%)"],
+                ascending=[True, False, True]
+            ).drop(columns=["_r"]).reset_index(drop=True)
+
+            top_metal = metal_etfs.iloc[0].to_dict()
+            picks["metal_global_etf"] = top_metal
+
+            # Check conditional eligibility (skip if overbought or high)
+            rsi = float(top_metal.get("RSI (14D)", 50.0))
+            range_pos = float(top_metal.get("Range Position (%)", 50.0))
+            if rsi > 62.0:
+                picks["metal_eligible"] = False
+                picks["metal_skip_reason"] = f"RSI is {rsi:.1f} (> 62.0) - Metal / Global asset is at cyclical high. Buy skipped."
+            elif range_pos > 60.0:
+                picks["metal_eligible"] = False
+                picks["metal_skip_reason"] = f"Range Position is {range_pos:.1f}% (> 60%) - Trading near R1 ceiling. Buy skipped."
+            elif "SELL" in str(top_metal.get("Action Signal", "")):
+                picks["metal_eligible"] = False
+                picks["metal_skip_reason"] = f"Signal is {top_metal.get('Action Signal')}. Buy skipped."
+            else:
+                picks["metal_eligible"] = True
+                picks["metal_skip_reason"] = "Eligible (Favourable dip near Support)."
+
+    return picks
+

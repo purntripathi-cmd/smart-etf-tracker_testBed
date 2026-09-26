@@ -106,6 +106,38 @@ REIT_FUNDAMENTALS_DB = {
         "Tax_Free_Portion_Pct": 65.0,
         "Tenant_Quality": "Sovereign/State Discoms (Transmission assets)",
         "Description": "Perpetual regulated utility cash flows backed by state-owned PowerGrid with ultra-high distribution yield."
+    },
+    "INDIGRID.NS": {
+        "Name": "India Grid Trust InvIT",
+        "Type": "Power Transmission InvIT",
+        "Sponsor": "KKR & Sterlite Power",
+        "Gross_Leasable_Area_MSF": 0.0,
+        "Occupancy_Pct": 99.7,
+        "WALE_Years": 29.0,
+        "LTV_Pct": 44.5,
+        "NAV_Per_Unit": 175.00,
+        "Annual_DPU_Rs": 14.20,
+        "NDCF_Payout_Ratio_Pct": 100.0,
+        "Credit_Rating": "CRISIL AAA (Stable) / ICRA AAA",
+        "Tax_Free_Portion_Pct": 38.0,
+        "Tenant_Quality": "Central Transmission Utility (CTU) / PGCIL - Sovereign Tripartite Agreement",
+        "Description": "India's premier private power transmission InvIT backed by KKR with quarterly distributions and highest AAA safety."
+    },
+    "IRBINVIT.NS": {
+        "Name": "IRB InvIT Fund",
+        "Type": "Highway Toll Concession InvIT",
+        "Sponsor": "IRB Infrastructure Developers & GIC (Govt of Singapore)",
+        "Gross_Leasable_Area_MSF": 0.0,
+        "Occupancy_Pct": 98.5,
+        "WALE_Years": 16.0,
+        "LTV_Pct": 24.8,
+        "NAV_Per_Unit": 82.00,
+        "Annual_DPU_Rs": 8.00,
+        "NDCF_Payout_Ratio_Pct": 100.0,
+        "Credit_Rating": "CRISIL AAA / CARE AAA",
+        "Tax_Free_Portion_Pct": 52.0,
+        "Tenant_Quality": "National Highways Authority of India (NHAI) Toll Concessions",
+        "Description": "India's first listed highway toll InvIT with robust passenger & freight traffic cash flows and high dividend yield."
     }
 }
 
@@ -351,3 +383,46 @@ def scan_all_reits() -> pd.DataFrame:
     if not df.empty and "Composite Score (0-100)" in df.columns:
         df = df.sort_values(by="Composite Score (0-100)", ascending=False).reset_index(drop=True)
     return df
+
+
+def check_reit_investment_eligibility(reit_row: dict) -> dict:
+    """
+    Evaluates whether a REIT or InvIT meets strict value criteria for paper trading:
+    - Must NOT be overbought (RSI <= 62.0)
+    - Must be near support (Dist to Support S1 <= 4.5% OR Trading at NAV Discount <= 0%)
+    - Distribution yield must be >= 6.0%
+    """
+    rsi = float(reit_row.get("RSI (14D)", 50.0))
+    dist_s1 = float(reit_row.get("Dist to Support S1 (%)", 2.0))
+    dist_yield = float(reit_row.get("Distribution Yield (%)", 7.0))
+    nav_disc = float(reit_row.get("NAV Discount / Premium (%)", reit_row.get("Discount to NAV (%)", 0.0)))
+
+    if rsi > 62.0:
+        return {"eligible": False, "status": "🛑 SKIPPED (Overbought / High RSI)", "reason": f"RSI is {rsi:.1f} (> 62). Skipping overextended entry."}
+    if dist_s1 > 4.5 and nav_disc > 3.0:
+        return {"eligible": False, "status": "🛑 SKIPPED (Trading at Premium)", "reason": f"At {nav_disc:.1f}% NAV premium and {dist_s1:.1f}% from S1 support."}
+    if dist_yield < 6.0:
+        return {"eligible": False, "status": "🛑 SKIPPED (Low Yield)", "reason": f"Yield of {dist_yield:.1f}% is below 6.0% threshold."}
+
+    return {"eligible": True, "status": "🟢 CRITERIA MET (High-Yield Value)", "reason": f"Yield {dist_yield:.1f}%, RSI {rsi:.1f}, near S1 support ({dist_s1:.1f}%). Safe accumulation zone."}
+
+
+def check_metal_investment_eligibility(metal_row: dict) -> dict:
+    """
+    Evaluates whether Gold or Silver (Commodity/Metal) meets strict entry criteria:
+    - Must NOT be at resistance peak or overbought (RSI <= 60.0)
+    - Range position must be <= 55% (testing support or mid-range, not breakout top)
+    """
+    rsi = float(metal_row.get("RSI (14D)", metal_row.get("RSI", 50.0)))
+    range_pos = float(metal_row.get("Range Position (%)", 50.0))
+    sig = str(metal_row.get("Action Signal", "ACCUMULATE")).upper()
+
+    if rsi > 62.0:
+        return {"eligible": False, "status": "🛑 SKIPPED (Overbought Peak)", "reason": f"Metal RSI is {rsi:.1f} (> 62.0). Skipping cyclical peak."}
+    if range_pos > 60.0:
+        return {"eligible": False, "status": "🛑 SKIPPED (Near Resistance Ceiling)", "reason": f"Range position is {range_pos:.1f}% (> 60%). Too close to R1 ceiling."}
+    if "SELL" in sig or "DISTRIBUTION" in sig:
+        return {"eligible": False, "status": "🛑 SKIPPED (Distribution Signal)", "reason": f"Signal is {sig}. Waiting for support bounce."}
+
+    return {"eligible": True, "status": "🟢 CRITERIA MET (Support Dip)", "reason": f"RSI {rsi:.1f} <= 60, Range {range_pos:.1f}% <= 55%. Favourable hedge entry."}
+

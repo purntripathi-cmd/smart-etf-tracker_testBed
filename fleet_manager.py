@@ -18,8 +18,21 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 import streamlit.components.v1 as components
-from scipy.stats import norm
-import feedparser
+import math
+import xml.etree.ElementTree as ET
+
+try:
+    import feedparser
+except ImportError:
+    feedparser = None
+
+def _std_norm_cdf(x: float) -> float:
+    """Standard Normal Cumulative Distribution Function using standard library math.erf."""
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+def _std_norm_pdf(x: float) -> float:
+    """Standard Normal Probability Density Function using standard library math."""
+    return (1.0 / math.sqrt(2.0 * math.pi)) * math.exp(-0.5 * x * x)
 
 IST = ZoneInfo("Asia/Kolkata")
 GITHUB_OWNER = "purntripathi-cmd"
@@ -327,16 +340,16 @@ def bsm_option_pricing(S, K, T, r, sigma, option_type="put"):
     d2 = d1 - sigma * np.sqrt(T)
 
     if option_type == "put":
-        price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
-        delta = norm.cdf(d1) - 1.0
-        theta = (- (S * norm.pdf(d1) * sigma) / (2 * np.sqrt(T)) + r * K * np.exp(-r * T) * norm.cdf(-d2)) / 365.0
+        price = K * np.exp(-r * T) * _std_norm_cdf(-d2) - S * _std_norm_cdf(-d1)
+        delta = _std_norm_cdf(d1) - 1.0
+        theta = (- (S * _std_norm_pdf(d1) * sigma) / (2 * np.sqrt(T)) + r * K * np.exp(-r * T) * _std_norm_cdf(-d2)) / 365.0
     else:
-        price = S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
-        delta = norm.cdf(d1)
-        theta = (- (S * norm.pdf(d1) * sigma) / (2 * np.sqrt(T)) - r * K * np.exp(-r * T) * norm.cdf(d2)) / 365.0
+        price = S * _std_norm_cdf(d1) - K * np.exp(-r * T) * _std_norm_cdf(d2)
+        delta = _std_norm_cdf(d1)
+        theta = (- (S * _std_norm_pdf(d1) * sigma) / (2 * np.sqrt(T)) - r * K * np.exp(-r * T) * _std_norm_cdf(d2)) / 365.0
 
-    gamma = norm.pdf(d1) / (S * sigma * np.sqrt(T))
-    vega = (S * norm.pdf(d1) * np.sqrt(T)) / 100.0
+    gamma = _std_norm_pdf(d1) / (S * sigma * np.sqrt(T))
+    vega = (S * _std_norm_pdf(d1) * np.sqrt(T)) / 100.0
 
     return max(1.0, round(float(price), 2)), round(float(delta), 3), round(float(gamma), 5), round(float(theta), 2), round(float(vega), 2)
 
@@ -346,8 +359,41 @@ def bsm_option_pricing(S, K, T, r, sigma, option_type="put"):
 def fetch_live_reg30_announcements():
     query = urllib.parse.quote("NSE corporate announcements OR BSE filings OR SEBI approval")
     feed_url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
-    parsed = feedparser.parse(feed_url)
     
+    entries = []
+    if feedparser is not None:
+        try:
+            parsed = feedparser.parse(feed_url)
+            for entry in parsed.entries[:25]:
+                entries.append({
+                    "title": entry.title,
+                    "summary": entry.get("summary", ""),
+                    "link": entry.link,
+                    "published": entry.get("published", "")
+                })
+        except Exception:
+            pass
+
+    if not entries:
+        try:
+            req = urllib.request.Request(feed_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                xml_data = resp.read()
+            root = ET.fromstring(xml_data)
+            for item in root.findall("./channel/item")[:25]:
+                t = item.find("title")
+                d = item.find("description")
+                l = item.find("link")
+                p = item.find("pubDate")
+                entries.append({
+                    "title": t.text if t is not None else "",
+                    "summary": d.text if d is not None else "",
+                    "link": l.text if l is not None else "",
+                    "published": p.text if p is not None else ""
+                })
+        except Exception:
+            pass
+
     events = []
     reg30_rules = [
         {"class": "USFDA Inspection / Form 483 / EIR", "pat": r"USFDA|EIR|Form 483|warning letter|cGMP", "impact": "High", "pol": 0.65},
@@ -359,11 +405,11 @@ def fetch_live_reg30_announcements():
         {"class": "Earnings / Financial Performance", "pat": r"quarterly profit|revenue up|EBITDA|PAT jumps|net profit", "impact": "Medium", "pol": 0.50}
     ]
 
-    for entry in parsed.entries[:25]:
-        title = entry.title
-        summary = entry.get("summary", "")
-        link = entry.link
-        dt = entry.get("published", "")
+    for item in entries:
+        title = item["title"]
+        summary = item["summary"]
+        link = item["link"]
+        dt = item["published"]
         text = f"{title} {summary}"
 
         matched_class = "General Regulation 30 Filing"

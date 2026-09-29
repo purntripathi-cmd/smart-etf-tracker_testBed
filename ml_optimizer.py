@@ -15,6 +15,19 @@ import logging
 
 logger = logging.getLogger("MLOptimizer_V2")
 
+try:
+    from holiday_manager import filter_trading_day_records, calculate_trading_days, is_trading_day
+except ImportError:
+    def filter_trading_day_records(df, timestamp_col="Execution_Timestamp"):
+        return df
+    def calculate_trading_days(s, e):
+        try:
+            return max(0, (e - s).days if hasattr(e, '__sub__') else 0)
+        except Exception:
+            return 0
+    def is_trading_day(dt=None):
+        return True, "Active Trading Session"
+
 LOCAL_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
 
@@ -63,10 +76,13 @@ DEFAULT_RUNTIME_CONFIG = {
         "oversold_rsi_buy_threshold": 38.0
     },
     "execution_schedule": {
-        "weekdays_only": False,
+        "weekdays_only": True,
         "enable_3pm_accumulation": True,
         "enable_morning_intraday": True,
         "enable_afternoon_squareoff": True
+    },
+    "admin_testing_overrides": {
+        "allow_weekend_trades": False
     },
     "last_optimized_timestamp": "None",
     "optimization_status": "V2 Public Testbed Active",
@@ -244,97 +260,160 @@ def get_ai_rag_conviction_candidates(metrics_df, is_stock_mode=False, limit=3):
 # =====================================================================
 # AI TRADE PERFORMANCE REVIEWER & STRATEGY TUNER
 # =====================================================================
-def evaluate_strategy_performance_and_suggest_tweaks():
+def evaluate_strategy_performance_and_suggest_tweaks(trades_df=None):
     """
     Analyzes historical trade ledger to compute win rates, profit factor,
     and asset class differences, producing empirical tuning advice.
+    Considers both active and settled trades. If no changes are needed, explicitly states
+    that the current strategy seems fine and more data is needed.
     """
     timestamp_str = datetime.datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 
-    trades_df = pd.DataFrame()
-    if os.path.exists(LOCAL_TRADES_CSV) and os.path.getsize(LOCAL_TRADES_CSV) > 0:
-        try:
-            trades_df = pd.read_csv(LOCAL_TRADES_CSV)
-        except Exception:
-            pass
+    if trades_df is None or (isinstance(trades_df, pd.DataFrame) and trades_df.empty):
+        trades_df = load_general_trades(exclude_non_trading_days=True)
+        if trades_df.empty and os.path.exists(LOCAL_TRADES_CSV) and os.path.getsize(LOCAL_TRADES_CSV) > 0:
+            try:
+                raw_t = pd.read_csv(LOCAL_TRADES_CSV)
+                trades_df = filter_trading_day_records(raw_t, "Execution_Timestamp")
+            except Exception:
+                pass
+    elif isinstance(trades_df, pd.DataFrame) and not trades_df.empty:
+        trades_df = filter_trading_day_records(trades_df, "Execution_Timestamp")
 
     suggestions = []
 
-    if trades_df.empty or "Status" not in trades_df.columns:
+    if trades_df is None or trades_df.empty or "Status" not in trades_df.columns:
         suggestions.append({
             "Timestamp": timestamp_str,
-            "Category": "V2 Baseline Setup",
-            "Target Preset": "All Presets",
-            "Current Parameter": "Factory Defaults Active",
-            "Suggested Adjustment": "Run initial paper trading cycles to gather statistical performance.",
-            "Confidence Edge": "Prior Model",
-            "Actionable_Key": "INIT",
-            "Rationale": "Public testbed initial baseline. Quantitative models active with default ATR boundaries."
+            "Category": "Strategy Baseline",
+            "Target Preset": "All Presets (Overview)",
+            "Current Parameter": "Factory Defaults Active (0 Trades)",
+            "Suggested Adjustment": "Maintain Current Strategy Parameters",
+            "Confidence Edge": "Baseline Prior",
+            "Actionable_Key": "MAINTAIN_BASELINE",
+            "Rationale": "Current strategy seems fine, more data needed to conclude change required (Initial testbed run).",
+            "Action": "Maintain Current Settings"
         })
         sug_df = pd.DataFrame(suggestions)
         sug_df.to_csv(LOCAL_SUGGESTIONS_CSV, index=False)
         return sug_df
 
-    closed_df = trades_df[trades_df["Status"].isin(["TARGET_ACHIEVED", "STOP_LOSS_HIT", "TIME_EXPIRED", "INTRADAY_SQUAREOFF", "OVERBOUGHT_EXIT"])].copy()
+    status_col = trades_df["Status"].astype(str).str.upper().str.strip()
+    closed_df = trades_df[status_col != "ACTIVE"].copy()
+    active_df = trades_df[status_col == "ACTIVE"].copy()
+
     if "PnL_Rs" not in closed_df.columns:
         closed_df["PnL_Rs"] = 0.0
     if "Strategy_Preset" not in closed_df.columns:
         closed_df["Strategy_Preset"] = "Default"
 
-    if closed_df.empty or len(closed_df) < 2:
-        suggestions.append({
-            "Timestamp": timestamp_str,
-            "Category": "Risk-Reward Alignment",
-            "Target Preset": "Intraday & Swing",
-            "Current Parameter": "Standard 1.5x SL / 3.0x Tgt",
-            "Suggested Adjustment": "Calibrate Stop Loss to 1.3x ATR and widen Target to 3.3x ATR",
-            "Confidence Edge": "Medium (Model Prior)",
-            "Actionable_Key": "TIGHTEN_SL_WIDEN_TGT",
-            "Rationale": "Statistical priors demonstrate improved profit factor by reducing stop loss margin in liquid equities."
-        })
-        suggestions.append({
-            "Timestamp": timestamp_str,
-            "Category": "Momentum Confluence",
-            "Target Preset": "AI / RAG",
-            "Current Parameter": "RSI Oversold Filter at 40",
-            "Suggested Adjustment": "Prioritize Volume Surge confirmation (>1.5x 20D Avg)",
-            "Confidence Edge": "High (Quantitative Prior)",
-            "Actionable_Key": "ENABLE_VOL_FILTER",
-            "Rationale": "Filtering with volume confirmation prevents premature entries during trend breakdowns."
-        })
-    else:
-        closed_df["Clean_PnL"] = pd.to_numeric(closed_df["PnL_Rs"], errors="coerce").fillna(0.0)
+    tot_closed = len(closed_df)
+    tot_active = len(active_df)
 
-        for preset_name, grp in closed_df.groupby("Strategy_Preset"):
-            total_n = len(grp)
-            wins = (grp["Clean_PnL"] > 0).sum()
-            win_rate = (wins / total_n) * 100.0 if total_n > 0 else 0.0
-            gross_win = grp[grp["Clean_PnL"] > 0]["Clean_PnL"].sum()
-            gross_loss = abs(grp[grp["Clean_PnL"] < 0]["Clean_PnL"].sum())
-            profit_factor = round(gross_win / gross_loss, 2) if gross_loss > 0 else 9.99
+    closed_df["Clean_PnL"] = pd.to_numeric(closed_df["PnL_Rs"], errors="coerce").fillna(0.0)
+    tot_wins = (closed_df["Clean_PnL"] > 0).sum()
+    overall_wr = (tot_wins / tot_closed * 100.0) if tot_closed > 0 else 0.0
 
-            if win_rate < 50.0 and total_n >= 2:
-                suggestions.append({
-                    "Timestamp": timestamp_str,
-                    "Category": "Risk Calibration",
-                    "Target Preset": str(preset_name),
-                    "Current Parameter": f"Win Rate: {win_rate:.1f}% | PF: {profit_factor}",
-                    "Suggested Adjustment": f"Increase RSI Weight by +15% and tighten SL to 1.2x ATR",
-                    "Confidence Edge": f"High (Observed Win Rate: {win_rate:.1f}%)",
-                    "Actionable_Key": f"OPTIMIZE_{str(preset_name).upper().replace(' ', '_')}",
-                    "Rationale": f"Preset '{preset_name}' win rate is {win_rate:.1f}%. Tighter risk parameters prevent large single-trade drawdowns."
-                })
-            elif win_rate >= 65.0:
-                suggestions.append({
-                    "Timestamp": timestamp_str,
-                    "Category": "Target Expansion",
-                    "Target Preset": str(preset_name),
-                    "Current Parameter": f"Win Rate: {win_rate:.1f}% | PF: {profit_factor}",
-                    "Suggested Adjustment": "Expand target multiplier to 3.6x ATR to let winning trends run",
-                    "Confidence Edge": f"Strong ({win_rate:.1f}% Win Rate)",
-                    "Actionable_Key": f"EXPAND_TARGET_{str(preset_name).upper().replace(' ', '_')}",
-                    "Rationale": f"Strong win rate in '{preset_name}'. Expanding target multiplier maximizes positive expectancy."
-                })
+    # 1. Global Governance Recommendation
+    suggestions.append({
+        "Timestamp": timestamp_str,
+        "Category": "Portfolio Governance",
+        "Target Preset": "All Presets (Overview)",
+        "Current Parameter": f"{tot_closed} Closed | {tot_active} Active | Overall Win Rate: {overall_wr:.1f}%",
+        "Suggested Adjustment": "Maintain Current Strategy Parameters",
+        "Confidence Edge": "Statistical Prior",
+        "Actionable_Key": "MAINTAIN_BASELINE",
+        "Rationale": "Current strategy seems fine, more data needed to conclude change required across broad market cycle.",
+        "Action": "Maintain Current Settings"
+    })
+
+    if closed_df.empty:
+        sug_df = pd.DataFrame(suggestions)
+        sug_df.to_csv(LOCAL_SUGGESTIONS_CSV, index=False)
+        return sug_df
+
+    # 2. Granular Per-Preset Empirical Evaluation
+    all_presets = ["Swing / Positional", "Intraday", "Long-Term", "AI / RAG", "S/R Range Mean Reversion", "Default"]
+    existing_presets = [p for p in closed_df["Strategy_Preset"].unique() if str(p) != "nan"]
+    for p in all_presets:
+        if p not in existing_presets:
+            existing_presets.append(p)
+
+    for preset_name in existing_presets:
+        grp = closed_df[closed_df["Strategy_Preset"] == preset_name]
+        total_n = len(grp)
+        p_key = str(preset_name).upper().replace(" ", "_").replace("/", "_")
+
+        if total_n == 0:
+            # Active only or awaiting signals
+            act_n = len(active_df[active_df["Strategy_Preset"] == preset_name]) if not active_df.empty and "Strategy_Preset" in active_df.columns else 0
+            suggestions.append({
+                "Timestamp": timestamp_str,
+                "Category": "Execution Ingestion",
+                "Target Preset": str(preset_name),
+                "Current Parameter": f"0 Settled ({act_n} Active Positions)",
+                "Suggested Adjustment": "Maintain Current Strategy Parameters",
+                "Confidence Edge": "Active Queue",
+                "Actionable_Key": f"MONITOR_{p_key}",
+                "Rationale": f"Current strategy seems fine, more data needed to conclude change required (Tracking {act_n} active positions).",
+                "Action": "Maintain Current Settings"
+            })
+            continue
+
+        wins = (grp["Clean_PnL"] > 0).sum()
+        win_rate = (wins / total_n) * 100.0 if total_n > 0 else 0.0
+        gross_win = grp[grp["Clean_PnL"] > 0]["Clean_PnL"].sum()
+        gross_loss = abs(grp[grp["Clean_PnL"] < 0]["Clean_PnL"].sum())
+        profit_factor = round(gross_win / gross_loss, 2) if gross_loss > 0 else (9.99 if gross_win > 0 else 1.0)
+
+        if total_n < 2:
+            suggestions.append({
+                "Timestamp": timestamp_str,
+                "Category": "Sample Maturation",
+                "Target Preset": str(preset_name),
+                "Current Parameter": f"{total_n} Trade Logged | Win Rate: {win_rate:.1f}%",
+                "Suggested Adjustment": "Maintain Current Strategy Parameters",
+                "Confidence Edge": "Low (N < 2)",
+                "Actionable_Key": f"MONITOR_{p_key}",
+                "Rationale": f"Current strategy seems fine, more data needed to conclude change required (Observed sample: {total_n} trade, minimum 3 trades required for statistical significance).",
+                "Action": "Maintain Current Settings"
+            })
+        elif win_rate >= 65.0:
+            suggestions.append({
+                "Timestamp": timestamp_str,
+                "Category": "Target Expansion",
+                "Target Preset": str(preset_name),
+                "Current Parameter": f"Win Rate: {win_rate:.1f}% | PF: {profit_factor}",
+                "Suggested Adjustment": "Expand target multiplier to 3.5x ATR to let winning trends run",
+                "Confidence Edge": f"Strong ({win_rate:.1f}% Win Rate)",
+                "Actionable_Key": f"EXPAND_TARGET_{p_key}",
+                "Rationale": f"Strong win rate in '{preset_name}' ({win_rate:.1f}%). Expanding target multiplier maximizes positive expectancy.",
+                "Action": "Expand Target Multiplier"
+            })
+        elif win_rate < 40.0:
+            suggestions.append({
+                "Timestamp": timestamp_str,
+                "Category": "Risk Calibration",
+                "Target Preset": str(preset_name),
+                "Current Parameter": f"Win Rate: {win_rate:.1f}% | PF: {profit_factor}",
+                "Suggested Adjustment": "Increase RSI Oversold Weight and tighten SL to 1.2x ATR",
+                "Confidence Edge": f"Cautious ({win_rate:.1f}% Win Rate)",
+                "Actionable_Key": f"OPTIMIZE_{p_key}",
+                "Rationale": f"Preset '{preset_name}' win rate is {win_rate:.1f}%. Tighter stop-loss parameters prevent drawdown expansion.",
+                "Action": "Tighten Stop Loss"
+            })
+        else:
+            suggestions.append({
+                "Timestamp": timestamp_str,
+                "Category": "Expectancy Optimization",
+                "Target Preset": str(preset_name),
+                "Current Parameter": f"Win Rate: {win_rate:.1f}% | PF: {profit_factor}",
+                "Suggested Adjustment": "Maintain Current Strategy Parameters",
+                "Confidence Edge": f"Solid ({win_rate:.1f}% Win Rate)",
+                "Actionable_Key": f"MAINTAIN_{p_key}",
+                "Rationale": f"Current strategy seems fine, more data needed to conclude change required (Observed {total_n} trades with {win_rate:.1f}% win rate and PF {profit_factor}).",
+                "Action": "Maintain Current Settings"
+            })
 
     sug_df = pd.DataFrame(suggestions)
     sug_df.to_csv(LOCAL_SUGGESTIONS_CSV, index=False)
@@ -800,11 +879,14 @@ def get_parameter_reference_matrix():
     ]
     return pd.DataFrame(matrix)
 
-def load_general_trades():
-    """Loads all general paper trades from local CSV in V2."""
+def load_general_trades(exclude_non_trading_days: bool = True):
+    """Loads all general paper trades from local CSV in V2, optionally filtering out weekends & holidays."""
     if os.path.exists(LOCAL_TRADES_CSV) and os.path.getsize(LOCAL_TRADES_CSV) > 0:
         try:
-            return pd.read_csv(LOCAL_TRADES_CSV)
+            df = pd.read_csv(LOCAL_TRADES_CSV)
+            if exclude_non_trading_days and not df.empty:
+                return filter_trading_day_records(df, "Execution_Timestamp")
+            return df
         except Exception:
             pass
     return pd.DataFrame()

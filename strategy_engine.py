@@ -15,6 +15,17 @@ import logging
 
 logger = logging.getLogger("StrategyEngine_V2")
 
+try:
+    from holiday_manager import calculate_trading_days, is_trading_day
+except ImportError:
+    def calculate_trading_days(s, e):
+        try:
+            return max(0, (e - s).days if hasattr(e, '__sub__') else 0)
+        except Exception:
+            return 0
+    def is_trading_day(dt=None):
+        return True, "Active Trading Session"
+
 def get_active_runtime_config():
     """Loads active runtime_config.json or returns factory defaults."""
     cfg_paths = [
@@ -50,10 +61,13 @@ def get_active_runtime_config():
             "oversold_rsi_buy_threshold": 38.0
         },
         "execution_schedule": {
-            "weekdays_only": False,
+            "weekdays_only": True,
             "enable_3pm_accumulation": True,
             "enable_morning_intraday": True,
             "enable_afternoon_squareoff": True
+        },
+        "admin_testing_overrides": {
+            "allow_weekend_trades": False
         }
     }
 
@@ -239,7 +253,21 @@ def calculate_stochastic(df, k_period=14, d_period=3):
     return k.fillna(50.0), d.fillna(50.0)
 
 def extract_ticker_df(raw, ticker):
-    if raw is None or raw.empty:
+    if raw is None:
+        return pd.DataFrame()
+    if isinstance(raw, dict):
+        if not raw:
+            return pd.DataFrame()
+        clean_t = ticker.replace(".NS", "")
+        candidates = [ticker, clean_t, f"{clean_t}.NS"]
+        for c in candidates:
+            if c in raw:
+                sub = raw[c]
+                if isinstance(sub, pd.DataFrame) and not sub.empty:
+                    return sub.dropna(subset=["Close"]) if "Close" in sub.columns else sub
+        return pd.DataFrame()
+
+    if isinstance(raw, pd.DataFrame) and raw.empty:
         return pd.DataFrame()
 
     clean_t = ticker.replace(".NS", "")
@@ -816,14 +844,22 @@ def validate_trade_execution(ticker, signal_action, preset_name, qty_planned, ex
 # =====================================================================
 # INBUILT COMPREHENSIVE EXIT ENGINE (DYNAMIC SL / TARGET / SQUAREOFF)
 # =====================================================================
-def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False):
+def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False, skip_intraday_squareoff=False):
     if trades_df is None or trades_df.empty:
         return trades_df
 
     updated = trades_df.copy()
+    float_cols = ["Live_CMP", "Exit_Price", "PnL_Rs", "Entry_Price", "Stop_Loss", "Target", "Executed_Qty", "Invested_Value", "Hold_Duration_Days"]
+    for col in float_cols:
+        if col in updated.columns:
+            updated[col] = pd.to_numeric(updated[col], errors="coerce").astype(float)
+    string_cols = ["PnL_Pct", "Status", "Exit_Reason", "Exit_Timestamp", "Trade_Action", "Trigger_Type", "Strategy_Preset"]
+    for col in string_cols:
+        if col in updated.columns:
+            updated[col] = updated[col].astype(object)
     now_ist = datetime.datetime.now(IST)
     current_time_str = now_ist.strftime("%H:%M")
-    is_auto_squareoff_time = (current_time_str >= "15:10") or force_squareoff_intraday
+    is_auto_squareoff_time = (now_ist.weekday() < 5 and "15:10" <= current_time_str <= "15:30") or force_squareoff_intraday
 
     for idx, row in updated.iterrows():
         status = str(row.get("Status", "ACTIVE")).strip().upper()
@@ -832,13 +868,18 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False):
 
         sym = str(row.get("Ticker", "")).replace(".NS", "").strip()
         df = extract_ticker_df(raw_data, sym)
-        if df.empty or "Close" not in df.columns:
+        current_p = 0.0
+        c_series = pd.Series(dtype=float)
+        if df is not None and not df.empty and "Close" in df.columns:
+            c_series = df["Close"].dropna()
+            if not c_series.empty:
+                current_p = float(c_series.iloc[-1])
+        if current_p <= 0:
+            current_p = float(pd.to_numeric(row.get("Live_CMP", 0.0), errors="coerce") or 0.0)
+        if current_p <= 0:
+            current_p = float(pd.to_numeric(row.get("Entry_Price", 0.0), errors="coerce") or 0.0)
+        if current_p <= 0:
             continue
-
-        c_series = df["Close"].dropna()
-        if c_series.empty:
-            continue
-        current_p = float(c_series.iloc[-1])
 
         entry_p = float(pd.to_numeric(row.get("Entry_Price", 0), errors="coerce") or 0.0)
         stop_l = float(pd.to_numeric(row.get("Stop_Loss", 0), errors="coerce") or 0.0)
@@ -850,15 +891,24 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False):
         if entry_p <= 0:
             continue
 
-        pnl_rs = round((current_p - entry_p) * qty, 2)
-        pnl_pct = round(((current_p - entry_p) / entry_p) * 100.0, 2)
+        is_short = any(k in str(row.get("Trade_Action", "")).upper() + str(row.get("Trigger_Type", "")).upper() for k in ["SELL", "SHORT"])
+        if is_short:
+            pnl_rs = round((entry_p - current_p) * qty, 2)
+            pnl_pct = round(((entry_p - current_p) / entry_p) * 100.0, 2)
+            target_hit = (target_p > 0 and current_p <= target_p)
+            stop_hit = (stop_l > 0 and current_p >= stop_l)
+        else:
+            pnl_rs = round((current_p - entry_p) * qty, 2)
+            pnl_pct = round(((current_p - entry_p) / entry_p) * 100.0, 2)
+            target_hit = (target_p > 0 and current_p >= target_p)
+            stop_hit = (stop_l > 0 and current_p <= stop_l)
 
-        # Hold duration calculation
+        # Hold duration calculation (Strictly counting active NSE trading sessions, excluding weekends and holidays)
         hold_days = 0
         entry_ts_str = str(row.get("Execution_Timestamp", ""))
         try:
             entry_dt = datetime.datetime.strptime(entry_ts_str, "%Y-%m-%d %H:%M:%S")
-            hold_days = max(0, (now_ist.date() - entry_dt.date()).days)
+            hold_days = calculate_trading_days(entry_dt.date(), now_ist.date())
         except Exception:
             pass
 
@@ -869,14 +919,19 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False):
         overbought_rsi = float(risk_cfg.get("overbought_rsi_exit_threshold", 76.0))
 
         # Trailing stop: Lock in profit once gain exceeds activation %
-        if pnl_pct >= trail_act_pct:
+        if not is_short and pnl_pct >= trail_act_pct:
             trailing_floor = round(entry_p * (1.0 + (trail_lock_pct / 100.0)), 2)
             if trailing_floor > stop_l:
                 updated.at[idx, "Stop_Loss"] = trailing_floor
                 stop_l = trailing_floor
+        elif is_short and pnl_pct >= trail_act_pct:
+            trailing_ceiling = round(entry_p * (1.0 - (trail_lock_pct / 100.0)), 2)
+            if stop_l <= 0 or trailing_ceiling < stop_l:
+                updated.at[idx, "Stop_Loss"] = trailing_ceiling
+                stop_l = trailing_ceiling
 
-        # Exit 1: Intraday Auto-Squareoff
-        if ("INTRADAY" in preset or "INTRADAY" in trigger_type) and is_auto_squareoff_time:
+        # Exit 1: Intraday Auto-Squareoff (Handled by daemon Mode C when skip_intraday_squareoff=True)
+        if not skip_intraday_squareoff and ("INTRADAY" in preset or "INTRADAY" in trigger_type) and is_auto_squareoff_time:
             updated.at[idx, "Status"] = "INTRADAY_SQUAREOFF"
             updated.at[idx, "Exit_Price"] = current_p
             updated.at[idx, "Exit_Timestamp"] = now_ist.strftime("%Y-%m-%d %H:%M:%S")
@@ -889,7 +944,7 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False):
             continue
 
         # Exit 2: Target Achieved
-        if target_p > 0 and current_p >= target_p:
+        if target_hit:
             updated.at[idx, "Status"] = "TARGET_ACHIEVED"
             updated.at[idx, "Exit_Price"] = current_p
             updated.at[idx, "Exit_Timestamp"] = now_ist.strftime("%Y-%m-%d %H:%M:%S")
@@ -902,11 +957,11 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False):
             continue
 
         # Exit 3: Stop-Loss Hit
-        if stop_l > 0 and current_p <= stop_l:
+        if stop_hit:
             updated.at[idx, "Status"] = "STOP_LOSS_HIT"
             updated.at[idx, "Exit_Price"] = current_p
             updated.at[idx, "Exit_Timestamp"] = now_ist.strftime("%Y-%m-%d %H:%M:%S")
-            updated.at[idx, "Exit_Reason"] = "Stop-Loss Hit" if stop_l <= entry_p else "Trailing Stop Triggered"
+            updated.at[idx, "Exit_Reason"] = "Stop-Loss Hit" if (stop_l <= entry_p if not is_short else stop_l >= entry_p) else "Trailing Stop Triggered"
             updated.at[idx, "Hold_Duration_Days"] = hold_days
             updated.at[idx, "Live_CMP"] = current_p
             updated.at[idx, "PnL_Rs"] = pnl_rs
@@ -915,7 +970,7 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False):
             continue
 
         # Exit 4: Overbought Swing Exhaustion (RSI >= overbought_rsi)
-        if "SWING" in preset:
+        if "SWING" in preset and not c_series.empty:
             rsi_series = calculate_rsi_series(c_series)
             if not rsi_series.empty and float(rsi_series.iloc[-1]) >= overbought_rsi and pnl_pct > 1.5:
                 updated.at[idx, "Status"] = "OVERBOUGHT_EXIT"

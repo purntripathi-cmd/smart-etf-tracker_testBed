@@ -25,6 +25,7 @@ import streamlit.components.v1 as components
 # TESTBED MODE: Google Sheets integration is excluded (Zero-Secrets offline operation)
 GSheetsConnection = None
 import requests
+from fleet_manager import render_fleet_manager_tab
 
 # Ensure local v2 directory is in sys.path for direct module discovery
 _app_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1630,6 +1631,7 @@ with st.sidebar:
     ]
     if is_admin:
         nav_items.append("👑 Admin User Manager")
+    nav_items.append("🚀 Quant Ecosystem & Satellite Apps")
 
     active_tab = st.radio(
         "Navigation:",
@@ -3722,3 +3724,9 @@ elif "Admin User Manager" in active_tab:
                         st.rerun()
                     else:
                         st.error(f"❌ Reset Failed: {msg}")
+
+# =====================================================================
+# TAB 7: QUANT ECOSYSTEM & SATELLITE APPS FLEET MANAGER
+# =====================================================================
+elif "Quant Ecosystem & Satellite Apps" in active_tab:
+    render_fleet_manager_tab(is_admin=is_admin)

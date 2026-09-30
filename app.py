@@ -1222,6 +1222,28 @@ def render_preset_conviction_tiles(df, preset_name, is_stock_mode=False, limit=2
 
     if preset_name == "AI / RAG":
         top_b, top_s = get_ai_rag_conviction_candidates(df, is_stock_mode=is_stock_mode, limit=limit)
+    elif "Deep-Value" in preset_name:
+        from dual_logic_ui import compute_live_deep_value_candidates
+        deep_df = compute_live_deep_value_candidates(
+            stocks_df=df if is_stock_mode else None,
+            etfs_df=None if is_stock_mode else df
+        )
+        top_b_raw = deep_df[deep_df["Action_Signal"].str.contains("HIGH-CONVICTION", na=False)].head(limit)
+        top_s_raw = deep_df[deep_df["Action_Signal"].str.contains("PRESERVATION", na=False)].head(1)
+        top_b = top_b_raw.rename(columns={
+            "Action_Signal": "Action Signal",
+            "Dual_Logic_Score": "Composite Buy Score",
+            "Stop_Loss (₹)": "Stop_Loss",
+            "Target (₹)": "Target",
+            "Sector": "Category"
+        })
+        top_s = top_s_raw.rename(columns={
+            "Action_Signal": "Action Signal",
+            "Dual_Logic_Score": "Composite Buy Score",
+            "Stop_Loss (₹)": "Stop_Loss",
+            "Target (₹)": "Target",
+            "Sector": "Category"
+        })
     else:
         top_b, top_s = get_top_conviction_candidates(df, preset_name=preset_name, is_stock_mode=is_stock_mode, limit=limit)
 
@@ -1240,7 +1262,10 @@ def render_preset_conviction_tiles(df, preset_name, is_stock_mode=False, limit=2
                 tgt_val = float(r.get("Target", round(cmp_val * (1.07 if is_stock_mode else 1.05), 2)))
                 sig_val = str(r.get("Action Signal", "ACCUMULATE")).strip()
                 dist_dma = float(r.get("Dist 200DMA %", 0.0))
-                crit = r.get("Criteria_Met", f"Rank #{idx+1} in {preset_name} Preset • RSI {rsi_val:.1f} • 200DMA {dist_dma:+.1f}%")
+                if "Deep-Value" in preset_name:
+                    crit = f"Dual-Logic Score: {sc_val:.2f} • Moat {r.get('Asset_Moat_Score', 0.8):.2f} • D/E: {r.get('Debt_Equity', 0.8):.2f} (<1.50) • IC: {r.get('Interest_Coverage', 4.0):.1f}x • Target >= 10% CAGR"
+                else:
+                    crit = r.get("Criteria_Met", f"Rank #{idx+1} in {preset_name} Preset • RSI {rsi_val:.1f} • 200DMA {dist_dma:+.1f}%")
                 cat_desc = r.get("Category", "Equity" if is_stock_mode else "Broad Index")
 
                 b_badge_bg = "#fee2e2" if any(k in sig_val.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "#dcfce7"
@@ -1726,7 +1751,7 @@ if "High-Conviction Master Hub" in active_tab:
     c_t1_h1, c_t1_h2 = st.columns([3.5, 1.2])
     with c_t1_h1:
         st.markdown("### 🎯 High-Conviction Tactical Master Hub & Screener")
-        st.caption("Institutional Quantitative Allocation across 5 Tactical Pillars • Unified Multi-Preset Analysis • Full Deep-Dive Analytics & Criteria Met Rationale under each Category")
+        st.caption("Institutional Quantitative Allocation across 6 Tactical Pillars • Unified Multi-Preset Analysis • Full Deep-Dive Analytics & Criteria Met Rationale under each Category")
     with c_t1_h2:
         if st.button("🔄 Refresh Market Data", use_container_width=True, key="btn_refresh_tab1_data"):
             st.cache_data.clear()
@@ -1856,12 +1881,13 @@ if "High-Conviction Master Hub" in active_tab:
 
     # Detailed Preset Conviction Tiles
     st.markdown("##### 🎯 Conviction Tiles by Strategy Preset:")
-    c1_tab_def, c1_tab_swing, c1_tab_lt, c1_tab_intra, c1_tab_ai = st.tabs([
+    c1_tab_def, c1_tab_swing, c1_tab_lt, c1_tab_intra, c1_tab_ai, c1_tab_deep = st.tabs([
         "🎯 Default (Core Balanced)",
         "🌊 Swing / Positional",
         "🏛️ Long-Term Secular",
         "⚡ Intraday Momentum",
-        "🤖 AI / RAG Confluence"
+        "🤖 AI / RAG Confluence",
+        "🛡️ Deep-Value & Contrarian (v4.2)"
     ])
     with c1_tab_def:
         render_preset_conviction_tiles(filtered_etfs_df, "Default", is_stock_mode=False)
@@ -1873,6 +1899,8 @@ if "High-Conviction Master Hub" in active_tab:
         render_preset_conviction_tiles(filtered_etfs_df, "Intraday", is_stock_mode=False)
     with c1_tab_ai:
         render_preset_conviction_tiles(filtered_etfs_df, "AI / RAG", is_stock_mode=False)
+    with c1_tab_deep:
+        render_preset_conviction_tiles(filtered_etfs_df, "Deep-Value & Contrarian", is_stock_mode=False)
 
     # Category 1 Screener Expander (Sorted by Active Preset Score for 100% 1-to-1 Table/Tile Consistency)
     with st.expander("🔍 See More: Broad ETF Universe Screener & Factor Rankings (Click to expand)", expanded=False):
@@ -1961,12 +1989,13 @@ if "High-Conviction Master Hub" in active_tab:
 
     # Detailed Preset Conviction Tiles
     st.markdown("##### 🎯 Conviction Tiles by Strategy Preset:")
-    c2_tab_def, c2_tab_swing, c2_tab_lt, c2_tab_intra, c2_tab_ai = st.tabs([
+    c2_tab_def, c2_tab_swing, c2_tab_lt, c2_tab_intra, c2_tab_ai, c2_tab_deep = st.tabs([
         "🎯 Default (Core Balanced)",
         "🌊 Swing / Positional",
         "🏛️ Long-Term Secular",
         "⚡ Intraday Momentum",
-        "🤖 AI / RAG Confluence"
+        "🤖 AI / RAG Confluence",
+        "🛡️ Deep-Value & Contrarian (v4.2)"
     ])
     with c2_tab_def:
         render_preset_conviction_tiles(filtered_stocks_df, "Default", is_stock_mode=True)
@@ -1978,6 +2007,8 @@ if "High-Conviction Master Hub" in active_tab:
         render_preset_conviction_tiles(filtered_stocks_df, "Intraday", is_stock_mode=True)
     with c2_tab_ai:
         render_preset_conviction_tiles(filtered_stocks_df, "AI / RAG", is_stock_mode=True)
+    with c2_tab_deep:
+        render_preset_conviction_tiles(filtered_stocks_df, "Deep-Value & Contrarian", is_stock_mode=True)
 
     # Category 2 Screener Expander (Sorted by Active Preset Score for 100% 1-to-1 Table/Tile Consistency)
     with st.expander("🔍 See More: Quality Stocks Screener & Multi-Factor Rankings (Click to expand)", expanded=False):
@@ -2486,6 +2517,19 @@ if "High-Conviction Master Hub" in active_tab:
                 use_container_width=True,
                 hide_index=True
             )
+
+    # =================================================================
+    # CATEGORY 6: AI-POWERED DEEP-VALUE & CONTRARIAN BEAR-MARKET ENGINE (v4.2-PRODUCTION)
+    # =================================================================
+    st.markdown("---")
+    from dual_logic_ui import render_tab1_section6_bear_market_recommendations
+    render_tab1_section6_bear_market_recommendations(
+        stocks_market_df=filtered_stocks_df,
+        etfs_market_df=filtered_etfs_df,
+        base_budget=float(st.session_state.get("user_base_budget", 15000.0)) if "user_base_budget" in st.session_state else 15000.0,
+        current_user=current_user if "current_user" in locals() else "Guest_Trader",
+        save_trade_fn=save_paper_trades if "save_paper_trades" in locals() else None
+    )
 
 
 # =====================================================================

@@ -7,8 +7,8 @@
             "w_exp": 15
         },
         "Long-Term": {
-            "w_dma": 40,
-            "w_div": 15,
+            "w_dma": 15,
+            "w_div": 23,
             "w_rsi": 15,
             "w_low": 15,
             "w_exp": 15
@@ -31,6 +31,13 @@
             "w_bb": 25,
             "w_vol": 25,
             "w_macd": 15
+        },
+        "Deep-Value & Contrarian": {
+            "w_de": 44,
+            "w_dd": 15,
+            "w_am": 23,
+            "w_ic": 13,
+            "w_grid": 11
         }
     },
     "risk_parameters": {
@@ -46,13 +53,16 @@
         "oversold_rsi_buy_threshold": 38.0
     },
     "execution_schedule": {
-        "weekdays_only": false,
+        "weekdays_only": true,
         "enable_3pm_accumulation": true,
         "enable_morning_intraday": true,
         "enable_afternoon_squareoff": true
     },
-    "optimization_status": "V2 Factory Baseline Active",
-    "last_optimized_timestamp": "2026-09-26 11:15:22",
+    "admin_testing_overrides": {
+        "allow_weekend_trades": false
+    },
+    "optimization_status": "Dual-Logic v4.2 Production Locked",
+    "last_optimized_timestamp": "2026-09-30 23:30:05",
     "parameter_version": "v2.2-Adaptive",
     "universe_mode": "EXPANDED_NIFTY_250",
     "telegram": {
@@ -61,5 +71,20 @@
         "enabled": false
     },
     "success": true,
-    "status": "Reset to factory defaults"
+    "status": "Reset to factory defaults",
+    "dual_logic_v4_2": {
+        "is_locked": true,
+        "lock_timestamp": "2026-09-30 23:30:02",
+        "drift_status": "STABLE",
+        "optimal_weights": {
+            "debt_eq": 0.44,
+            "drawdown": 0.15,
+            "asset_moat": 0.23,
+            "interest_cov": 0.13,
+            "macro_grid": 0.11,
+            "ai_resilience": 0.08
+        },
+        "win_rate": 1.0,
+        "accuracy": 0.4339
+    }
 }

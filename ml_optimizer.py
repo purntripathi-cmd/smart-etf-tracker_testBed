@@ -61,7 +61,8 @@ DEFAULT_RUNTIME_CONFIG = {
         "Long-Term": {"w_dma": 40, "w_div": 15, "w_rsi": 15, "w_low": 15, "w_exp": 15},
         "Swing / Positional": {"w_rsi": 30, "w_dma": 25, "w_bb": 20, "w_vwap": 15, "w_stoch": 10},
         "Intraday": {"w_vol": 35, "w_rsi": 30, "w_bb": 20, "w_vwap": 15},
-        "AI / RAG": {"w_rsi": 35, "w_bb": 25, "w_vol": 25, "w_macd": 15}
+        "AI / RAG": {"w_rsi": 35, "w_bb": 25, "w_vol": 25, "w_macd": 15},
+        "Deep-Value & Contrarian": {"w_de": 30, "w_dd": 20, "w_am": 30, "w_ic": 10, "w_grid": 10}
     },
     "risk_parameters": {
         "intraday_sl_multiplier": 1.0,

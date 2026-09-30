@@ -1,0 +1,22 @@
+{
+    "status": "COMPLETED",
+    "pid": 16572,
+    "start_time": "2026-09-30 23:29:58",
+    "duration_hours": 0.05,
+    "current_epoch": 1,
+    "total_epochs": 1,
+    "elapsed_seconds": 16,
+    "best_win_rate": 1.0,
+    "best_accuracy": 0.4339,
+    "current_weights": {
+        "debt_eq": 0.44,
+        "drawdown": 0.15,
+        "asset_moat": 0.23,
+        "interest_cov": 0.13,
+        "macro_grid": 0.11,
+        "ai_resilience": 0.08
+    },
+    "is_locked": true,
+    "drift_status": "STABLE",
+    "last_heartbeat": "2026-09-30 23:30:15"
+}

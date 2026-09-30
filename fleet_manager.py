@@ -294,7 +294,9 @@ BONDS_DATASET = [
         "duration_macaulay": 6.85,
         "duration_modified": 6.40,
         "convexity": 52.4,
-        "tax_status": "Taxable"
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 142.94,
+        "volume_indicator": "🟢 High (₹ 142.9 Cr)"
     },
     {
         "ticker": "726GS2032",
@@ -313,7 +315,9 @@ BONDS_DATASET = [
         "duration_macaulay": 6.20,
         "duration_modified": 5.80,
         "convexity": 44.1,
-        "tax_status": "Taxable"
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 87.08,
+        "volume_indicator": "🟢 High (₹ 87.1 Cr)"
     },
     {
         "ticker": "706GS2028",
@@ -329,10 +333,12 @@ BONDS_DATASET = [
         "coupon_pct": 7.06,
         "cmp": 100.25,
         "ytm_pct": 6.98,
-        "duration_macaulay": 3.80,
-        "duration_modified": 3.55,
-        "convexity": 16.8,
-        "tax_status": "Taxable"
+        "duration_macaulay": 3.40,
+        "duration_modified": 3.20,
+        "convexity": 14.2,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 97.14,
+        "volume_indicator": "🟢 High (₹ 97.1 Cr)"
     },
     {
         "ticker": "730GS2053",
@@ -348,86 +354,96 @@ BONDS_DATASET = [
         "coupon_pct": 7.30,
         "cmp": 101.10,
         "ytm_pct": 7.21,
-        "duration_macaulay": 13.90,
-        "duration_modified": 12.95,
-        "convexity": 245.0,
-        "tax_status": "Taxable"
+        "duration_macaulay": 13.50,
+        "duration_modified": 12.60,
+        "convexity": 248.5,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 56.87,
+        "volume_indicator": "🟢 High (₹ 56.9 Cr)"
     },
     {
         "ticker": "RECLTD-N8",
         "issuer_name": "REC Limited",
         "bond_symbol": "REC 8.46% 2028 Tax-Free",
-        "isin": "INE020B08897",
+        "isin": "INE020B08DF6",
         "issue_date": "2013-09-24",
         "maturity_date": "2028-09-24",
         "payout_frequency": "Annual",
         "secured_unsecured": "Secured",
         "sector": "PSU Tax-Free",
-        "rating_current": "AAA",
+        "rating_current": "CRISIL AAA",
         "coupon_pct": 8.46,
         "cmp": 112.50,
-        "ytm_pct": 5.35,
-        "duration_macaulay": 3.60,
-        "duration_modified": 3.42,
-        "convexity": 14.5,
-        "tax_status": "Tax-Free"
+        "ytm_pct": 5.48,
+        "duration_macaulay": 3.65,
+        "duration_modified": 3.45,
+        "convexity": 15.8,
+        "tax_status": "Tax-Free",
+        "avg_daily_volume_cr": 19.34,
+        "volume_indicator": "🟢 High (₹ 19.3 Cr)"
     },
     {
         "ticker": "PFC-N7",
         "issuer_name": "Power Finance Corp",
         "bond_symbol": "PFC 8.30% 2027 Tax-Free",
-        "isin": "INE134E07377",
+        "isin": "INE134E08FY3",
         "issue_date": "2012-11-21",
         "maturity_date": "2027-11-21",
         "payout_frequency": "Annual",
         "secured_unsecured": "Secured",
         "sector": "PSU Tax-Free",
-        "rating_current": "AAA",
+        "rating_current": "CARE AAA",
         "coupon_pct": 8.30,
         "cmp": 109.80,
-        "ytm_pct": 5.28,
+        "ytm_pct": 5.52,
         "duration_macaulay": 2.80,
-        "duration_modified": 2.66,
-        "convexity": 9.2,
-        "tax_status": "Tax-Free"
+        "duration_modified": 2.65,
+        "convexity": 9.4,
+        "tax_status": "Tax-Free",
+        "avg_daily_volume_cr": 17.14,
+        "volume_indicator": "🟢 High (₹ 17.1 Cr)"
     },
     {
         "ticker": "NHAI-N9",
         "issuer_name": "NHAI",
         "bond_symbol": "NHAI 8.75% 2029 Tax-Free",
-        "isin": "INE906B07DF8",
+        "isin": "INE906B07DF0",
         "issue_date": "2014-02-05",
         "maturity_date": "2029-02-05",
         "payout_frequency": "Annual",
         "secured_unsecured": "Secured",
         "sector": "PSU Tax-Free",
-        "rating_current": "AAA",
+        "rating_current": "ICRA AAA",
         "coupon_pct": 8.75,
-        "cmp": 116.20,
+        "cmp": 115.40,
         "ytm_pct": 5.42,
-        "duration_macaulay": 4.40,
-        "duration_modified": 4.17,
-        "convexity": 21.0,
-        "tax_status": "Tax-Free"
+        "duration_macaulay": 3.90,
+        "duration_modified": 3.70,
+        "convexity": 18.2,
+        "tax_status": "Tax-Free",
+        "avg_daily_volume_cr": 16.41,
+        "volume_indicator": "🟢 High (₹ 16.4 Cr)"
     },
     {
         "ticker": "IRFC-N6",
         "issuer_name": "IRFC Limited",
         "bond_symbol": "IRFC 8.00% 2027 Tax-Free",
-        "isin": "INE053F07645",
+        "isin": "INE053F07869",
         "issue_date": "2012-02-23",
         "maturity_date": "2027-02-23",
         "payout_frequency": "Annual",
         "secured_unsecured": "Secured",
         "sector": "PSU Tax-Free",
-        "rating_current": "AAA",
+        "rating_current": "CRISIL AAA",
         "coupon_pct": 8.00,
-        "cmp": 108.50,
-        "ytm_pct": 5.22,
-        "duration_macaulay": 2.70,
-        "duration_modified": 2.57,
-        "convexity": 8.6,
-        "tax_status": "Tax-Free"
+        "cmp": 107.10,
+        "ytm_pct": 5.60,
+        "duration_macaulay": 2.20,
+        "duration_modified": 2.08,
+        "convexity": 5.9,
+        "tax_status": "Tax-Free",
+        "avg_daily_volume_cr": 22.16,
+        "volume_indicator": "🟢 High (₹ 22.2 Cr)"
     },
     {
         "ticker": "NTPC-N8",
@@ -439,318 +455,352 @@ BONDS_DATASET = [
         "payout_frequency": "Annual",
         "secured_unsecured": "Secured",
         "sector": "PSU Tax-Free",
-        "rating_current": "AAA",
+        "rating_current": "CRISIL AAA",
         "coupon_pct": 8.41,
-        "cmp": 112.00,
-        "ytm_pct": 5.30,
-        "duration_macaulay": 3.50,
-        "duration_modified": 3.32,
-        "convexity": 13.8,
-        "tax_status": "Tax-Free"
+        "cmp": 111.90,
+        "ytm_pct": 5.50,
+        "duration_macaulay": 3.70,
+        "duration_modified": 3.50,
+        "convexity": 16.1,
+        "tax_status": "Tax-Free",
+        "avg_daily_volume_cr": 19.54,
+        "volume_indicator": "🟢 High (₹ 19.5 Cr)"
     },
     {
         "ticker": "HDFCBK-N1",
         "issuer_name": "HDFC Bank Ltd",
-        "bond_symbol": "HDFCBK 7.75% Tier-2 2034",
-        "isin": "INE040A08419",
+        "bond_symbol": "HDFC Bank 7.77% 2034 Tier-2",
+        "isin": "INE040A08435",
         "issue_date": "2024-03-22",
         "maturity_date": "2034-03-22",
         "payout_frequency": "Annual",
         "secured_unsecured": "Unsecured (Tier-2 Subordinated)",
-        "sector": "Private Banking",
-        "rating_current": "AAA",
-        "coupon_pct": 7.75,
+        "sector": "Private Banking Tier-2",
+        "rating_current": "CRISIL AAA",
+        "coupon_pct": 7.77,
         "cmp": 100.40,
-        "ytm_pct": 7.68,
+        "ytm_pct": 7.70,
         "duration_macaulay": 6.90,
-        "duration_modified": 6.41,
-        "convexity": 53.2,
-        "tax_status": "Taxable"
+        "duration_modified": 6.40,
+        "convexity": 52.8,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 8.61,
+        "volume_indicator": "🟡 Medium (₹ 8.6 Cr)"
     },
     {
         "ticker": "SBIN-N2",
         "issuer_name": "State Bank of India",
-        "bond_symbol": "SBIN 7.50% Tier-2 2033",
+        "bond_symbol": "SBI 7.72% 2033 Tier-2",
         "isin": "INE062A08298",
         "issue_date": "2023-09-26",
         "maturity_date": "2033-09-26",
         "payout_frequency": "Annual",
         "secured_unsecured": "Unsecured (Tier-2 Subordinated)",
-        "sector": "PSU Banking",
-        "rating_current": "AAA",
-        "coupon_pct": 7.50,
+        "sector": "PSU Banking Tier-2",
+        "rating_current": "ICRA AAA",
+        "coupon_pct": 7.72,
         "cmp": 100.15,
-        "ytm_pct": 7.47,
-        "duration_macaulay": 6.40,
-        "duration_modified": 5.95,
-        "convexity": 46.5,
-        "tax_status": "Taxable"
+        "ytm_pct": 7.69,
+        "duration_macaulay": 6.60,
+        "duration_modified": 6.12,
+        "convexity": 48.3,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 11.26,
+        "volume_indicator": "🟢 High (₹ 11.3 Cr)"
     },
     {
         "ticker": "LTFH-N3",
         "issuer_name": "L&T Finance Ltd",
-        "bond_symbol": "LTFH 8.15% 2027 NCD",
-        "isin": "INE498L07223",
+        "bond_symbol": "L&T Finance 8.40% 2027",
+        "isin": "INE498L07227",
         "issue_date": "2022-04-18",
         "maturity_date": "2027-04-18",
         "payout_frequency": "Annual",
         "secured_unsecured": "Secured",
-        "sector": "NBFC",
-        "rating_current": "AAA",
-        "coupon_pct": 8.15,
+        "sector": "Prime NBFC",
+        "rating_current": "CRISIL AAA",
+        "coupon_pct": 8.40,
         "cmp": 101.20,
-        "ytm_pct": 7.72,
-        "duration_macaulay": 2.85,
-        "duration_modified": 2.65,
-        "convexity": 9.1,
-        "tax_status": "Taxable"
+        "ytm_pct": 7.92,
+        "duration_macaulay": 2.25,
+        "duration_modified": 2.08,
+        "convexity": 6.1,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 16.48,
+        "volume_indicator": "🟢 High (₹ 16.5 Cr)"
     },
     {
         "ticker": "BAJFIN-N4",
         "issuer_name": "Bajaj Finance Ltd",
-        "bond_symbol": "BAJFIN 7.85% 2026 NCD",
-        "isin": "INE296A07RO2",
-        "issue_date": "2021-11-12",
-        "maturity_date": "2026-11-12",
+        "bond_symbol": "Bajaj Finance 7.95% 2029",
+        "isin": "INE296A07RW8",
+        "issue_date": "2024-09-20",
+        "maturity_date": "2029-09-20",
         "payout_frequency": "Annual",
         "secured_unsecured": "Secured",
-        "sector": "NBFC",
-        "rating_current": "AAA",
-        "coupon_pct": 7.85,
-        "cmp": 100.75,
-        "ytm_pct": 7.42,
-        "duration_macaulay": 1.90,
-        "duration_modified": 1.77,
-        "convexity": 4.5,
-        "tax_status": "Taxable"
+        "sector": "Prime NBFC",
+        "rating_current": "CRISIL AAA",
+        "coupon_pct": 7.95,
+        "cmp": 100.30,
+        "ytm_pct": 7.86,
+        "duration_macaulay": 3.75,
+        "duration_modified": 3.48,
+        "convexity": 15.6,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 24.39,
+        "volume_indicator": "🟢 High (₹ 24.4 Cr)"
     },
     {
         "ticker": "TATACAP-N5",
         "issuer_name": "Tata Capital Financial",
-        "bond_symbol": "TATACAP 8.35% 2028 NCD",
-        "isin": "INE306N07KV2",
+        "bond_symbol": "Tata Capital 8.10% 2028",
+        "isin": "INE306N07LA3",
         "issue_date": "2023-09-08",
         "maturity_date": "2028-09-08",
         "payout_frequency": "Annual",
         "secured_unsecured": "Secured",
-        "sector": "NBFC",
-        "rating_current": "AAA",
-        "coupon_pct": 8.35,
-        "cmp": 101.80,
-        "ytm_pct": 7.85,
-        "duration_macaulay": 3.65,
-        "duration_modified": 3.38,
-        "convexity": 14.8,
-        "tax_status": "Taxable"
+        "sector": "Prime NBFC",
+        "rating_current": "CRISIL AAA",
+        "coupon_pct": 8.10,
+        "cmp": 100.55,
+        "ytm_pct": 7.91,
+        "duration_macaulay": 3.35,
+        "duration_modified": 3.10,
+        "convexity": 12.8,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 18.23,
+        "volume_indicator": "🟢 High (₹ 18.2 Cr)"
     },
     {
         "ticker": "MMFIN-N6",
         "issuer_name": "Mahindra & Mahindra Fin",
-        "bond_symbol": "MMFIN 8.40% 2027 NCD",
-        "isin": "INE774D07TU8",
+        "bond_symbol": "MM Financial 8.00% 2027",
+        "isin": "INE115A07QE0",
         "issue_date": "2022-07-15",
         "maturity_date": "2027-07-15",
         "payout_frequency": "Annual",
         "secured_unsecured": "Secured",
-        "sector": "NBFC",
-        "rating_current": "AAA",
-        "coupon_pct": 8.40,
-        "cmp": 101.50,
-        "ytm_pct": 7.92,
-        "duration_macaulay": 2.70,
-        "duration_modified": 2.50,
-        "convexity": 8.2,
-        "tax_status": "Taxable"
+        "sector": "Auto NBFC",
+        "rating_current": "INDIA RATINGS AAA",
+        "coupon_pct": 8.00,
+        "cmp": 100.10,
+        "ytm_pct": 7.95,
+        "duration_macaulay": 2.45,
+        "duration_modified": 2.27,
+        "convexity": 7.3,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 14.10,
+        "volume_indicator": "🟡 Medium (₹ 14.1 Cr)"
     },
     {
         "ticker": "SHRIRAM-N7",
         "issuer_name": "Shriram Finance Ltd",
-        "bond_symbol": "SHRIRAM 9.10% 2027 NCD",
-        "isin": "INE721A07RU0",
+        "bond_symbol": "Shriram Finance 8.50% 2027",
+        "isin": "INE721A07RV3",
         "issue_date": "2022-10-06",
         "maturity_date": "2027-10-06",
-        "payout_frequency": "Annual",
+        "payout_frequency": "Monthly",
         "secured_unsecured": "Secured",
-        "sector": "NBFC",
-        "rating_current": "AA+",
-        "coupon_pct": 9.10,
-        "cmp": 102.10,
-        "ytm_pct": 8.45,
-        "duration_macaulay": 2.65,
-        "duration_modified": 2.44,
-        "convexity": 7.9,
-        "tax_status": "Taxable"
+        "sector": "Retail NBFC",
+        "rating_current": "CRISIL AA+",
+        "coupon_pct": 8.50,
+        "cmp": 100.40,
+        "ytm_pct": 8.35,
+        "duration_macaulay": 2.50,
+        "duration_modified": 2.30,
+        "convexity": 7.8,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 15.28,
+        "volume_indicator": "🟢 High (₹ 15.3 Cr)"
     },
     {
         "ticker": "MUTHOOT-N8",
         "issuer_name": "Muthoot Finance Ltd",
-        "bond_symbol": "MUTHOOT 8.75% 2026 NCD",
-        "isin": "INE414G07GX1",
-        "issue_date": "2021-04-20",
-        "maturity_date": "2026-04-20",
-        "payout_frequency": "Annual",
+        "bond_symbol": "Muthoot Finance 8.25% 2028",
+        "isin": "INE414G07GH7",
+        "issue_date": "2023-09-12",
+        "maturity_date": "2028-09-12",
+        "payout_frequency": "Monthly",
         "secured_unsecured": "Secured",
         "sector": "Gold Loan NBFC",
-        "rating_current": "AA+",
-        "coupon_pct": 8.75,
-        "cmp": 101.30,
-        "ytm_pct": 8.12,
-        "duration_macaulay": 1.85,
-        "duration_modified": 1.71,
-        "convexity": 4.2,
-        "tax_status": "Taxable"
+        "rating_current": "CRISIL AA+",
+        "coupon_pct": 8.25,
+        "cmp": 100.05,
+        "ytm_pct": 8.22,
+        "duration_macaulay": 3.40,
+        "duration_modified": 3.14,
+        "convexity": 13.5,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 12.44,
+        "volume_indicator": "🟡 Medium (₹ 12.4 Cr)"
     },
     {
         "ticker": "CHOLAFIN-N9",
         "issuer_name": "Cholamandalam Invest",
-        "bond_symbol": "CHOLAFIN 8.25% 2028 NCD",
-        "isin": "INE121A07RV0",
+        "bond_symbol": "Cholamandalam 8.40% 2028",
+        "isin": "INE121A07QU5",
         "issue_date": "2023-06-14",
         "maturity_date": "2028-06-14",
         "payout_frequency": "Annual",
         "secured_unsecured": "Secured",
-        "sector": "Vehicle Finance",
-        "rating_current": "AA+",
-        "coupon_pct": 8.25,
-        "cmp": 100.90,
-        "ytm_pct": 7.98,
-        "duration_macaulay": 3.55,
-        "duration_modified": 3.29,
-        "convexity": 14.1,
-        "tax_status": "Taxable"
+        "sector": "Vehicle NBFC",
+        "rating_current": "ICRA AA+",
+        "coupon_pct": 8.40,
+        "cmp": 100.60,
+        "ytm_pct": 8.18,
+        "duration_macaulay": 3.15,
+        "duration_modified": 2.92,
+        "convexity": 11.4,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 8.27,
+        "volume_indicator": "🟡 Medium (₹ 8.3 Cr)"
     },
     {
         "ticker": "PCHFL-N1",
         "issuer_name": "Piramal Capital & Housing",
-        "bond_symbol": "PCHFL 9.25% 2026 NCD",
-        "isin": "INE641O07200",
-        "issue_date": "2021-07-23",
-        "maturity_date": "2026-07-23",
+        "bond_symbol": "Piramal Capital 8.85% 2028",
+        "isin": "INE516Y07259",
+        "issue_date": "2023-08-01",
+        "maturity_date": "2028-08-01",
         "payout_frequency": "Annual",
         "secured_unsecured": "Secured",
         "sector": "Housing Finance",
-        "rating_current": "AA",
-        "coupon_pct": 9.25,
-        "cmp": 101.05,
-        "ytm_pct": 8.75,
-        "duration_macaulay": 1.75,
-        "duration_modified": 1.61,
-        "convexity": 3.8,
-        "tax_status": "Taxable"
+        "rating_current": "CARE AA",
+        "coupon_pct": 8.85,
+        "cmp": 99.20,
+        "ytm_pct": 9.15,
+        "duration_macaulay": 3.10,
+        "duration_modified": 2.84,
+        "convexity": 10.9,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 5.40,
+        "volume_indicator": "🟡 Medium (₹ 5.4 Cr)"
     },
     {
         "ticker": "SAMMAAN-N2",
         "issuer_name": "Indiabulls Housing (Sammaan)",
-        "bond_symbol": "SAMMAAN 9.75% 2026 NCD",
-        "isin": "INE148I07JG2",
-        "issue_date": "2021-03-30",
-        "maturity_date": "2026-03-30",
+        "bond_symbol": "Sammaan Capital 9.15% 2029",
+        "isin": "INE148I07JG8",
+        "issue_date": "2024-03-30",
+        "maturity_date": "2029-03-30",
         "payout_frequency": "Monthly",
         "secured_unsecured": "Secured",
         "sector": "Housing Finance",
-        "rating_current": "AA",
-        "coupon_pct": 9.75,
-        "cmp": 101.80,
-        "ytm_pct": 8.95,
-        "duration_macaulay": 1.80,
-        "duration_modified": 1.65,
-        "convexity": 4.0,
-        "tax_status": "Taxable"
+        "rating_current": "CRISIL AA",
+        "coupon_pct": 9.15,
+        "cmp": 98.40,
+        "ytm_pct": 9.68,
+        "duration_macaulay": 3.50,
+        "duration_modified": 3.19,
+        "convexity": 14.2,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 4.83,
+        "volume_indicator": "🟠 Moderate (₹ 4.8 Cr)"
     },
     {
         "ticker": "NABARD-N3",
         "issuer_name": "NABARD",
-        "bond_symbol": "NABARD 7.65% 2028 NCD",
-        "isin": "INE261F08DX0",
+        "bond_symbol": "NABARD 7.64% 2028",
+        "isin": "INE261F08DV1",
         "issue_date": "2023-01-27",
         "maturity_date": "2028-01-27",
         "payout_frequency": "Annual",
         "secured_unsecured": "Secured",
-        "sector": "PSU Financial",
-        "rating_current": "AAA",
-        "coupon_pct": 7.65,
-        "cmp": 100.60,
-        "ytm_pct": 7.46,
-        "duration_macaulay": 3.75,
-        "duration_modified": 3.49,
-        "convexity": 15.6,
-        "tax_status": "Taxable"
+        "sector": "All-India Financial Inst",
+        "rating_current": "CRISIL AAA",
+        "coupon_pct": 7.64,
+        "cmp": 100.20,
+        "ytm_pct": 7.55,
+        "duration_macaulay": 2.90,
+        "duration_modified": 2.70,
+        "convexity": 9.8,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 22.03,
+        "volume_indicator": "🟢 High (₹ 22.0 Cr)"
     },
     {
         "ticker": "SIDBI-N4",
         "issuer_name": "SIDBI",
-        "bond_symbol": "SIDBI 7.72% 2027 NCD",
-        "isin": "INE556F08JZ5",
+        "bond_symbol": "SIDBI 7.68% 2027",
+        "isin": "INE556F08JS7",
         "issue_date": "2022-11-04",
         "maturity_date": "2027-11-04",
         "payout_frequency": "Annual",
         "secured_unsecured": "Secured",
-        "sector": "PSU Financial",
-        "rating_current": "AAA",
-        "coupon_pct": 7.72,
-        "cmp": 100.50,
-        "ytm_pct": 7.52,
-        "duration_macaulay": 2.80,
-        "duration_modified": 2.60,
-        "convexity": 8.9,
-        "tax_status": "Taxable"
+        "sector": "All-India Financial Inst",
+        "rating_current": "CARE AAA",
+        "coupon_pct": 7.68,
+        "cmp": 100.10,
+        "ytm_pct": 7.62,
+        "duration_macaulay": 2.75,
+        "duration_modified": 2.55,
+        "convexity": 8.7,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 19.05,
+        "volume_indicator": "🟢 High (₹ 19.1 Cr)"
     },
     {
         "ticker": "POWERGRID-N5",
         "issuer_name": "Power Grid Corp of India",
-        "bond_symbol": "POWERGRID 7.40% 2030 NCD",
-        "isin": "INE752E07NN0",
-        "issue_date": "2020-03-20",
+        "bond_symbol": "PowerGrid 7.55% 2030",
+        "isin": "INE752E08643",
+        "issue_date": "2023-03-20",
         "maturity_date": "2030-03-20",
         "payout_frequency": "Annual",
         "secured_unsecured": "Secured",
-        "sector": "PSU Utility",
-        "rating_current": "AAA",
-        "coupon_pct": 7.40,
-        "cmp": 100.20,
-        "ytm_pct": 7.35,
-        "duration_macaulay": 4.95,
-        "duration_modified": 4.61,
-        "convexity": 26.8,
-        "tax_status": "Taxable"
+        "sector": "Maharatna PSU",
+        "rating_current": "CRISIL AAA",
+        "coupon_pct": 7.55,
+        "cmp": 100.35,
+        "ytm_pct": 7.48,
+        "duration_macaulay": 4.60,
+        "duration_modified": 4.28,
+        "convexity": 23.4,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 15.02,
+        "volume_indicator": "🟢 High (₹ 15.0 Cr)"
     },
     {
         "ticker": "IRFC-N7",
         "issuer_name": "Indian Railway Finance",
-        "bond_symbol": "IRFC 7.55% 2031 NCD",
-        "isin": "INE053F07934",
+        "bond_symbol": "IRFC 7.47% 2031",
+        "isin": "INE053F08255",
         "issue_date": "2021-02-19",
         "maturity_date": "2031-02-19",
         "payout_frequency": "Annual",
         "secured_unsecured": "Secured",
-        "sector": "PSU Infra",
-        "rating_current": "AAA",
-        "coupon_pct": 7.55,
-        "cmp": 100.35,
-        "ytm_pct": 7.48,
-        "duration_macaulay": 5.75,
-        "duration_modified": 5.35,
-        "convexity": 36.2,
-        "tax_status": "Taxable"
+        "sector": "Miniratna PSU",
+        "rating_current": "ICRA AAA",
+        "coupon_pct": 7.47,
+        "cmp": 100.05,
+        "ytm_pct": 7.45,
+        "duration_macaulay": 5.20,
+        "duration_modified": 4.84,
+        "convexity": 29.8,
+        "tax_status": "Taxable",
+        "avg_daily_volume_cr": 25.50,
+        "volume_indicator": "🟢 High (₹ 25.5 Cr)"
     },
     {
         "ticker": "HUDCO-N8",
         "issuer_name": "Housing & Urban Dev Corp",
-        "bond_symbol": "HUDCO 8.20% 2027 Tax-Free",
-        "isin": "INE031A07773",
-        "issue_date": "2012-03-05",
-        "maturity_date": "2027-03-05",
+        "bond_symbol": "HUDCO 8.20% 2028 Tax-Free",
+        "isin": "INE031A07781",
+        "issue_date": "2013-03-05",
+        "maturity_date": "2028-03-05",
         "payout_frequency": "Annual",
         "secured_unsecured": "Secured",
         "sector": "PSU Tax-Free",
-        "rating_current": "AAA",
+        "rating_current": "CARE AAA",
         "coupon_pct": 8.20,
-        "cmp": 109.10,
-        "ytm_pct": 5.25,
-        "duration_macaulay": 2.75,
-        "duration_modified": 2.61,
-        "convexity": 8.8,
-        "tax_status": "Tax-Free"
+        "cmp": 108.90,
+        "ytm_pct": 5.48,
+        "duration_macaulay": 3.10,
+        "duration_modified": 2.94,
+        "convexity": 11.2,
+        "tax_status": "Tax-Free",
+        "avg_daily_volume_cr": 14.70,
+        "volume_indicator": "🟡 Medium (₹ 14.7 Cr)"
     }
 ]
 
@@ -999,7 +1049,7 @@ def render_fleet_manager_tab(is_admin: bool = True):
     # -------------------------------------------------------------
     with tab_bond:
         st.markdown("#### 📜 Listed NCD, Sovereign G-Sec & Corporate Bond Analytics")
-        st.caption("25 Authentic Indian Fixed Income securities with Tickers, Dates, Payout Schedules, Security Structure, Duration, and RBI Rate Shock Stress-Testing.")
+        st.caption("25 Authentic Indian Fixed Income securities with Tickers, Dates, Payout Schedules, Security Structure, ADV Indication, Duration, and RBI Rate Shock Stress-Testing.")
 
         c_top1, c_top2, c_top3 = st.columns([2.8, 1.1, 1.1])
         with c_top1:
@@ -1038,13 +1088,54 @@ def render_fleet_manager_tab(is_admin: bool = True):
                 all_freq_types = ["All"] + sorted(list(set(b.get("payout_frequency", "Annual") for b in BONDS_DATASET)))
                 sel_freq = st.selectbox("Payout Frequency:", all_freq_types, key="sel_freq_filter_fleet")
 
+            # Institutional Mandate & ADV Filters
+            f_opt1, f_opt2 = st.columns([1.5, 1.5])
+            with f_opt1:
+                ignore_sub_12m = st.checkbox(
+                    "Ignore bonds maturing in < 12 months (Institutional Mandate)",
+                    value=True,
+                    key="flt_ignore_sub_12m",
+                    help="Default active: Excludes all short-dated securities maturing within 12 months"
+                )
+            with f_opt2:
+                min_adv_fleet = st.slider(
+                    "Min Avg Daily Volume (₹ Cr)",
+                    0.0, 100.0, 0.0, 5.0,
+                    key="bond_min_adv_fleet",
+                    help="Filter by minimum exchange average daily turnover in ₹ Crore"
+                )
+
             cf1, cf2 = st.columns(2)
             with cf1:
-                tax_slab = st.slider("Investor Tax Slab (%)", 0.0, 45.0, 30.0, 1.0, key="bond_tax_slab")
+                # Default is 0.0% to remove impact of tax by default (Gross Pre-Tax Yield)
+                tax_slab = st.slider(
+                    "Investor Tax Slab (%)",
+                    0.0, 45.0, 0.0, 1.0,
+                    key="bond_tax_slab",
+                    help="Default: 0% (Gross Pre-Tax Yield). Slide to calculate post-tax net yield under your tax bracket."
+                )
             with cf2:
-                rate_shock_bps = st.slider("⚡ Simulated RBI Repo Rate Shift (bps)", -200, 200, 0, 25, key="bond_rate_shock", help="Negative = Rate Cut (Prices Rise); Positive = Rate Hike (Prices Drop)")
+                rate_shock_bps = st.slider(
+                    "⚡ Simulated RBI Repo Rate Shift (bps)",
+                    -200, 200, 0, 25,
+                    key="bond_rate_shock",
+                    help="Negative = Rate Cut (Prices Rise); Positive = Rate Hike (Prices Drop)"
+                )
 
             bonds_df = pd.DataFrame(BONDS_DATASET)
+
+            # Compute remaining tenor dynamically relative to today
+            today = datetime.date.today()
+            bonds_df["maturity_dt"] = pd.to_datetime(bonds_df["maturity_date"]).dt.date
+            bonds_df["remaining_days"] = (bonds_df["maturity_dt"] - today).apply(lambda d: d.days)
+            bonds_df["remaining_months"] = (bonds_df["remaining_days"] / 30.4375).round(1)
+            bonds_df["remaining_years"] = (bonds_df["remaining_days"] / 365.25).round(2)
+            bonds_df["remaining_tenor_display"] = bonds_df.apply(
+                lambda r: f"{r['remaining_years']:.1f} Yrs ({int(max(0, r['remaining_months']))}M)" if r['remaining_months'] >= 0 else "Matured",
+                axis=1
+            )
+
+            # Post-Tax Yield % (Defaults to 0% Tax / Gross YTM)
             bonds_df["Post-Tax Yield %"] = np.where(
                 bonds_df["tax_status"] == "Tax-Free",
                 bonds_df["ytm_pct"],
@@ -1070,26 +1161,36 @@ def render_fleet_manager_tab(is_admin: bool = True):
                 bonds_df = bonds_df[bonds_df["secured_unsecured"] == sel_sec]
             if sel_freq != "All":
                 bonds_df = bonds_df[bonds_df["payout_frequency"] == sel_freq]
+            if ignore_sub_12m:
+                bonds_df = bonds_df[bonds_df["remaining_months"] >= 12.0]
+            if min_adv_fleet > 0.0:
+                bonds_df = bonds_df[bonds_df["avg_daily_volume_cr"] >= min_adv_fleet]
 
             # Bond KPI Summary
             bm1, bm2, bm3, bm4 = st.columns(4)
             bm1.metric("10Y G-Sec Benchmark", f"{BENCHMARK_10Y_GSEC_YIELD:.2f}%")
-            bm2.metric("Screened / Total Bonds", f"{len(bonds_df)} / {len(BONDS_DATASET)}")
-            top_post = bonds_df['Post-Tax Yield %'].max() if not bonds_df.empty else 0.0
-            bm3.metric("Top Post-Tax Yield", f"{top_post:.2f}%", delta=f"@ {tax_slab:.0f}% Tax")
-            avg_mod = bonds_df['duration_modified'].mean() if not bonds_df.empty else 0.0
-            bm4.metric("Avg Modified Duration", f"{avg_mod:.2f} Yrs")
+            bm2.metric("Screened / Active Bonds", f"{len(bonds_df)} / {len(BONDS_DATASET)}", delta="Tenor >= 12M Active" if ignore_sub_12m else "All Tenors")
+            top_yield = bonds_df['ytm_pct'].max() if not bonds_df.empty else 0.0
+            if tax_slab == 0.0:
+                bm3.metric("Highest Gross YTM", f"{top_yield:.2f}%", delta="Pre-Tax (0% Tax Default)")
+            else:
+                top_post = bonds_df['Post-Tax Yield %'].max() if not bonds_df.empty else 0.0
+                bm3.metric("Top Post-Tax Yield", f"{top_post:.2f}%", delta=f"@ {tax_slab:.0f}% Tax")
+            top_adv = bonds_df['avg_daily_volume_cr'].max() if not bonds_df.empty else 0.0
+            bm4.metric("Top Avg Daily Volume", f"₹ {top_adv:.1f} Cr/day", delta="High Liquidity")
 
             display_cols = [
                 "ticker", "issuer_name", "bond_symbol", "isin", "issue_date", "maturity_date",
-                "payout_frequency", "secured_unsecured", "rating_current", "coupon_pct", 
-                "cmp", "ytm_pct", "Post-Tax Yield %", "duration_modified", "convexity",
-                "Est. Price Change %", "Shocked CMP (₹)"
+                "remaining_tenor_display", "payout_frequency", "secured_unsecured",
+                "volume_indicator", "avg_daily_volume_cr",
+                "rating_current", "coupon_pct", "cmp", "ytm_pct", "Post-Tax Yield %",
+                "duration_modified", "convexity", "Est. Price Change %", "Shocked CMP (₹)"
             ]
             display_cols = [c for c in display_cols if c in bonds_df.columns]
 
             st.dataframe(
                 bonds_df[display_cols].style.format({
+                    "avg_daily_volume_cr": "₹ {:.2f} Cr",
                     "coupon_pct": "{:.2f}%",
                     "cmp": "₹ {:.2f}",
                     "ytm_pct": "{:.2f}%",
@@ -1107,13 +1208,16 @@ def render_fleet_manager_tab(is_admin: bool = True):
                     "isin": st.column_config.TextColumn("ISIN", width="small"),
                     "issue_date": st.column_config.TextColumn("Issue Date", width="small"),
                     "maturity_date": st.column_config.TextColumn("Maturity Date", width="small"),
+                    "remaining_tenor_display": st.column_config.TextColumn("Remaining Tenor", help="Years and months remaining until maturity", width="small"),
                     "payout_frequency": st.column_config.TextColumn("Payout Freq", width="small"),
                     "secured_unsecured": st.column_config.TextColumn("Security Type", width="small"),
+                    "volume_indicator": st.column_config.TextColumn("Avg Daily Volume Indication", help="Liquidity category and exchange turnover status", width="medium"),
+                    "avg_daily_volume_cr": st.column_config.NumberColumn("ADV (₹ Cr)", help="Average Daily Turnover in ₹ Crores", width="small"),
                     "rating_current": st.column_config.TextColumn("Rating", width="small"),
                     "coupon_pct": st.column_config.TextColumn("Coupon %"),
                     "cmp": st.column_config.TextColumn("CMP (₹)"),
-                    "ytm_pct": st.column_config.TextColumn("Pre-Tax YTM"),
-                    "Post-Tax Yield %": st.column_config.TextColumn("Post-Tax Yield"),
+                    "ytm_pct": st.column_config.TextColumn("Pre-Tax YTM (Gross)", help="Gross Yield to Maturity without tax impact"),
+                    "Post-Tax Yield %": st.column_config.TextColumn("Post-Tax Net Yield", help="Net realized yield after tax slab (0% default = Gross Yield)"),
                     "duration_modified": st.column_config.TextColumn("Mod Duration"),
                     "convexity": st.column_config.TextColumn("Convexity"),
                     "Est. Price Change %": st.column_config.TextColumn("Shock Price Chg %"),

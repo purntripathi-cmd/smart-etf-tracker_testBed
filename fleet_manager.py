@@ -1135,6 +1135,10 @@ def render_fleet_manager_tab(is_admin: bool = True):
                 axis=1
             )
 
+            # Format human-readable string dates (DD-Mon-YYYY) to prevent epoch millisecond display
+            bonds_df["issue_date"] = pd.to_datetime(bonds_df["issue_date"]).dt.strftime('%d-%b-%Y')
+            bonds_df["maturity_date"] = pd.to_datetime(bonds_df["maturity_date"]).dt.strftime('%d-%b-%Y')
+
             # Post-Tax Yield % (Defaults to 0% Tax / Gross YTM)
             bonds_df["Post-Tax Yield %"] = np.where(
                 bonds_df["tax_status"] == "Tax-Free",
@@ -1205,12 +1209,12 @@ def render_fleet_manager_tab(is_admin: bool = True):
                     "ticker": st.column_config.TextColumn("Ticker", help="NSE/BSE Exchange Ticker for rapid terminal search", width="small"),
                     "issuer_name": st.column_config.TextColumn("Issuer Name", width="medium"),
                     "bond_symbol": st.column_config.TextColumn("Bond Symbol", width="medium"),
-                    "isin": st.column_config.TextColumn("ISIN", width="small"),
-                    "issue_date": st.column_config.TextColumn("Issue Date", width="small"),
-                    "maturity_date": st.column_config.TextColumn("Maturity Date", width="small"),
-                    "remaining_tenor_display": st.column_config.TextColumn("Remaining Tenor", help="Years and months remaining until maturity", width="small"),
-                    "payout_frequency": st.column_config.TextColumn("Payout Freq", width="small"),
-                    "secured_unsecured": st.column_config.TextColumn("Security Type", width="small"),
+                    "isin": st.column_config.TextColumn("ISIN", help="12-digit International Securities Identification Number", width="medium"),
+                    "issue_date": st.column_config.TextColumn("Issue Date", help="Allotment / Issue Date (DD-Mon-YYYY)", width="medium"),
+                    "maturity_date": st.column_config.TextColumn("Maturity Date", help="Redemption / Maturity Date (DD-Mon-YYYY)", width="medium"),
+                    "remaining_tenor_display": st.column_config.TextColumn("Remaining Tenor", help="Years and months remaining until maturity", width="medium"),
+                    "payout_frequency": st.column_config.TextColumn("Payout Frequency", width="medium"),
+                    "secured_unsecured": st.column_config.TextColumn("Security Type", width="medium"),
                     "volume_indicator": st.column_config.TextColumn("Avg Daily Volume Indication", help="Liquidity category and exchange turnover status", width="medium"),
                     "avg_daily_volume_cr": st.column_config.NumberColumn("ADV (₹ Cr)", help="Average Daily Turnover in ₹ Crores", width="small"),
                     "rating_current": st.column_config.TextColumn("Rating", width="small"),

@@ -1767,6 +1767,13 @@ if "High-Conviction Master Hub" in active_tab:
 
     render_metric_glossary_expander("tab1")
 
+    # Cloud Resource Telemetry Health Card
+    try:
+        from resource_monitor import render_resource_monitor_card
+        render_resource_monitor_card(key_suffix="tab1_res_card")
+    except Exception:
+        pass
+
     # Universe Selection & Active Strategy Preset Controls
     c_u1, c_u2, c_u3 = st.columns([1.5, 1.5, 2.0])
     with c_u1:
@@ -3441,6 +3448,13 @@ elif "Multi-Regime Backtesting" in active_tab:
             st.rerun()
 
     render_metric_glossary_expander("tab3")
+
+    # Cloud Resource Telemetry Health Card
+    try:
+        from resource_monitor import render_resource_monitor_card
+        render_resource_monitor_card(key_suffix="tab3_res_card")
+    except Exception:
+        pass
 
     # 1. AI Quant Advisor Analysis & Tweaks
     raw_trades = load_paper_trades()

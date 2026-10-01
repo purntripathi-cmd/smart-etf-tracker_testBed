@@ -313,11 +313,19 @@ def calculate_reit_scores(rec: dict) -> dict:
     }
 
 
-def scan_all_reits() -> pd.DataFrame:
+_CACHED_REITS_DATA = None
+_CACHED_REITS_TIME = 0.0
+
+def scan_all_reits(force_refresh: bool = False) -> pd.DataFrame:
     """
     Executes a comprehensive institutional scan of all listed Indian REITs & InvITs.
     Returns an enriched Pandas DataFrame.
     """
+    global _CACHED_REITS_DATA, _CACHED_REITS_TIME
+    now = datetime.datetime.now().timestamp()
+    if not force_refresh and _CACHED_REITS_DATA is not None and (now - _CACHED_REITS_TIME < 900):
+        return _CACHED_REITS_DATA.copy()
+
     records = []
     for yf_ticker, f_info in REIT_FUNDAMENTALS_DB.items():
         market_data = fetch_reit_market_data(yf_ticker)
@@ -383,6 +391,10 @@ def scan_all_reits() -> pd.DataFrame:
     # Sort descending by Composite Score
     if not df.empty and "Composite Score (0-100)" in df.columns:
         df = df.sort_values(by="Composite Score (0-100)", ascending=False).reset_index(drop=True)
+    _CACHED_REITS_DATA = df.copy()
+    _CACHED_REITS_TIME = now
+    import gc
+    gc.collect()
     return df
 
 

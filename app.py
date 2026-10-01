@@ -198,20 +198,6 @@ RUNTIME_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "runtime_config.js
 DOCX_GUIDE_FILE = os.path.join(os.path.dirname(__file__), "AGY_Quant_Platform_V2_Guide.docx")
 
 # =====================================================================
-# QUERY PARAMETER CRON TRIGGER (ZERO-SECRETS COMPATIBLE)
-# =====================================================================
-query_params = st.query_params
-if "cron_trigger" in query_params:
-    mode_param = query_params.get("mode", "PAPER_TRADE_3PM").upper()
-    try:
-        from paper_trader_daemon import run_paper_trader_daemon
-        run_paper_trader_daemon(mode_override=mode_param)
-        st.json({"status": "success", "mode": mode_param, "timestamp": datetime.datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")})
-    except Exception as e:
-        st.json({"status": "error", "message": str(e)})
-    st.stop()
-
-# =====================================================================
 # GOOGLE SHEETS & TELEGRAM INTEGRATION (PRODUCTION COMPATIBILITY)
 # =====================================================================
 def get_db_connection():
@@ -797,11 +783,18 @@ DEFAULT_PAPER_HEADERS = [
     "Near_Support_Status", "RSI_At_Entry", "Empirical_Win_Rate_At_Entry", "Market_Regime_At_Entry"
 ]
 
-@st.cache_data(ttl=300)
+MARKET_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "market_cache.parquet")
+
+@st.cache_data(ttl=900, max_entries=1, show_spinner=False)
 def load_historical_market_data(all_tickers):
-    download_list = list(set(all_tickers)) + ["^CRSLDX", "^NSEI", "^INDIAVIX"]
+    """
+    Fetches 1-year historical daily market data across all universe tickers + benchmarks.
+    Persists an atomic Parquet snapshot and downcasts to float32 to slash memory by 50%.
+    """
+    clean_tickers = sorted(list(set(all_tickers)))
+    download_list = sorted(list(set(clean_tickers + ["^CRSLDX", "^NSEI", "^INDIAVIX"])))
     try:
-        return yf.download(
+        df = yf.download(
             download_list,
             period="1y",
             interval="1d",
@@ -810,10 +803,41 @@ def load_historical_market_data(all_tickers):
             threads=True,
             progress=False
         )
+        if df is not None and not df.empty and len(df) > 10:
+            try:
+                for col in df.select_dtypes(include=["float64"]).columns:
+                    df[col] = df[col].astype(np.float32)
+            except Exception:
+                pass
+            try:
+                os.makedirs(os.path.dirname(MARKET_CACHE_FILE), exist_ok=True)
+                df.to_parquet(MARKET_CACHE_FILE)
+            except Exception:
+                pass
+            import gc
+            gc.collect()
+            return df
     except Exception as e:
         logger.error(f"Error fetching historical data: {e}")
-        return pd.DataFrame()
 
+    # Fallback to local snapshot
+    if os.path.exists(MARKET_CACHE_FILE):
+        try:
+            logger.info("Loaded market data from local snapshot cache.")
+            df = pd.read_parquet(MARKET_CACHE_FILE)
+            try:
+                for col in df.select_dtypes(include=["float64"]).columns:
+                    df[col] = df[col].astype(np.float32)
+            except Exception:
+                pass
+            import gc
+            gc.collect()
+            return df
+        except Exception as e:
+            logger.warning(f"Failed to read market snapshot cache: {e}")
+    return pd.DataFrame()
+
+@st.cache_data(ttl=180, max_entries=1, show_spinner=False)
 def load_paper_trades():
     # 1. Load local trades CSV first
     local_df = pd.DataFrame(columns=DEFAULT_PAPER_HEADERS)
@@ -908,6 +932,7 @@ def save_paper_trades(df):
         except Exception as e:
             logger.warning(f"GSheets update Paper_Trades failed: {e}")
 
+@st.cache_data(ttl=180, max_entries=1, show_spinner=False)
 def load_audit_log():
     local_df = pd.DataFrame(columns=DEFAULT_AUDIT_HEADERS)
     if os.path.exists(LOCAL_AUDIT_CSV) and os.path.getsize(LOCAL_AUDIT_CSV) > 0:
@@ -1122,41 +1147,41 @@ def build_all_precious_metals_df(etfs_df):
 # =====================================================================
 # HIGH-PERFORMANCE IN-MEMORY CACHED EVALUATION PIPELINES
 # =====================================================================
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=900, max_entries=1, show_spinner=False)
 def get_cached_market_evaluation(tickers_tuple):
     """
     Evaluates multi-factor metrics across all 250+ Equities, Broad ETFs, and Precious Metals once,
-    caching results in memory for 5 minutes. Subsequent interactions load in milliseconds.
+    caching results in memory for 15 minutes. Subsequent interactions load in milliseconds.
     """
-    download_list = list(tickers_tuple)
-    raw_data = load_historical_market_data(download_list)
+    raw_data = load_historical_market_data(tickers_tuple)
     current_stock_universe, current_etf_universe = get_active_universe()
     stocks_df, stock_reg = evaluate_market_metrics(raw_data, current_stock_universe, is_stock_mode=True)
     etfs_df, etf_reg = evaluate_market_metrics(raw_data, current_etf_universe, is_stock_mode=False)
     metals_df = build_all_precious_metals_df(etfs_df)
+    import gc
+    gc.collect()
     return stocks_df, stock_reg, etfs_df, etf_reg, metals_df
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=900, max_entries=1, show_spinner=False)
 def get_cached_sr_matrices(tickers_tuple):
     """
-    Caches algorithmic Support & Resistance matrices across all stocks and ETFs.
+    Caches algorithmic Support & Resistance matrices across all stocks and ETFs for 15 minutes.
     """
-    download_list = list(tickers_tuple)
-    raw_data = load_historical_market_data(download_list)
+    raw_data = load_historical_market_data(tickers_tuple)
     current_stock_universe, current_etf_universe = get_active_universe()
     sr_combined_stk = compute_sr_matrix(raw_data, current_stock_universe, is_stock_mode=True)
     sr_combined_etf = compute_sr_matrix(raw_data, current_etf_universe, is_stock_mode=False)
     sr_full_df = pd.concat([sr_combined_stk, sr_combined_etf], ignore_index=True) if not sr_combined_stk.empty else sr_combined_etf
     return sr_full_df
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=900, max_entries=2, show_spinner=False)
 def get_cached_5y_leaderboard(asset_class=None):
-    """Caches the 5-Year Empirical Predictability Leaderboard."""
+    """Caches the 5-Year Empirical Predictability Leaderboard for 15 minutes."""
     return get_5y_fidelity_leaderboard(asset_class)
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=900, max_entries=1, show_spinner=False)
 def get_cached_reits_data():
-    """Caches institutional REIT & InvIT analytics to eliminate repeated sequential downloads."""
+    """Caches institutional REIT & InvIT analytics for 15 minutes to eliminate repeated sequential downloads."""
     return scan_all_reits()
 
 # =====================================================================
@@ -1222,28 +1247,6 @@ def render_preset_conviction_tiles(df, preset_name, is_stock_mode=False, limit=2
 
     if preset_name == "AI / RAG":
         top_b, top_s = get_ai_rag_conviction_candidates(df, is_stock_mode=is_stock_mode, limit=limit)
-    elif "Deep-Value" in preset_name:
-        from dual_logic_ui import compute_live_deep_value_candidates
-        deep_df = compute_live_deep_value_candidates(
-            stocks_df=df if is_stock_mode else None,
-            etfs_df=None if is_stock_mode else df
-        )
-        top_b_raw = deep_df[deep_df["Action_Signal"].str.contains("HIGH-CONVICTION", na=False)].head(limit)
-        top_s_raw = deep_df[deep_df["Action_Signal"].str.contains("PRESERVATION", na=False)].head(1)
-        top_b = top_b_raw.rename(columns={
-            "Action_Signal": "Action Signal",
-            "Dual_Logic_Score": "Composite Buy Score",
-            "Stop_Loss (₹)": "Stop_Loss",
-            "Target (₹)": "Target",
-            "Sector": "Category"
-        })
-        top_s = top_s_raw.rename(columns={
-            "Action_Signal": "Action Signal",
-            "Dual_Logic_Score": "Composite Buy Score",
-            "Stop_Loss (₹)": "Stop_Loss",
-            "Target (₹)": "Target",
-            "Sector": "Category"
-        })
     else:
         top_b, top_s = get_top_conviction_candidates(df, preset_name=preset_name, is_stock_mode=is_stock_mode, limit=limit)
 
@@ -1262,10 +1265,7 @@ def render_preset_conviction_tiles(df, preset_name, is_stock_mode=False, limit=2
                 tgt_val = float(r.get("Target", round(cmp_val * (1.07 if is_stock_mode else 1.05), 2)))
                 sig_val = str(r.get("Action Signal", "ACCUMULATE")).strip()
                 dist_dma = float(r.get("Dist 200DMA %", 0.0))
-                if "Deep-Value" in preset_name:
-                    crit = f"Dual-Logic Score: {sc_val:.2f} • Moat {r.get('Asset_Moat_Score', 0.8):.2f} • D/E: {r.get('Debt_Equity', 0.8):.2f} (<1.50) • IC: {r.get('Interest_Coverage', 4.0):.1f}x • Target >= 10% CAGR"
-                else:
-                    crit = r.get("Criteria_Met", f"Rank #{idx+1} in {preset_name} Preset • RSI {rsi_val:.1f} • 200DMA {dist_dma:+.1f}%")
+                crit = r.get("Criteria_Met", f"Rank #{idx+1} in {preset_name} Preset • RSI {rsi_val:.1f} • 200DMA {dist_dma:+.1f}%")
                 cat_desc = r.get("Category", "Equity" if is_stock_mode else "Broad Index")
 
                 b_badge_bg = "#fee2e2" if any(k in sig_val.upper() for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID"]) else "#dcfce7"
@@ -1646,7 +1646,7 @@ ALL_CONFIG_TICKERS = [x["ticker"] for x in (current_etf_universe + current_stock
 runtime_cfg = load_runtime_config()
 tickers_tuple = tuple(sorted(ALL_CONFIG_TICKERS))
 
-active_raw_data = load_historical_market_data(ALL_CONFIG_TICKERS)
+active_raw_data = load_historical_market_data(tickers_tuple)
 with st.spinner("Evaluating multi-factor metrics across 250+ Equities & Broad ETFs..."):
     stocks_market_df, stock_regime, etfs_market_df, etf_regime, all_metals_df = get_cached_market_evaluation(tickers_tuple)
 regime_data = etf_regime
@@ -1671,7 +1671,6 @@ with st.sidebar:
     nav_items = [
         "🎯 High-Conviction Master Hub",
         "📈 Paper Trading & Multi-Asset Ledger",
-        "⚡ Dual-Logic Bear-Market Engine (Pulse Pro v4.2)",
         "🧪 Multi-Regime Backtesting & Machine Learning",
         "📘 Platform Strategy Guide & DOCX Export",
         "👤 Profile & Strategy Settings"
@@ -1699,7 +1698,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("##### 🔄 Data Refresh Control")
     last_update_str = datetime.datetime.now(IST).strftime("%H:%M:%S")
-    st.caption(f"⏱️ 5-Minute Cache Active • Last Fetched: `{last_update_str}` IST")
+    st.caption(f"⏱️ 15-Minute Adaptive Cache Active • Last Fetched: `{last_update_str}` IST")
     if st.button("🔄 Refresh Live Market Data", use_container_width=True, key="manual_refresh_btn"):
         st.cache_data.clear()
         st.session_state.strategy_toast = "Live market data cache purged and refreshed."
@@ -1708,7 +1707,7 @@ with st.sidebar:
     # Cloud Resource Telemetry (CPU / RAM)
     try:
         from resource_monitor import render_resource_monitor_sidebar
-        render_resource_monitor_sidebar(key_suffix="testbed_sb")
+        render_resource_monitor_sidebar(key_suffix="prod_sb")
     except Exception:
         pass
 
@@ -1758,7 +1757,7 @@ if "High-Conviction Master Hub" in active_tab:
     c_t1_h1, c_t1_h2 = st.columns([3.5, 1.2])
     with c_t1_h1:
         st.markdown("### 🎯 High-Conviction Tactical Master Hub & Screener")
-        st.caption("Institutional Quantitative Allocation across 6 Tactical Pillars • Unified Multi-Preset Analysis • Full Deep-Dive Analytics & Criteria Met Rationale under each Category")
+        st.caption("Institutional Quantitative Allocation across 5 Tactical Pillars • Unified Multi-Preset Analysis • Full Deep-Dive Analytics & Criteria Met Rationale under each Category")
     with c_t1_h2:
         if st.button("🔄 Refresh Market Data", use_container_width=True, key="btn_refresh_tab1_data"):
             st.cache_data.clear()
@@ -1798,8 +1797,7 @@ if "High-Conviction Master Hub" in active_tab:
                 "Long-Term Secular (Dividend + Trend Cushion)",
                 "Swing / Positional (RSI Mean-Reversion + %B)",
                 "Intraday (Volume Surge Momentum)",
-                "AI / RAG Confluence (Cross-Indicator)",
-                "Deep-Value & Contrarian (v4.2 Dual-Logic Bear Resilience)"
+                "AI / RAG Confluence (Cross-Indicator)"
             ],
             index=0,
             key="active_strategy_preset_box"
@@ -1815,8 +1813,6 @@ if "High-Conviction Master Hub" in active_tab:
         preset_key = "Intraday"
     elif "AI / RAG" in active_preset:
         preset_key = "AI / RAG"
-    elif "Deep-Value" in active_preset:
-        preset_key = "Deep-Value & Contrarian"
 
     # Filter market DataFrames dynamically based on user universe scope
     filtered_stocks_df = stocks_market_df.copy()
@@ -1895,13 +1891,12 @@ if "High-Conviction Master Hub" in active_tab:
 
     # Detailed Preset Conviction Tiles
     st.markdown("##### 🎯 Conviction Tiles by Strategy Preset:")
-    c1_tab_def, c1_tab_swing, c1_tab_lt, c1_tab_intra, c1_tab_ai, c1_tab_deep = st.tabs([
+    c1_tab_def, c1_tab_swing, c1_tab_lt, c1_tab_intra, c1_tab_ai = st.tabs([
         "🎯 Default (Core Balanced)",
         "🌊 Swing / Positional",
         "🏛️ Long-Term Secular",
         "⚡ Intraday Momentum",
-        "🤖 AI / RAG Confluence",
-        "🛡️ Deep-Value & Contrarian (v4.2)"
+        "🤖 AI / RAG Confluence"
     ])
     with c1_tab_def:
         render_preset_conviction_tiles(filtered_etfs_df, "Default", is_stock_mode=False)
@@ -1913,8 +1908,6 @@ if "High-Conviction Master Hub" in active_tab:
         render_preset_conviction_tiles(filtered_etfs_df, "Intraday", is_stock_mode=False)
     with c1_tab_ai:
         render_preset_conviction_tiles(filtered_etfs_df, "AI / RAG", is_stock_mode=False)
-    with c1_tab_deep:
-        render_preset_conviction_tiles(filtered_etfs_df, "Deep-Value & Contrarian", is_stock_mode=False)
 
     # Category 1 Screener Expander (Sorted by Active Preset Score for 100% 1-to-1 Table/Tile Consistency)
     with st.expander("🔍 See More: Broad ETF Universe Screener & Factor Rankings (Click to expand)", expanded=False):
@@ -2003,13 +1996,12 @@ if "High-Conviction Master Hub" in active_tab:
 
     # Detailed Preset Conviction Tiles
     st.markdown("##### 🎯 Conviction Tiles by Strategy Preset:")
-    c2_tab_def, c2_tab_swing, c2_tab_lt, c2_tab_intra, c2_tab_ai, c2_tab_deep = st.tabs([
+    c2_tab_def, c2_tab_swing, c2_tab_lt, c2_tab_intra, c2_tab_ai = st.tabs([
         "🎯 Default (Core Balanced)",
         "🌊 Swing / Positional",
         "🏛️ Long-Term Secular",
         "⚡ Intraday Momentum",
-        "🤖 AI / RAG Confluence",
-        "🛡️ Deep-Value & Contrarian (v4.2)"
+        "🤖 AI / RAG Confluence"
     ])
     with c2_tab_def:
         render_preset_conviction_tiles(filtered_stocks_df, "Default", is_stock_mode=True)
@@ -2021,8 +2013,6 @@ if "High-Conviction Master Hub" in active_tab:
         render_preset_conviction_tiles(filtered_stocks_df, "Intraday", is_stock_mode=True)
     with c2_tab_ai:
         render_preset_conviction_tiles(filtered_stocks_df, "AI / RAG", is_stock_mode=True)
-    with c2_tab_deep:
-        render_preset_conviction_tiles(filtered_stocks_df, "Deep-Value & Contrarian", is_stock_mode=True)
 
     # Category 2 Screener Expander (Sorted by Active Preset Score for 100% 1-to-1 Table/Tile Consistency)
     with st.expander("🔍 See More: Quality Stocks Screener & Multi-Factor Rankings (Click to expand)", expanded=False):
@@ -2531,19 +2521,6 @@ if "High-Conviction Master Hub" in active_tab:
                 use_container_width=True,
                 hide_index=True
             )
-
-    # =================================================================
-    # CATEGORY 6: AI-POWERED DEEP-VALUE & CONTRARIAN BEAR-MARKET ENGINE (v4.2-PRODUCTION)
-    # =================================================================
-    st.markdown("---")
-    from dual_logic_ui import render_tab1_section6_bear_market_recommendations
-    render_tab1_section6_bear_market_recommendations(
-        stocks_market_df=filtered_stocks_df,
-        etfs_market_df=filtered_etfs_df,
-        base_budget=float(st.session_state.get("user_base_budget", 15000.0)) if "user_base_budget" in st.session_state else 15000.0,
-        current_user=current_user if "current_user" in locals() else "Guest_Trader",
-        save_trade_fn=save_paper_trades if "save_paper_trades" in locals() else None
-    )
 
 
 # =====================================================================
@@ -3422,14 +3399,6 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
 
 
 # =====================================================================
-# TAB: DUAL-LOGIC BEAR-MARKET ENGINE (PULSE PRO v4.2 PRODUCTION)
-# =====================================================================
-elif "Dual-Logic Bear-Market Engine" in active_tab:
-    from dual_logic_ui import render_dual_logic_studio
-    render_dual_logic_studio()
-
-
-# =====================================================================
 # TAB 3: BACKTESTING & MACHINE LEARNING OPTIMIZATION STUDIO
 # =====================================================================
 elif "Multi-Regime Backtesting" in active_tab:
@@ -3707,7 +3676,7 @@ elif "Profile & Strategy Settings" in active_tab:
                 p_mobile = st.text_input("Mobile", value=str(user_row.get("Mobile", "")))
             with c_p2:
                 p_budget = st.number_input("Personal Tranche Budget (₹)", min_value=1000, value=int(user_row.get("Tranche_Budget", 5000)), step=1000)
-                p_preset = st.selectbox("Preferred Strategy Preset", ["Default", "Long-Term", "Swing / Positional", "Intraday", "AI / RAG", "Deep-Value & Contrarian"], index=0)
+                p_preset = st.selectbox("Preferred Strategy Preset", ["Default", "Long-Term", "Swing / Positional", "Intraday", "AI / RAG"], index=0)
                 new_pw = st.text_input("New Password", type="password")
                 confirm_pw = st.text_input("Confirm Password", type="password")
 

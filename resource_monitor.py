@@ -42,7 +42,12 @@ def get_system_telemetry():
             telemetry["container_used_ram_mb"] = round(vm.used / (1024 * 1024), 1)
             telemetry["container_ram_pct"] = round(vm.percent, 1)
 
-            telemetry["cpu_pct"] = round(psutil.cpu_percent(interval=None), 1)
+            # Isolate process CPU from shared multi-tenant host noise
+            try:
+                proc_cpu = proc.cpu_percent(interval=None) / max(1, os.cpu_count() or 1)
+                telemetry["cpu_pct"] = round(min(100.0, max(0.0, proc_cpu)), 1)
+            except Exception:
+                telemetry["cpu_pct"] = round(psutil.cpu_percent(interval=None), 1)
         except Exception:
             pass
     else:
@@ -114,7 +119,13 @@ def render_resource_monitor_sidebar(key_suffix=""):
             """,
             unsafe_allow_html=True
         )
-        if st.button("🔄 Poll Resources", key=f"btn_poll_res_{key_suffix}", use_container_width=True):
+        b_c1, b_c2 = st.columns(2)
+        if b_c1.button("🔄 Poll Health", key=f"btn_poll_res_{key_suffix}", use_container_width=True):
+            st.rerun()
+        if b_c2.button("🧹 Flush RAM", key=f"btn_flush_ram_{key_suffix}", use_container_width=True):
+            import gc
+            gc.collect()
+            st.session_state.strategy_toast = "Memory flushed via Garbage Collection."
             st.rerun()
 
 

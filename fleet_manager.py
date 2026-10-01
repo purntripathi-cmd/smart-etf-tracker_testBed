@@ -166,7 +166,7 @@ def resolve_github_pat() -> str:
     return ""
 
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=600, max_entries=10, show_spinner=False)
 def fetch_repo_telemetry(repo_name: str, pat: str = "") -> dict:
     """Fetches latest commit info from GitHub API."""
     url = f"https://api.github.com/repos/{GITHUB_OWNER}/{repo_name}/commits/main"
@@ -854,7 +854,7 @@ def bsm_option_pricing(S, K, T, r, sigma, option_type="put"):
 
 
 # 5. Live Feed Parser for Reg 30 Catalysts
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=900, max_entries=2, show_spinner=False)
 def fetch_live_reg30_announcements():
     query = urllib.parse.quote("NSE corporate announcements OR BSE filings OR SEBI approval")
     feed_url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"

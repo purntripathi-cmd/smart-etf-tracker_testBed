@@ -1705,6 +1705,13 @@ with st.sidebar:
         st.session_state.strategy_toast = "Live market data cache purged and refreshed."
         st.rerun()
 
+    # Cloud Resource Telemetry (CPU / RAM)
+    try:
+        from resource_monitor import render_resource_monitor_sidebar
+        render_resource_monitor_sidebar(key_suffix="testbed_sb")
+    except Exception:
+        pass
+
     st.markdown("---")
     st.markdown(
         f"""

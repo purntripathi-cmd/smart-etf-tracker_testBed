@@ -1552,91 +1552,27 @@ def format_inav_distance_pct(v):
         return str(v)
 
 # =====================================================================
-# USER AUTHENTICATION & ACCESS CONTROL (GSHEETS + LOCAL AUTH)
+# USER ACCESS CONTROL (OPEN ACCESS TESTBED - NO LOGIN REQUIRED)
 # =====================================================================
 if "strategy_toast" not in st.session_state:
     st.session_state.strategy_toast = None
 
 users_df = fetch_users_df()
+
+# Default session to Open Access for all visitors on TestBed
+if "logged_user" not in st.session_state or not st.session_state.logged_user or st.session_state.logged_user == "Public_User":
+    st.session_state.logged_user = "Purn (Admin)"
+    st.session_state.user_role = "admin"
+
 url_user = st.query_params.get("u", None)
+if url_user:
+    st.session_state.logged_user = str(url_user).strip()
+    st.session_state.user_role = "admin"
 
-if "logged_user" not in st.session_state or not st.session_state.logged_user:
-    if url_user:
-        u_clean = str(url_user).strip().lower()
-        if u_clean in ["purn", "admin", "purn (admin)"]:
-            st.session_state.logged_user = "Purn (Admin)"
-            st.session_state.user_role = "admin"
-        else:
-            match = users_df[users_df["Username"].astype(str).str.strip().str.lower() == u_clean]
-            if not match.empty:
-                st.session_state.logged_user = match.iloc[0]["Username"]
-                st.session_state.user_role = str(match.iloc[0].get("Role", "user"))
-            else:
-                st.session_state.logged_user = "Public_User"
-                st.session_state.user_role = "public"
-    else:
-        # Default session to Public_User so unauthenticated visitors cannot view private tabs (2, 3, 5, 6)
-        st.session_state.logged_user = "Public_User"
-        st.session_state.user_role = "public"
-
-current_user = st.session_state.get("logged_user", "Public_User")
-user_role = st.session_state.get("user_role", "public")
-is_authenticated = (current_user not in ["Public_User", "Guest", None, ""]) and (user_role != "public")
-is_admin = is_authenticated and ((user_role == "admin") or ("purn" in str(current_user).lower()))
-
-# =====================================================================
-# PLATFORM ACCESS GATE (STRICT MEMBER & ADMIN AUTHENTICATION)
-# =====================================================================
-if not is_authenticated:
-    with st.sidebar:
-        st.markdown("### ⚡ AGY Tactical Allocator Pro")
-        st.caption("Institutional High-Conviction Engine")
-        st.markdown("**👤 Access:** `🔒 Private / Login Required`")
-        st.caption("All strategies, screeners, and trading ledgers require authentication.")
-
-    st.markdown(
-        """
-        <div style="text-align: center; padding: 40px 10px 20px 10px;">
-            <h1 style="color: #1e3a8a; font-size: 2.2rem; margin-bottom: 8px;">🔒 AGY Tactical Allocator Pro</h1>
-            <p style="color: #64748b; font-size: 1.1rem; font-weight: 500;">
-                Private Institutional Quantitative Allocation & Multi-Asset Execution Console
-            </p>
-            <hr style="border: 0; height: 1px; background: #e2e8f0; margin: 25px 0;">
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-    c_sp1, c_box, c_sp2 = st.columns([1, 1.8, 1])
-    with c_box:
-        with st.container(border=True):
-            st.markdown("### 🔐 Member & Admin Sign In")
-            st.caption("Enter your authorized platform credentials to proceed.")
-            
-            with st.form("main_gate_login_form"):
-                u_in = st.text_input("Username", key="gate_u_in", placeholder="Enter username").strip()
-                p_in = st.text_input("Password", type="password", key="gate_p_in", placeholder="••••••••")
-                login_btn = st.form_submit_button("🚀 Sign In to Platform", use_container_width=True, type="primary")
-
-                if login_btn:
-                    u_in_clean = str(u_in).strip().lower()
-                    if (u_in_clean in ["purn", "admin", "purn (admin)"]) and (str(p_in) in ["Etaa@1234#", "admin"]):
-                        st.session_state.logged_user = "Purn (Admin)"
-                        st.session_state.user_role = "admin"
-                        st.query_params["u"] = "purn"
-                        st.rerun()
-                    else:
-                        match = users_df[
-                            (users_df["Username"].astype(str).str.strip().str.lower() == u_in_clean) &
-                            (users_df["Password"].astype(str) == str(p_in))
-                        ]
-                        if not match.empty:
-                            st.session_state.logged_user = match.iloc[0]["Username"]
-                            st.session_state.user_role = str(match.iloc[0].get("Role", "user"))
-                            st.query_params["u"] = match.iloc[0]["Username"]
-                            st.rerun()
-                        else:
-                            st.error("❌ Invalid Username or Password. Please verify credentials or contact the administrator.")
-    st.stop()
+current_user = st.session_state.get("logged_user", "Purn (Admin)")
+user_role = st.session_state.get("user_role", "admin")
+is_authenticated = True
+is_admin = True
 
 # =====================================================================
 # AUTHENTICATED DATA INITIALIZATION & CACHED METRIC ENGINE
@@ -1655,13 +1591,14 @@ regime_data = etf_regime
 # SIDEBAR NAVIGATION & DATA REFRESH CONTROLS
 # =====================================================================
 with st.sidebar:
-    st.markdown("### ⚡ AGY Tactical Allocator Pro")
-    st.caption("Institutional High-Conviction Engine")
+    st.markdown("### ⚡ AGY Tactical Allocator Pro (TestBed)")
+    st.caption("Institutional High-Conviction Engine • Open Access")
     
-    st.markdown(f"**👤 Current User:** `{current_user}` ({'👑 Admin' if is_admin else 'Standard Member'})")
-    if st.button("🚪 Sign Out", key="sb_logout_btn", use_container_width=True):
-        st.session_state.logged_user = "Public_User"
-        st.session_state.user_role = "public"
+    st.markdown(f"**👤 Access:** `🟢 Open Access (Public TestBed)`")
+    st.markdown(f"**👑 Role:** `{current_user}` (Full Platform Access)")
+    if st.button("🔄 Reset Session", key="sb_reset_btn", use_container_width=True):
+        st.session_state.logged_user = "Purn (Admin)"
+        st.session_state.user_role = "admin"
         if "u" in st.query_params:
             del st.query_params["u"]
         st.rerun()

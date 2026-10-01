@@ -1552,25 +1552,13 @@ def format_inav_distance_pct(v):
         return str(v)
 
 # =====================================================================
-# USER ACCESS CONTROL (OPEN ACCESS TESTBED - NO LOGIN REQUIRED)
+# OPEN ACCESS TESTBED INITIALIZATION
 # =====================================================================
 if "strategy_toast" not in st.session_state:
     st.session_state.strategy_toast = None
 
-users_df = fetch_users_df()
-
-# Default session to Open Access for all visitors on TestBed
-if "logged_user" not in st.session_state or not st.session_state.logged_user or st.session_state.logged_user == "Public_User":
-    st.session_state.logged_user = "Purn (Admin)"
-    st.session_state.user_role = "admin"
-
-url_user = st.query_params.get("u", None)
-if url_user:
-    st.session_state.logged_user = str(url_user).strip()
-    st.session_state.user_role = "admin"
-
-current_user = st.session_state.get("logged_user", "Purn (Admin)")
-user_role = st.session_state.get("user_role", "admin")
+current_user = "Purn"
+user_role = "admin"
 is_authenticated = True
 is_admin = True
 
@@ -1591,18 +1579,8 @@ regime_data = etf_regime
 # SIDEBAR NAVIGATION & DATA REFRESH CONTROLS
 # =====================================================================
 with st.sidebar:
-    st.markdown("### ⚡ AGY Tactical Allocator Pro (TestBed)")
-    st.caption("Institutional High-Conviction Engine • Open Access")
-    
-    st.markdown(f"**👤 Access:** `🟢 Open Access (Public TestBed)`")
-    st.markdown(f"**👑 Role:** `{current_user}` (Full Platform Access)")
-    if st.button("🔄 Reset Session", key="sb_reset_btn", use_container_width=True):
-        st.session_state.logged_user = "Purn (Admin)"
-        st.session_state.user_role = "admin"
-        if "u" in st.query_params:
-            del st.query_params["u"]
-        st.rerun()
-
+    st.markdown("### ⚡ AGY Tactical Allocator Pro")
+    st.caption("Institutional High-Conviction Quantitative Engine")
     st.markdown("---")
 
     nav_items = [
@@ -1610,11 +1588,8 @@ with st.sidebar:
         "📈 Paper Trading & Multi-Asset Ledger",
         "🧪 Multi-Regime Backtesting & Machine Learning",
         "📘 Platform Strategy Guide & DOCX Export",
-        "👤 Profile & Strategy Settings"
+        "🚀 Quant Ecosystem & Satellite Apps"
     ]
-    if is_admin:
-        nav_items.append("👑 Admin User Manager")
-    nav_items.append("🚀 Quant Ecosystem & Satellite Apps")
 
     active_tab = st.radio(
         "Navigation:",
@@ -3593,144 +3568,7 @@ elif "Platform Strategy Guide" in active_tab:
 
 
 # =====================================================================
-# TAB 5: PROFILE & STRATEGY SETTINGS
-# =====================================================================
-elif "Profile & Strategy Settings" in active_tab:
-    if not is_authenticated:
-        st.warning("🔒 Access Restricted: Profile & Strategy Settings are private. Please sign in from the sidebar to access.")
-        st.stop()
-
-    st.markdown("### 👤 Profile & Account Settings")
-    st.caption("Manage personal account details, execution tranche budgets, and security.")
-    user_match = users_df[users_df["Username"] == current_user]
-    if not user_match.empty:
-        user_row = user_match.iloc[0]
-        with st.form("profile_form"):
-            c_p1, c_p2 = st.columns(2)
-            with c_p1:
-                p_name = st.text_input("Name", value=str(user_row.get("Name", "")))
-                p_email = st.text_input("Email", value=str(user_row.get("Email", "")))
-                p_mobile = st.text_input("Mobile", value=str(user_row.get("Mobile", "")))
-            with c_p2:
-                p_budget = st.number_input("Personal Tranche Budget (₹)", min_value=1000, value=int(user_row.get("Tranche_Budget", 5000)), step=1000)
-                p_preset = st.selectbox("Preferred Strategy Preset", ["Default", "Long-Term", "Swing / Positional", "Intraday", "AI / RAG"], index=0)
-                new_pw = st.text_input("New Password", type="password")
-                confirm_pw = st.text_input("Confirm Password", type="password")
-
-            if st.form_submit_button("💾 Save Profile Changes", type="primary"):
-                if new_pw and new_pw != confirm_pw:
-                    st.error("Passwords do not match.")
-                else:
-                    idx = users_df[users_df["Username"] == current_user].index[0]
-                    users_df.at[idx, "Name"] = str(p_name)
-                    users_df.at[idx, "Email"] = str(p_email)
-                    users_df.at[idx, "Mobile"] = str(p_mobile)
-                    users_df.at[idx, "Tranche_Budget"] = int(p_budget)
-                    users_df.at[idx, "Strategy_Preset"] = str(p_preset)
-                    if new_pw:
-                        users_df.at[idx, "Password"] = str(new_pw)
-                    sync_users_df_to_sheets(users_df)
-                    st.success("Profile updated successfully in Google Sheets!")
-                    st.rerun()
-    else:
-        st.info("Profile settings are available when signed in as an authenticated user.")
-
-
-# =====================================================================
-# TAB 6: ADMIN USER MANAGER (ADMIN ONLY)
-# =====================================================================
-elif "Admin User Manager" in active_tab:
-    if not is_admin:
-        st.error("👑 Administrator privileges required.")
-        st.stop()
-    st.markdown("### 👑 Admin User & Access Management")
-    st.caption("Manage registered users, reset credentials, and audit access permissions in Google Sheets.")
-
-    st.markdown("##### 👥 Registered Users (Google Sheets `Users` Worksheet)")
-    st.dataframe(users_df, column_config=get_pinned_column_config(users_df, 3), use_container_width=True)
-
-    c_adm1, c_adm2 = st.columns(2)
-    with c_adm1:
-        st.markdown("##### ➕ Create New User Account")
-        with st.form("admin_create_user_form"):
-            new_u = st.text_input("Username", key="new_u_in")
-            new_p = st.text_input("Password", value="Etaa@1234#", key="new_p_in")
-            new_n = st.text_input("Full Name", key="new_n_in")
-            new_e = st.text_input("Email", key="new_e_in")
-            new_m = st.text_input("Mobile", key="new_m_in")
-            new_r = st.selectbox("Role", ["user", "admin"], index=0, key="new_r_in")
-            if st.form_submit_button("➕ Register User", type="primary"):
-                if not new_u:
-                    st.error("Username cannot be empty.")
-                elif new_u in users_df["Username"].values:
-                    st.error("User already exists.")
-                else:
-                    new_row = {
-                        "Username": new_u, "Password": new_p, "Name": new_n, "Email": new_e,
-                        "Mobile": new_m, "Role": new_r, "Strategy_Preset": "Default",
-                        "Tranche_Budget": 5000, "Monthly_Cap": 50000
-                    }
-                    updated_u_df = pd.concat([users_df, pd.DataFrame([new_row])], ignore_index=True)
-                    sync_users_df_to_sheets(updated_u_df)
-                    st.success(f"User {new_u} registered successfully!")
-                    st.rerun()
-
-    with c_adm2:
-        st.markdown("##### 🔑 Reset User Password")
-        with st.form("admin_pw_reset_form"):
-            target_u = st.selectbox("Select User:", users_df["Username"].dropna().unique(), key="admin_sel_u_reset")
-            admin_set_pw = st.text_input("New Password", value="Etaa@1234#", key="admin_set_pw_in")
-            if st.form_submit_button("🔑 Update Password", type="primary"):
-                t_idx = users_df[users_df["Username"] == target_u].index[0]
-                users_df.at[t_idx, "Password"] = str(admin_set_pw)
-                sync_users_df_to_sheets(users_df)
-                st.success(f"Password reset for {target_u} in Google Sheets!")
-                st.rerun()
-
-    st.markdown("---")
-    st.markdown("#### 🛠️ Google Sheets Worksheets & Schema Management")
-    st.caption("Manage Google Sheets worksheets (`Users`, `Paper_Trades`, `Execution_Audit_Log`), synchronize columns, or wipe old data to build a clean-slate schema.")
-
-    c_gs1, c_gs2 = st.columns(2)
-    with c_gs1:
-        st.markdown("##### 🔄 Ensure / Repair Schema (Safe)")
-        st.caption("Checks that all 3 worksheets exist in Google Sheets and appends any missing quantitative columns (`Trade_Action`, `Buy Ticker`, `Sell Ticker`, etc.) without deleting existing trades or accounts.")
-        if st.button("🛠️ Check & Repair Worksheets / Schema", type="secondary", use_container_width=True, key="btn_repair_gsheets"):
-            with st.spinner("Connecting to Google Sheets and repairing schema..."):
-                ok, msg = setup_or_repair_gsheets_schema(wipe_existing_data=False)
-                if ok:
-                    st.success(f"✅ Schema Ready: {msg}")
-                    st.cache_data.clear()
-                    st.rerun()
-                else:
-                    st.error(f"❌ Error: {msg}")
-
-    with c_gs2:
-        st.markdown("##### 🚨 Clean-Slate Reset (Wipe & Recreate)")
-        st.caption("Deletes current rows in Google Sheets, recreates tabs with clean 2026-compliant column headers, and seeds the default Admin account.")
-        with st.popover("⚠️ Wipe Data & Reset Tabs", use_container_width=True):
-            st.error("⚠️ **DANGER ZONE: Irreversible Data Deletion**")
-            st.markdown(
-                "This action will:\n"
-                "1. **Clear** all trade records in `Paper_Trades` worksheet.\n"
-                "2. **Clear** all logs in `Execution_Audit_Log` worksheet.\n"
-                "3. **Reset** `Users` worksheet to seed account `Purn (Admin)`.\n"
-                "4. **Rebuild** the exact new column headers for all 3 tabs.\n"
-                "5. **Clear** local cache files in `data/`."
-            )
-            confirm_wipe = st.checkbox("Yes, delete current data and rebuild clean worksheets & columns", key="chk_wipe_confirm")
-            if st.button("🚨 Wipe Data & Rebuild Clean Schema Now", type="primary", disabled=not confirm_wipe, use_container_width=True, key="btn_wipe_confirm_run"):
-                with st.spinner("Wiping data and rebuilding Google Sheets tabs..."):
-                    ok, msg = setup_or_repair_gsheets_schema(wipe_existing_data=True)
-                    if ok:
-                        st.success(f"✅ Clean Slate Reset Complete: {msg}")
-                        st.cache_data.clear()
-                        st.rerun()
-                    else:
-                        st.error(f"❌ Reset Failed: {msg}")
-
-# =====================================================================
-# TAB 7: QUANT ECOSYSTEM & SATELLITE APPS FLEET MANAGER
+# TAB 5: QUANT ECOSYSTEM & SATELLITE APPS FLEET MANAGER
 # =====================================================================
 elif "Quant Ecosystem & Satellite Apps" in active_tab:
-    render_fleet_manager_tab(is_admin=is_admin)
+    render_fleet_manager_tab(is_admin=True)

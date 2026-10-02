@@ -55,7 +55,10 @@ from strategy_engine import (
     validate_trade_execution,
     evaluate_trade_exits,
     extract_ticker_df,
-    get_active_runtime_config
+    get_active_runtime_config,
+    compute_volatility_stop_and_targets,
+    get_stopped_out_tickers_in_cooldown,
+    check_conviction_gate
 )
 from universe_manager import get_active_universe, ALL_PRECIOUS_METALS_CONFIG
 from sr_engine import compute_sr_matrix
@@ -98,8 +101,45 @@ DEFAULT_CONFIG_HEADERS = [
 # PERSISTENCE: DUAL STORAGE (GOOGLE SHEETS + LOCAL CSV)
 # =====================================================================
 def get_direct_gspread_client():
-    # TESTBED MODE: Google Sheets integration is disabled to guarantee zero secrets and 100% offline local CSV operation
-    return None
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+        
+        sa_key_str = os.getenv("GCP_SA_KEY", "").strip()
+        gsheet_url = os.getenv("GSHEET_URL", "https://docs.google.com/spreadsheets/d/1yIqSHWeKWv0w5WUfj2wwHq0E8sG5DoXhLrtW9Q9b10g/edit?usp=sharing").strip()
+        
+        if not sa_key_str:
+            try:
+                import streamlit as st
+                if "GCP_SA_KEY" in st.secrets:
+                    sa_key_str = json.dumps(dict(st.secrets["GCP_SA_KEY"]))
+                elif "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
+                    conn_secrets = st.secrets["connections"]["gsheets"]
+                    if "service_account" in conn_secrets:
+                        sa_key_str = json.dumps(dict(conn_secrets["service_account"]))
+                    elif "private_key" in conn_secrets:
+                        sa_key_str = json.dumps(dict(conn_secrets))
+                if not gsheet_url and "GSHEET_URL" in st.secrets:
+                    gsheet_url = str(st.secrets["GSHEET_URL"]).strip()
+                elif not gsheet_url and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
+                    gsheet_url = str(st.secrets["connections"]["gsheets"].get("spreadsheet", "")).strip()
+            except Exception:
+                pass
+                
+        if not sa_key_str:
+            return None
+            
+        sa_dict = json.loads(sa_key_str)
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        credentials = Credentials.from_service_account_info(sa_dict, scopes=scopes)
+        client = gspread.authorize(credentials)
+        return client.open_by_url(gsheet_url)
+    except Exception as e:
+        logger.warning(f"Direct gspread authorization failed: {e}")
+        return None
 
 def _safe_update_worksheet(worksheet, values, range_name):
     try:
@@ -129,27 +169,15 @@ def setup_or_repair_gsheets_schema(wipe_existing_data=False):
     status_report = []
     
     if not spreadsheet:
-        os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
-        users_local = os.path.join(LOCAL_DATA_DIR, "users_auth.csv")
         if wipe_existing_data:
             pd.DataFrame([{
                 "Username": "Purn (Admin)", "Password": "Etaa@1234#", "Name": "Purn", "Email": "admin@gmail.com",
                 "Mobile": "9999999999", "Role": "admin", "Strategy_Preset": "Default", "Tranche_Budget": 5000, "Monthly_Cap": 50000
-            }]).to_csv(users_local, index=False)
+            }]).to_csv(os.path.join(LOCAL_DATA_DIR, "users_auth.csv"), index=False)
             pd.DataFrame(columns=DEFAULT_PAPER_HEADERS).to_csv(LOCAL_TRADES_CSV, index=False)
             pd.DataFrame(columns=DEFAULT_AUDIT_HEADERS).to_csv(LOCAL_AUDIT_CSV, index=False)
-            return True, "Testbed zero-secrets mode: Cleaned and recreated local CSV schema files."
-        else:
-            if not os.path.exists(users_local):
-                pd.DataFrame([{
-                    "Username": "Purn (Admin)", "Password": "Etaa@1234#", "Name": "Purn", "Email": "admin@gmail.com",
-                    "Mobile": "9999999999", "Role": "admin", "Strategy_Preset": "Default", "Tranche_Budget": 5000, "Monthly_Cap": 50000
-                }]).to_csv(users_local, index=False)
-            if not os.path.exists(LOCAL_TRADES_CSV):
-                pd.DataFrame(columns=DEFAULT_PAPER_HEADERS).to_csv(LOCAL_TRADES_CSV, index=False)
-            if not os.path.exists(LOCAL_AUDIT_CSV):
-                pd.DataFrame(columns=DEFAULT_AUDIT_HEADERS).to_csv(LOCAL_AUDIT_CSV, index=False)
-            return True, "Testbed zero-secrets mode: Verified local CSV schema files."
+            return True, "Google Sheets connection not active. Initialized local CSV files with clean schema."
+        return False, "Could not authorize Google Sheets credentials. Verify GCP_SA_KEY or secrets.toml."
         
     try:
         existing_sheets = {ws.title: ws for ws in spreadsheet.worksheets()}
@@ -949,10 +977,27 @@ def run_scheduled_daemon_tasks(cli_mode=None):
         created_records = []
         exec_summary_msgs = []
         try:
-            # 1. Active symbols set and lookup
+            # 1. Load Active Runtime Configuration & Safeguards
+            runtime_cfg = get_active_runtime_config()
+            conviction_cfg = runtime_cfg.get("conviction_gate", {})
+            cooldown_cfg = runtime_cfg.get("cooldown_gate", {})
+            vol_stops_cfg = runtime_cfg.get("volatility_stops", {})
+            multi_tier_cfg = runtime_cfg.get("multi_tier_targets", {})
+            apex_cfg = runtime_cfg.get("apex_category", {})
+
+            # 2. Extract Post-Stop Cooldown Tickers (Lockout for N trading days)
+            cooldown_days = int(cooldown_cfg.get("cooldown_trading_days", 5))
+            cooldown_tickers = get_stopped_out_tickers_in_cooldown(trades_df, cooldown_days=cooldown_days) if cooldown_cfg.get("enabled", True) else set()
+            if cooldown_tickers:
+                logger.info(f"[COOLDOWN-GATE] Active post-stop lockout ({cooldown_days} trading days) for tickers: {sorted(list(cooldown_tickers))}")
+
+            # 3. Active symbols lookup
             active_syms = set(trades_df[trades_df["Status"].fillna("ACTIVE").astype(str).str.strip().str.upper() == "ACTIVE"]["Ticker"].astype(str).str.replace(".NS", "")) if (not trades_df.empty and "Status" in trades_df.columns) else set()
             
-            # 2. Selected Presets for 3 PM Accumulation (Excluding Intraday, aligned with Central Execution Hub)
+            # 4. Multi-Preset Deduping Pool for Category 6 (Apex Multi-Factor)
+            apex_candidate_pool = []
+
+            # 5. Selected Presets for 3 PM Accumulation (Excluding Intraday, aligned with Central Execution Hub)
             selected_presets = ["Default", "Long-Term", "Swing / Positional", "AI / RAG"]
             
             # Loop through the 4 non-intraday presets for Category 1 (ETFs) & Category 2 (Equities)
@@ -971,6 +1016,25 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                     cmp_v = float(r.get("CMP (₹)", 0.0) or 0.0)
                     if not sym or sym in active_syms or cmp_v <= 0:
                         continue
+
+                    # Cooldown Check
+                    if sym in cooldown_tickers:
+                        logger.info(f"[GATE-BYPASS] Skipping ETF BUY {sym} ({p_name}): Ticker in {cooldown_days}-day post-stop cooldown.")
+                        continue
+
+                    # Minimum Conviction Gate Check
+                    gate_ok, gate_msg = check_conviction_gate(r, is_buy=True, config=runtime_cfg)
+                    if not gate_ok:
+                        logger.info(f"[GATE-REJECT] Skipping ETF BUY {sym} ({p_name}): {gate_msg}")
+                        continue
+
+                    # Dynamic Volatility-Adjusted Stops & Multi-Tier Targets
+                    atr_v = float(r.get("14D ATR (₹)", cmp_v * 0.025))
+                    sl_mult = float(vol_stops_cfg.get("atr_sl_multiplier", 2.0))
+                    tgt1_mult = float(vol_stops_cfg.get("atr_tgt1_multiplier", 1.5))
+                    tgt2_mult = float(vol_stops_cfg.get("atr_tgt2_multiplier", 3.0))
+                    sl_val, tgt1_val, tgt2_val = compute_volatility_stop_and_targets(cmp_v, atr_v, is_buy=True, sl_mult=sl_mult, tgt1_mult=tgt1_mult, tgt2_mult=tgt2_mult)
+
                     q = max(1, int(TRANCHE_BUDGET // cmp_v))
                     trade_id = f"V2_ETF_{int(now_ist.timestamp())}_{sym}_{p_name[:3].upper()}"
                     rec = {
@@ -983,7 +1047,7 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                         "Trigger_Indicator": f"{p_name} Preset Buy (RSI: {r.get('RSI (14D)', 50):.1f}, 200DMA: {r.get('Dist 200DMA %', 0):+.1f}%)",
                         "Strategy_Preset": p_name, "Status": "ACTIVE",
                         "Entry_Price": cmp_v, "Live_CMP": cmp_v, "Executed_Qty": q,
-                        "Stop_Loss": float(r.get("Stop_Loss", cmp_v * 0.97)), "Target": float(r.get("Target", cmp_v * 1.04)),
+                        "Stop_Loss": sl_val, "Target": tgt2_val, "Target_Tier1": tgt1_val,
                         "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
                         "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
                         "Invested_Value": round(cmp_v * q, 2),
@@ -999,15 +1063,31 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                     signals_for_alert.append({'ticker': sym, 'cmp': cmp_v, 'action': 'BUY', 'source': f'ETF ({p_name})'})
                     exec_summary_msgs.append(f"🟢 BUY ETF ({p_name}): {sym}")
 
-                # SELL Orders (Square-off if active in trades_df, else record SELL entry)
+                    # Pool candidate for Category 6 deduplication
+                    apex_candidate_pool.append({
+                        "ticker": sym, "cmp": cmp_v, "atr": atr_v, "row": r,
+                        "direction": "BUY", "asset_class": "ETF", "preset_origin": p_name,
+                        "score": float(r.get("Composite Score", r.get("Composite Buy Score", 50.0))),
+                        "criteria": str(r.get("Criteria_Met", f"{p_name} Quant Model"))
+                    })
+
+                # SELL Orders (Square-off if active in trades_df, else record SELL prediction entry across sessions)
                 for _, r in etf_s.iterrows():
                     sym = str(r.get("Ticker", "")).replace(".NS", "").strip()
                     cmp_v = float(r.get("CMP (₹)", 0.0) or 0.0)
                     if not sym or cmp_v <= 0:
                         continue
-                    active_mask = (trades_df["Ticker"].astype(str).str.replace(".NS", "") == sym) & (trades_df["Status"] == "ACTIVE")
-                    if active_mask.any():
-                        row_idx = trades_df[active_mask].index[0]
+
+                    # Conviction gate check for sell urgency
+                    gate_ok, gate_msg = check_conviction_gate(r, is_buy=False, config=runtime_cfg)
+                    if not gate_ok:
+                        logger.info(f"[GATE-REJECT] Skipping ETF SELL {sym} ({p_name}): {gate_msg}")
+                        continue
+
+                    # Check if an active BUY position is currently held in ledger to square off
+                    active_buy_mask = (trades_df["Ticker"].astype(str).str.replace(".NS", "") == sym) & (trades_df["Status"] == "ACTIVE") & (trades_df["Trade_Action"].astype(str).str.contains("BUY", case=False))
+                    if active_buy_mask.any():
+                        row_idx = trades_df[active_buy_mask].index[0]
                         entry_p = float(trades_df.at[row_idx, "Entry_Price"])
                         eqty = int(trades_df.at[row_idx, "Executed_Qty"])
                         pnl_val = round((cmp_v - entry_p) * eqty, 2)
@@ -1024,6 +1104,15 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                         signals_for_alert.append({'ticker': sym, 'cmp': cmp_v, 'action': 'SQUARE-OFF', 'source': f'ETF ({p_name})'})
                         exec_summary_msgs.append(f"🔴 SQUARE-OFF ETF ({p_name}): {sym} (PnL: ₹{pnl_val:+,.2f})")
                     else:
+                        # Asset NOT currently held: Record simulated short prediction trade to benchmark prediction accuracy!
+                        if sym in active_syms:
+                            continue
+                        atr_v = float(r.get("14D ATR (₹)", cmp_v * 0.025))
+                        sl_mult = float(vol_stops_cfg.get("atr_sl_multiplier", 2.0))
+                        tgt1_mult = float(vol_stops_cfg.get("atr_tgt1_multiplier", 1.5))
+                        tgt2_mult = float(vol_stops_cfg.get("atr_tgt2_multiplier", 3.0))
+                        sl_val, tgt1_val, tgt2_val = compute_volatility_stop_and_targets(cmp_v, atr_v, is_buy=False, sl_mult=sl_mult, tgt1_mult=tgt1_mult, tgt2_mult=tgt2_mult)
+
                         q = max(1, int(TRANCHE_BUDGET // cmp_v))
                         trade_id = f"V2_ETF_EXIT_{int(now_ist.timestamp())}_{sym}_{p_name[:3].upper()}"
                         rec = {
@@ -1036,8 +1125,7 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                             "Trigger_Indicator": f"{p_name} Exit Alert (RSI: {r.get('RSI (14D)', 50):.1f}, Urgency: {r.get('Composite Score', 50):.1f})",
                             "Strategy_Preset": p_name, "Status": "ACTIVE",
                             "Entry_Price": cmp_v, "Live_CMP": cmp_v, "Executed_Qty": q,
-                            "Stop_Loss": float(r.get("Stop_Loss", round(cmp_v * 1.04, 2))),
-                            "Target": float(r.get("Target", round(cmp_v * 0.95, 2))),
+                            "Stop_Loss": sl_val, "Target": tgt2_val, "Target_Tier1": tgt1_val,
                             "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
                             "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
                             "Invested_Value": round(cmp_v * q, 2),
@@ -1051,7 +1139,14 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                         created_records.append(rec)
                         active_syms.add(sym)
                         signals_for_alert.append({'ticker': sym, 'cmp': cmp_v, 'action': 'SELL', 'source': f'ETF ({p_name})'})
-                        exec_summary_msgs.append(f"🔴 SELL Entry ETF ({p_name}): {sym}")
+                        exec_summary_msgs.append(f"🔴 SELL Prediction ETF ({p_name}): {sym}")
+
+                        apex_candidate_pool.append({
+                            "ticker": sym, "cmp": cmp_v, "atr": atr_v, "row": r,
+                            "direction": "SELL", "asset_class": "ETF", "preset_origin": p_name,
+                            "score": float(r.get("Composite Score", 50.0)),
+                            "criteria": str(r.get("Criteria_Met", f"{p_name} Overbought Exit"))
+                        })
 
                 # -------------------------------------------------------------
                 # Category 2: Quality Equities
@@ -1067,6 +1162,25 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                     cmp_v = float(r.get("CMP (₹)", 0.0) or 0.0)
                     if not sym or sym in active_syms or cmp_v <= 0:
                         continue
+
+                    # Cooldown Check
+                    if sym in cooldown_tickers:
+                        logger.info(f"[GATE-BYPASS] Skipping Stock BUY {sym} ({p_name}): Ticker in {cooldown_days}-day post-stop cooldown.")
+                        continue
+
+                    # Minimum Conviction Gate Check
+                    gate_ok, gate_msg = check_conviction_gate(r, is_buy=True, config=runtime_cfg)
+                    if not gate_ok:
+                        logger.info(f"[GATE-REJECT] Skipping Stock BUY {sym} ({p_name}): {gate_msg}")
+                        continue
+
+                    # Dynamic Volatility-Adjusted Stops & Multi-Tier Targets
+                    atr_v = float(r.get("14D ATR (₹)", cmp_v * 0.025))
+                    sl_mult = float(vol_stops_cfg.get("atr_sl_multiplier", 2.0))
+                    tgt1_mult = float(vol_stops_cfg.get("atr_tgt1_multiplier", 1.5))
+                    tgt2_mult = float(vol_stops_cfg.get("atr_tgt2_multiplier", 3.0))
+                    sl_val, tgt1_val, tgt2_val = compute_volatility_stop_and_targets(cmp_v, atr_v, is_buy=True, sl_mult=sl_mult, tgt1_mult=tgt1_mult, tgt2_mult=tgt2_mult)
+
                     q = max(1, int(TRANCHE_BUDGET // cmp_v))
                     trade_id = f"V2_STK_{int(now_ist.timestamp())}_{sym}_{p_name[:3].upper()}"
                     rec = {
@@ -1079,7 +1193,7 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                         "Trigger_Indicator": f"{p_name} Preset Buy (RSI: {r.get('RSI (14D)', 50):.1f}, 200DMA: {r.get('Dist 200DMA %', 0):+.1f}%)",
                         "Strategy_Preset": p_name, "Status": "ACTIVE",
                         "Entry_Price": cmp_v, "Live_CMP": cmp_v, "Executed_Qty": q,
-                        "Stop_Loss": float(r.get("Stop_Loss", cmp_v * 0.95)), "Target": float(r.get("Target", cmp_v * 1.06)),
+                        "Stop_Loss": sl_val, "Target": tgt2_val, "Target_Tier1": tgt1_val,
                         "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
                         "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
                         "Invested_Value": round(cmp_v * q, 2),
@@ -1095,15 +1209,31 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                     signals_for_alert.append({'ticker': sym, 'cmp': cmp_v, 'action': 'BUY', 'source': f'Stock ({p_name})'})
                     exec_summary_msgs.append(f"🟢 BUY Stock ({p_name}): {sym}")
 
+                    # Pool candidate for Category 6 deduplication
+                    apex_candidate_pool.append({
+                        "ticker": sym, "cmp": cmp_v, "atr": atr_v, "row": r,
+                        "direction": "BUY", "asset_class": "Stock", "preset_origin": p_name,
+                        "score": float(r.get("Composite Score", r.get("Composite Buy Score", 50.0))),
+                        "criteria": str(r.get("Criteria_Met", f"{p_name} Quant Model"))
+                    })
+
                 # SELL Orders
                 for _, r in stk_s.iterrows():
                     sym = str(r.get("Ticker", "")).replace(".NS", "").strip()
                     cmp_v = float(r.get("CMP (₹)", 0.0) or 0.0)
                     if not sym or cmp_v <= 0:
                         continue
-                    active_mask = (trades_df["Ticker"].astype(str).str.replace(".NS", "") == sym) & (trades_df["Status"] == "ACTIVE")
-                    if active_mask.any():
-                        row_idx = trades_df[active_mask].index[0]
+
+                    # Conviction gate check for sell urgency
+                    gate_ok, gate_msg = check_conviction_gate(r, is_buy=False, config=runtime_cfg)
+                    if not gate_ok:
+                        logger.info(f"[GATE-REJECT] Skipping Stock SELL {sym} ({p_name}): {gate_msg}")
+                        continue
+
+                    # Check if an active BUY position is currently held in ledger to square off
+                    active_buy_mask = (trades_df["Ticker"].astype(str).str.replace(".NS", "") == sym) & (trades_df["Status"] == "ACTIVE") & (trades_df["Trade_Action"].astype(str).str.contains("BUY", case=False))
+                    if active_buy_mask.any():
+                        row_idx = trades_df[active_buy_mask].index[0]
                         entry_p = float(trades_df.at[row_idx, "Entry_Price"])
                         eqty = int(trades_df.at[row_idx, "Executed_Qty"])
                         pnl_val = round((cmp_v - entry_p) * eqty, 2)
@@ -1120,6 +1250,15 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                         signals_for_alert.append({'ticker': sym, 'cmp': cmp_v, 'action': 'SQUARE-OFF', 'source': f'Stock ({p_name})'})
                         exec_summary_msgs.append(f"🔴 SQUARE-OFF Stock ({p_name}): {sym} (PnL: ₹{pnl_val:+,.2f})")
                     else:
+                        # Asset NOT currently held: Record simulated short prediction trade to benchmark prediction accuracy!
+                        if sym in active_syms:
+                            continue
+                        atr_v = float(r.get("14D ATR (₹)", cmp_v * 0.025))
+                        sl_mult = float(vol_stops_cfg.get("atr_sl_multiplier", 2.0))
+                        tgt1_mult = float(vol_stops_cfg.get("atr_tgt1_multiplier", 1.5))
+                        tgt2_mult = float(vol_stops_cfg.get("atr_tgt2_multiplier", 3.0))
+                        sl_val, tgt1_val, tgt2_val = compute_volatility_stop_and_targets(cmp_v, atr_v, is_buy=False, sl_mult=sl_mult, tgt1_mult=tgt1_mult, tgt2_mult=tgt2_mult)
+
                         q = max(1, int(TRANCHE_BUDGET // cmp_v))
                         trade_id = f"V2_STK_EXIT_{int(now_ist.timestamp())}_{sym}_{p_name[:3].upper()}"
                         rec = {
@@ -1132,8 +1271,7 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                             "Trigger_Indicator": f"{p_name} Exit Alert (RSI: {r.get('RSI (14D)', 50):.1f}, Urgency: {r.get('Composite Score', 50):.1f})",
                             "Strategy_Preset": p_name, "Status": "ACTIVE",
                             "Entry_Price": cmp_v, "Live_CMP": cmp_v, "Executed_Qty": q,
-                            "Stop_Loss": float(r.get("Stop_Loss", round(cmp_v * 1.05, 2))),
-                            "Target": float(r.get("Target", round(cmp_v * 0.94, 2))),
+                            "Stop_Loss": sl_val, "Target": tgt2_val, "Target_Tier1": tgt1_val,
                             "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
                             "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
                             "Invested_Value": round(cmp_v * q, 2),
@@ -1147,7 +1285,14 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                         created_records.append(rec)
                         active_syms.add(sym)
                         signals_for_alert.append({'ticker': sym, 'cmp': cmp_v, 'action': 'SELL', 'source': f'Stock ({p_name})'})
-                        exec_summary_msgs.append(f"🔴 SELL Entry Stock ({p_name}): {sym}")
+                        exec_summary_msgs.append(f"🔴 SELL Prediction Stock ({p_name}): {sym}")
+
+                        apex_candidate_pool.append({
+                            "ticker": sym, "cmp": cmp_v, "atr": atr_v, "row": r,
+                            "direction": "SELL", "asset_class": "Stock", "preset_origin": p_name,
+                            "score": float(r.get("Composite Score", 50.0)),
+                            "criteria": str(r.get("Criteria_Met", f"{p_name} Overbought Exit"))
+                        })
 
             # -------------------------------------------------------------
             # Category 3: S/R Mean-Reversion Tranche
@@ -1164,6 +1309,16 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                         cmp_v = float(sr_it["CMP (₹)"])
                         if not sym or sym in active_syms or cmp_v <= 0:
                             continue
+                        if sym in cooldown_tickers:
+                            logger.info(f"[GATE-BYPASS] Skipping S/R BUY {sym}: In post-stop cooldown.")
+                            continue
+
+                        atr_v = float(sr_it.get("14D ATR (₹)", cmp_v * 0.025))
+                        sl_mult = float(vol_stops_cfg.get("atr_sl_multiplier", 2.0))
+                        tgt1_mult = float(vol_stops_cfg.get("atr_tgt1_multiplier", 1.5))
+                        tgt2_mult = float(vol_stops_cfg.get("atr_tgt2_multiplier", 3.0))
+                        sl_val, tgt1_val, tgt2_val = compute_volatility_stop_and_targets(cmp_v, atr_v, is_buy=True, sl_mult=sl_mult, tgt1_mult=tgt1_mult, tgt2_mult=tgt2_mult)
+
                         q = max(1, int(TRANCHE_BUDGET // cmp_v))
                         s1_v = float(sr_it.get("Major Support S1 (₹)", cmp_v * 0.97))
                         dist_s1 = ((cmp_v - s1_v) / s1_v * 100) if s1_v > 0 else 0.0
@@ -1176,8 +1331,7 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                             "Trigger_Indicator": f"S1 Support Bounce ({sr_it.get('5Y S/R Win Rate (%)', 50)}% 5Y Win)",
                             "Strategy_Preset": "S/R Range Mean Reversion", "Status": "ACTIVE",
                             "Entry_Price": cmp_v, "Live_CMP": cmp_v, "Executed_Qty": q,
-                            "Stop_Loss": float(sr_it.get("Suggested SL (₹)", cmp_v * 0.95)),
-                            "Target": float(sr_it.get("Suggested Target (₹)", cmp_v * 1.05)),
+                            "Stop_Loss": sl_val, "Target": tgt2_val, "Target_Tier1": tgt1_val,
                             "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
                             "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
                             "Invested_Value": round(cmp_v * q, 2),
@@ -1194,15 +1348,22 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                         signals_for_alert.append({'ticker': sym, 'cmp': cmp_v, 'action': 'BUY', 'source': 'S/R Support'})
                         exec_summary_msgs.append(f"🟢 BUY S/R Support: {sym}")
 
+                        apex_candidate_pool.append({
+                            "ticker": sym, "cmp": cmp_v, "atr": atr_v, "row": sr_it,
+                            "direction": "BUY", "asset_class": sr_it.get("Category", "Stock"),
+                            "preset_origin": "S/R Support", "score": float(sr_it.get("5Y S/R Win Rate (%)", 60.0)),
+                            "criteria": f"S1 Support Bounce (+{dist_s1:.1f}% to S1)"
+                        })
+
                     sr_exits = sr_all[sr_all["Range Position (%)"] >= 80.0].sort_values(by="Range Position (%)", ascending=False).head(1)
                     for _, srx in sr_exits.iterrows():
                         sym = str(srx["Ticker"]).replace(".NS", "").strip()
                         cmp_v = float(srx["CMP (₹)"])
                         if not sym or cmp_v <= 0:
                             continue
-                        active_mask = (trades_df["Ticker"].astype(str).str.replace(".NS", "") == sym) & (trades_df["Status"] == "ACTIVE")
-                        if active_mask.any():
-                            row_idx = trades_df[active_mask].index[0]
+                        active_buy_mask = (trades_df["Ticker"].astype(str).str.replace(".NS", "") == sym) & (trades_df["Status"] == "ACTIVE") & (trades_df["Trade_Action"].astype(str).str.contains("BUY", case=False))
+                        if active_buy_mask.any():
+                            row_idx = trades_df[active_buy_mask].index[0]
                             entry_p = float(trades_df.at[row_idx, "Entry_Price"])
                             eqty = int(trades_df.at[row_idx, "Executed_Qty"])
                             pnl_val = round((cmp_v - entry_p) * eqty, 2)
@@ -1230,13 +1391,14 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                     for _, r_row in reit_scan_df.iterrows():
                         r_item = r_row.to_dict()
                         r_sym = str(r_item.get("Ticker", "")).replace(".NS", "").strip()
-                        if not r_sym or r_sym in active_syms:
+                        if not r_sym or r_sym in active_syms or r_sym in cooldown_tickers:
                             continue
                         r_el = check_reit_investment_eligibility(r_item)
                         if r_el.get("eligible", False):
                             r_cmp = float(r_item.get("CMP (₹)", 300.0) or 300.0)
                             if r_cmp > 0:
                                 r_qty = max(1, int(TRANCHE_BUDGET // r_cmp))
+                                sl_val, tgt1_val, tgt2_val = compute_volatility_stop_and_targets(r_cmp, r_cmp * 0.02, is_buy=True)
                                 rec = {
                                     "Trade_ID": f"V2_REIT_{int(now_ist.timestamp())}_{r_sym}",
                                     "Username": "Daemon_Cron", "Ticker": r_sym,
@@ -1246,8 +1408,7 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                                     "Trigger_Indicator": f"Lucrative Yield {r_item.get('Distribution Yield (%)', 7.5):.1f}% (NAV Disc: {r_item.get('NAV Discount / Premium (%)', 0.0):+.1f}%)",
                                     "Near_Support_Status": "S1 Yield Floor (Lucrative)", "Status": "ACTIVE",
                                     "Entry_Price": r_cmp, "Live_CMP": r_cmp, "Executed_Qty": r_qty,
-                                    "Stop_Loss": float(r_item.get("Immediate Support S1 (₹)", r_cmp * 0.95)),
-                                    "Target": float(r_item.get("Immediate Resistance R1 (₹)", r_cmp * 1.08)),
+                                    "Stop_Loss": sl_val, "Target": tgt2_val, "Target_Tier1": tgt1_val,
                                     "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
                                     "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
                                     "Invested_Value": round(r_cmp * r_qty, 2),
@@ -1262,6 +1423,13 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                                 active_syms.add(r_sym)
                                 signals_for_alert.append({'ticker': r_sym, 'cmp': r_cmp, 'action': 'BUY', 'source': 'REIT (Lucrative)'})
                                 exec_summary_msgs.append(f"🟢 BUY REIT (Lucrative): {r_sym}")
+
+                                apex_candidate_pool.append({
+                                    "ticker": r_sym, "cmp": r_cmp, "atr": r_cmp * 0.02, "row": r_item,
+                                    "direction": "BUY", "asset_class": "REIT", "preset_origin": "High-Yield REIT",
+                                    "score": float(r_item.get("Composite Score (0-100)", 75.0)),
+                                    "criteria": f"Yield {r_item.get('Distribution Yield (%)', 7.5):.1f}%"
+                                })
                                 break
             except Exception as reit_err:
                 logger.warning(f"REIT 3 PM execution error: {reit_err}")
@@ -1278,8 +1446,9 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                         m_sym = str(best_m.get("Ticker", "")).replace(".NS", "").strip()
                         m_cmp = float(best_m.get("CMP (₹)", 0.0) or 0.0)
                         m_el = check_metal_investment_eligibility(best_m)
-                        if m_el.get("eligible", False) and m_sym not in active_syms and m_cmp > 0:
+                        if m_el.get("eligible", False) and m_sym not in active_syms and m_sym not in cooldown_tickers and m_cmp > 0:
                             m_qty = max(1, int(TRANCHE_BUDGET // m_cmp))
+                            sl_val, tgt1_val, tgt2_val = compute_volatility_stop_and_targets(m_cmp, m_cmp * 0.02, is_buy=True)
                             rec = {
                                 "Trade_ID": f"V2_MET_{int(now_ist.timestamp())}_{m_sym}",
                                 "Username": "Daemon_Cron", "Ticker": m_sym,
@@ -1289,7 +1458,7 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                                 "Trigger_Indicator": f"Lucrative Dip (AMC: {best_m.get('AMC')}, RSI: {best_m.get('RSI (14D)', 50):.1f})",
                                 "Strategy_Preset": "Commodity Defensive Hedge", "Status": "ACTIVE",
                                 "Entry_Price": m_cmp, "Live_CMP": m_cmp, "Executed_Qty": m_qty,
-                                "Stop_Loss": round(m_cmp * 0.96, 2), "Target": round(m_cmp * 1.06, 2),
+                                "Stop_Loss": sl_val, "Target": tgt2_val, "Target_Tier1": tgt1_val,
                                 "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
                                 "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
                                 "Invested_Value": round(m_cmp * m_qty, 2),
@@ -1303,8 +1472,94 @@ def run_scheduled_daemon_tasks(cli_mode=None):
                             active_syms.add(m_sym)
                             signals_for_alert.append({'ticker': m_sym, 'cmp': m_cmp, 'action': 'BUY', 'source': f'Metal ({best_m.get("AMC")} {m_metal_type})'})
                             exec_summary_msgs.append(f"🟢 BUY Metal ({best_m.get('AMC')} {m_metal_type}): {m_sym}")
+
+                            apex_candidate_pool.append({
+                                "ticker": m_sym, "cmp": m_cmp, "atr": m_cmp * 0.02, "row": best_m,
+                                "direction": "BUY", "asset_class": "Commodity", "preset_origin": f"Metal-{m_metal_type}",
+                                "score": 60.0, "criteria": f"Lucrative Dip AMC: {best_m.get('AMC')}"
+                            })
             except Exception as met_err:
                 logger.warning(f"Metals 3 PM execution error: {met_err}")
+
+            # -------------------------------------------------------------
+            # Category 6: Apex Multi-Factor (Best of Presets - Deduplicated)
+            # -------------------------------------------------------------
+            try:
+                if apex_cfg.get("enabled", True) and apex_candidate_pool:
+                    # Group candidates by ticker to deduplicate multi-preset clones
+                    ticker_groups = {}
+                    for cand in apex_candidate_pool:
+                        t = cand["ticker"]
+                        if t not in ticker_groups:
+                            ticker_groups[t] = []
+                        ticker_groups[t].append(cand)
+
+                    deduped_candidates = []
+                    for t, cand_list in ticker_groups.items():
+                        # Discard if already active or in post-stop cooldown
+                        if t in active_syms or t in cooldown_tickers:
+                            continue
+                        # Select the single best representation across presets (highest conviction score)
+                        best_cand = max(cand_list, key=lambda c: c["score"])
+                        confluence_presets = list(set([c["preset_origin"] for c in cand_list]))
+                        best_cand["confluence_count"] = len(confluence_presets)
+                        best_cand["confluence_presets"] = confluence_presets
+                        deduped_candidates.append(best_cand)
+
+                    # Prioritize by confluence count (models agreement) then conviction score
+                    deduped_candidates.sort(key=lambda c: (c["confluence_count"], c["score"]), reverse=True)
+
+                    # MAXIMUM DAILY CAP: Apply strictly and ONLY to Category 6
+                    apex_daily_cap = int(apex_cfg.get("max_daily_trades", 2))
+                    top_apex_picks = deduped_candidates[:apex_daily_cap]
+
+                    for acand in top_apex_picks:
+                        asym = acand["ticker"]
+                        acmp = acand["cmp"]
+                        aatr = acand["atr"]
+                        arow = acand["row"]
+                        adir = acand["direction"]
+                        aqty = max(1, int(TRANCHE_BUDGET // acmp))
+                        is_buy_act = (adir == "BUY")
+
+                        sl_mult = float(vol_stops_cfg.get("atr_sl_multiplier", 2.0))
+                        tgt1_mult = float(vol_stops_cfg.get("atr_tgt1_multiplier", 1.5))
+                        tgt2_mult = float(vol_stops_cfg.get("atr_tgt2_multiplier", 3.0))
+                        asl, atgt1, atgt2 = compute_volatility_stop_and_targets(acmp, aatr, is_buy=is_buy_act, sl_mult=sl_mult, tgt1_mult=tgt1_mult, tgt2_mult=tgt2_mult)
+
+                        trade_id = f"V2_APEX_{int(now_ist.timestamp())}_{asym}"
+                        conf_str = ", ".join(acand["confluence_presets"])
+                        rec = {
+                            "Trade_ID": trade_id,
+                            "Username": "Daemon_Apex",
+                            "Ticker": asym,
+                            "Trade_Action": "🟢 BUY" if is_buy_act else "🔴 SELL",
+                            "Buy Ticker": asym if is_buy_act else "—",
+                            "Sell Ticker": "—" if is_buy_act else asym,
+                            "Category": "Apex Multi-Factor",
+                            "Asset_Class": acand["asset_class"],
+                            "Trigger_Type": f"APEX_DEDUP_{adir}",
+                            "Trigger_Indicator": f"Apex Confluence ({acand['confluence_count']} Presets: {conf_str} | Score: {acand['score']:.1f})",
+                            "Strategy_Preset": "Apex Multi-Factor",
+                            "Status": "ACTIVE",
+                            "Entry_Price": acmp, "Live_CMP": acmp, "Executed_Qty": aqty,
+                            "Stop_Loss": asl, "Target": atgt2, "Target_Tier1": atgt1,
+                            "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                            "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                            "Invested_Value": round(acmp * aqty, 2),
+                            "Technical_Score_At_Entry": round(float(arow.get("Technical Score", 50.0)), 1),
+                            "Fundamental_Score_At_Entry": round(float(arow.get("Fundamental Score", 50.0)), 1),
+                            "Composite_Score_At_Entry": round(acand["score"], 1),
+                            "Near_Support_Status": f"Apex Multi-Confluence ({acand['confluence_count']}x)",
+                            "RSI_At_Entry": round(float(arow.get("RSI (14D)", 50.0)), 1),
+                            "Empirical_Win_Rate_At_Entry": "N/A", "Market_Regime_At_Entry": regime_name
+                        }
+                        created_records.append(rec)
+                        active_syms.add(asym)
+                        signals_for_alert.append({'ticker': asym, 'cmp': acmp, 'action': adir, 'source': f'Apex Multi-Factor ({conf_str})'})
+                        exec_summary_msgs.append(f"{'🟢 BUY' if is_buy_act else '🔴 SELL'} Apex Multi-Factor ({conf_str}): {asym}")
+            except Exception as apex_err:
+                logger.warning(f"Apex Multi-Factor execution error: {apex_err}")
 
             # -------------------------------------------------------------
             # Persist Trades & Execution Audit Log
@@ -1436,10 +1691,6 @@ def run_scheduled_daemon_tasks(cli_mode=None):
         "mode": mode,
         "timestamp": now_str
     }
-
-def run_paper_trader_daemon(mode_override=None):
-    """Backwards-compatible wrapper for testbed runners and external cron schedulers."""
-    return run_scheduled_daemon_tasks(cli_mode=mode_override)
 
 if __name__ == "__main__":
     if "--init-sheets" in sys.argv:

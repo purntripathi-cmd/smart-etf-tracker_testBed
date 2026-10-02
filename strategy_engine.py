@@ -235,6 +235,26 @@ def calculate_atr(df, period=14):
     tr = pd.concat([h - l, (h - pc).abs(), (l - pc).abs()], axis=1).max(axis=1)
     return tr.rolling(period, min_periods=1).mean()
 
+def compute_volatility_stop_and_targets(cmp_val, atr_val, is_buy=True, sl_mult=2.0, tgt1_mult=1.5, tgt2_mult=3.0):
+    """
+    Computes ATR-based dynamic volatility stop-loss and multi-tier targets.
+    Bounded between 2.5% and 6.5% of CMP to eliminate fragile micro-stops or excessive drawdown risk.
+    """
+    if atr_val <= 0 or np.isnan(atr_val):
+        atr_val = cmp_val * 0.025
+    sl_dist = max(cmp_val * 0.025, min(cmp_val * 0.065, sl_mult * atr_val))
+    tgt1_dist = max(cmp_val * 0.025, min(cmp_val * 0.05, tgt1_mult * atr_val))
+    tgt2_dist = max(cmp_val * 0.05, min(cmp_val * 0.12, tgt2_mult * atr_val))
+    if is_buy:
+        sl_price = round(max(0.01, cmp_val - sl_dist), 2)
+        tgt1_price = round(cmp_val + tgt1_dist, 2)
+        tgt2_price = round(cmp_val + tgt2_dist, 2)
+    else:
+        sl_price = round(cmp_val + sl_dist, 2)
+        tgt1_price = round(max(0.01, cmp_val - tgt1_dist), 2)
+        tgt2_price = round(max(0.01, cmp_val - tgt2_dist), 2)
+    return sl_price, tgt1_price, tgt2_price
+
 def calculate_macd(series, fast=12, slow=26, signal=9):
     ema_fast = series.ewm(span=fast, adjust=False).mean()
     ema_slow = series.ewm(span=slow, adjust=False).mean()
@@ -635,6 +655,67 @@ def evaluate_market_metrics(raw, universe_config, is_stock_mode=False, dynamic_w
     return df_out, regime_payload
 
 # =====================================================================
+# TACTICAL QUANT SAFEGUARDS: COOLDOWN & CONVICTION GATES
+# =====================================================================
+def get_stopped_out_tickers_in_cooldown(trades_df, cooldown_days=5):
+    """
+    Returns a set of uppercase tickers that suffered a STOP_LOSS_HIT or CLOSED_STOPLOSS
+    within the last `cooldown_days` active NSE trading sessions.
+    """
+    if trades_df is None or trades_df.empty or "Status" not in trades_df.columns:
+        return set()
+    sl_mask = trades_df["Status"].astype(str).str.strip().str.upper().isin(["STOP_LOSS_HIT", "CLOSED_STOPLOSS"])
+    if not sl_mask.any():
+        return set()
+    sl_trades = trades_df[sl_mask].copy()
+    now_ist = datetime.datetime.now(IST)
+    cooldown_tickers = set()
+    for _, row in sl_trades.iterrows():
+        sym = str(row.get("Ticker", "")).replace(".NS", "").strip().upper()
+        if not sym:
+            continue
+        ts_str = str(row.get("Exit_Timestamp", row.get("Execution_Timestamp", "")))
+        try:
+            exit_dt = datetime.datetime.strptime(ts_str[:19], "%Y-%m-%d %H:%M:%S")
+            days_elapsed = calculate_trading_days(exit_dt.date(), now_ist.date())
+            if days_elapsed < cooldown_days:
+                cooldown_tickers.add(sym)
+        except Exception:
+            cooldown_tickers.add(sym)
+    return cooldown_tickers
+
+def check_conviction_gate(candidate_row, is_buy=True, config=None):
+    """
+    Checks if a candidate passes the Minimum Conviction Gate.
+    Returns (passes: bool, reason: str)
+    """
+    if config is None:
+        config = get_active_runtime_config()
+    gate_cfg = config.get("conviction_gate", {})
+    if not gate_cfg.get("enabled", True):
+        return True, "Conviction Gate Disabled (Pass Through)"
+    
+    min_buy_score = float(gate_cfg.get("min_buy_composite_score", 58.0))
+    max_buy_rsi = float(gate_cfg.get("max_buy_rsi", 65.0))
+    min_sell_score = float(gate_cfg.get("min_sell_composite_score", 58.0))
+    min_sell_rsi = float(gate_cfg.get("min_sell_rsi", 55.0))
+    
+    score = float(candidate_row.get("Composite Score", candidate_row.get("Composite Buy Score", candidate_row.get("AI_Confidence_Pct", 50.0))))
+    rsi = float(candidate_row.get("RSI (14D)", 50.0))
+    
+    if is_buy:
+        if score < min_buy_score:
+            return False, f"Score {score:.1f} < Min Threshold {min_buy_score:.1f}"
+        if rsi > max_buy_rsi:
+            return False, f"RSI {rsi:.1f} > Max Buy Threshold {max_buy_rsi:.1f}"
+        return True, f"Conviction Verified (Score: {score:.1f}, RSI: {rsi:.1f})"
+    else:
+        sell_urgency = float(candidate_row.get("Composite Score", candidate_row.get("AI_Confidence_Pct", candidate_row.get("Technical Score Sell", 50.0))))
+        if sell_urgency < min_sell_score and rsi < min_sell_rsi:
+            return False, f"Sell Urgency {sell_urgency:.1f} < {min_sell_score:.1f} & RSI {rsi:.1f} < {min_sell_rsi:.1f}"
+        return True, f"Sell Urgency Verified (Urgency: {sell_urgency:.1f}, RSI: {rsi:.1f})"
+
+# =====================================================================
 # TOP CONVICTION CANDIDATE SELECTION (TOP 3 BUY + TOP 3 SELL)
 # =====================================================================
 def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mode=False, limit=3):
@@ -711,10 +792,9 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
         d200_norm = min(100.0, max(0.0, 50.0 + (dist_200 * 2.0)))
         sell_exit_urgency = round((0.45 * rsi) + (0.35 * d200_norm) + (0.20 * range_pct), 1)
 
-        sl_buy = round(max(0.01, curr_p - (sl_mult * atr)), 2)
-        tgt_buy = round(curr_p + (tgt_mult * atr), 2)
-        sl_sell = round(curr_p + (sl_mult * atr), 2)
-        tgt_sell = round(max(0.01, curr_p - (tgt_mult * atr)), 2)
+        # Volatility-adjusted stops and multi-tier targets
+        sl_buy, tgt1_buy, tgt_buy = compute_volatility_stop_and_targets(curr_p, atr, is_buy=True, sl_mult=sl_mult, tgt1_mult=1.5, tgt2_mult=tgt_mult)
+        sl_sell, tgt1_sell, tgt_sell = compute_volatility_stop_and_targets(curr_p, atr, is_buy=False, sl_mult=sl_mult, tgt1_mult=1.5, tgt2_mult=tgt_mult)
 
         # Explain criteria met for Buy
         buy_criteria_items = []
@@ -757,7 +837,7 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
             buy_candidates.append({
                 "Ticker": sym, "symbol": sym, "Name": row.get("Name", sym), "Category": row.get("Category", "General"),
                 "Signal": "BUY", "CMP (₹)": curr_p, "RSI (14D)": rsi,
-                "Composite Score": buy_composite, "Stop_Loss": sl_buy, "Target": tgt_buy,
+                "Composite Score": buy_composite, "Stop_Loss": sl_buy, "Target": tgt_buy, "Target_Tier1": tgt1_buy,
                 "14D ATR (₹)": atr, "Volume Surge": vol_ratio,
                 "Dist 200DMA %": dist_200, "Dist 52W Low %": dist_low, "52W Range %": range_pct,
                 "Action Signal": act_sig, "Criteria_Met": buy_crit_str,
@@ -776,7 +856,7 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
             sell_candidates.append({
                 "Ticker": sym, "symbol": sym, "Name": row.get("Name", sym), "Category": row.get("Category", "General"),
                 "Signal": "SELL", "CMP (₹)": curr_p, "RSI (14D)": rsi,
-                "Composite Score": sell_exit_urgency, "Stop_Loss": sl_sell, "Target": tgt_sell,
+                "Composite Score": sell_exit_urgency, "Stop_Loss": sl_sell, "Target": tgt_sell, "Target_Tier1": tgt1_sell,
                 "14D ATR (₹)": atr, "Volume Surge": vol_ratio,
                 "Dist 200DMA %": dist_200, "Dist 52W Low %": dist_low, "52W Range %": range_pct,
                 "Action Signal": act_sig, "Criteria_Met": sell_crit_str,
@@ -793,7 +873,7 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
 
     standard_cand_cols = [
         "Ticker", "symbol", "Name", "Category", "Signal", "CMP (₹)", "RSI (14D)",
-        "Composite Score", "Stop_Loss", "Target", "14D ATR (₹)", "Volume Surge",
+        "Composite Score", "Stop_Loss", "Target", "Target_Tier1", "14D ATR (₹)", "Volume Surge",
         "Dist 200DMA %", "Dist 52W Low %", "52W Range %", "Action Signal", "Criteria_Met",
         "Preset", "Asset_Class"
     ]
@@ -813,7 +893,7 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
 # =====================================================================
 # TRADE EXECUTION VALIDATION
 # =====================================================================
-def validate_trade_execution(ticker, signal_action, preset_name, qty_planned, existing_positions_df):
+def validate_trade_execution(ticker, signal_action, preset_name, qty_planned, existing_positions_df, allow_simulated_shorts=True):
     if qty_planned <= 0:
         return False, 0, "Calculated order quantity is 0."
 
@@ -822,18 +902,25 @@ def validate_trade_execution(ticker, signal_action, preset_name, qty_planned, ex
 
     if action == "SELL":
         if existing_positions_df is None or existing_positions_df.empty:
+            if allow_simulated_shorts:
+                return True, qty_planned, f"Approved simulated SELL prediction for {clean_sym} (Prediction Tracking Benchmark)."
             return False, 0, f"Cannot SELL {clean_sym}: Ledger has no active positions."
 
         pos_mask = (
             (existing_positions_df["Ticker"].astype(str).str.replace(".NS", "").str.upper() == clean_sym) &
-            (existing_positions_df["Status"].astype(str).str.upper() == "ACTIVE")
+            (existing_positions_df["Status"].astype(str).str.upper() == "ACTIVE") &
+            (existing_positions_df["Trade_Action"].astype(str).str.contains("BUY", case=False))
         )
         matched = existing_positions_df[pos_mask]
         if matched.empty:
+            if allow_simulated_shorts:
+                return True, qty_planned, f"Approved simulated SELL prediction for {clean_sym} (Prediction Tracking Benchmark)."
             return False, 0, f"Cannot SELL {clean_sym}: 0 active units held in ledger."
 
         held_qty = float(pd.to_numeric(matched["Executed_Qty"], errors="coerce").sum())
         if held_qty <= 0:
+            if allow_simulated_shorts:
+                return True, qty_planned, f"Approved simulated SELL prediction for {clean_sym}."
             return False, 0, f"Cannot SELL {clean_sym}: Net quantity is 0."
 
         final_qty = int(min(held_qty, qty_planned))
@@ -914,9 +1001,36 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False, sk
 
         cfg = get_active_runtime_config()
         risk_cfg = cfg.get("risk_parameters", {})
+        multi_tier_cfg = cfg.get("multi_tier_targets", {})
         trail_act_pct = float(risk_cfg.get("trailing_stop_activation_pct", 3.0))
         trail_lock_pct = float(risk_cfg.get("trailing_stop_lock_pct", 0.5))
         overbought_rsi = float(risk_cfg.get("overbought_rsi_exit_threshold", 76.0))
+
+        # Multi-Tier Target Booking: When Tier 1 is achieved (+2.5% or Target_Tier1), advance stop to breakeven!
+        target_tier1 = float(pd.to_numeric(row.get("Target_Tier1", 0), errors="coerce") or 0.0)
+        tier1_hit = False
+        if not is_short:
+            if target_tier1 > 0 and current_p >= target_tier1:
+                tier1_hit = True
+            elif pnl_pct >= 2.5:
+                tier1_hit = True
+            if tier1_hit and multi_tier_cfg.get("lock_breakeven_on_tier1", True):
+                breakeven_sl = round(entry_p * 1.001, 2)
+                if stop_l < breakeven_sl:
+                    updated.at[idx, "Stop_Loss"] = breakeven_sl
+                    stop_l = breakeven_sl
+                    logger.info(f"[TIER1-BREAKEVEN] {sym} hit Tier 1 target (+{pnl_pct:.2f}%). Stop loss moved to breakeven ₹{breakeven_sl:.2f}")
+        else:
+            if target_tier1 > 0 and current_p <= target_tier1:
+                tier1_hit = True
+            elif pnl_pct >= 2.5:
+                tier1_hit = True
+            if tier1_hit and multi_tier_cfg.get("lock_breakeven_on_tier1", True):
+                breakeven_sl = round(entry_p * 0.999, 2)
+                if stop_l <= 0 or stop_l > breakeven_sl:
+                    updated.at[idx, "Stop_Loss"] = breakeven_sl
+                    stop_l = breakeven_sl
+                    logger.info(f"[TIER1-BREAKEVEN] {sym} short hit Tier 1 target (+{pnl_pct:.2f}%). Stop loss moved to breakeven ₹{breakeven_sl:.2f}")
 
         # Trailing stop: Lock in profit once gain exceeds activation %
         if not is_short and pnl_pct >= trail_act_pct:
@@ -1000,3 +1114,121 @@ def get_ai_rag_conviction_candidates(metrics_df, is_stock_mode=False, limit=3):
         return _ai_func(metrics_df, is_stock_mode=is_stock_mode, limit=limit)
     except Exception:
         return get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mode=is_stock_mode, limit=limit)
+
+
+# =====================================================================
+# MULTI-TIMEFRAME PERFORMANCE ENGINE (1M, 1Q, 6M, 1Y, 3Y, 5Y)
+# =====================================================================
+def compute_multi_timeframe_performance(trades_df, reference_dt=None):
+    """
+    Computes rigorous multi-horizon quantitative performance metrics:
+    - 1 Month (30 Days)
+    - 1 Quarter (90 Days)
+    - 6 Months (180 Days)
+    - 1 Year (365 Days)
+    - 3 Years (1095 Days)
+    - 5 Years (1825 Days)
+    - All-Time
+    Returns a dictionary containing:
+    - 'matrix_df': Multi-horizon summary grid
+    - 'category_df': Performance breakdown by asset category across all horizons
+    - 'preset_df': Performance breakdown by strategy preset across all horizons
+    """
+    if trades_df is None or trades_df.empty:
+        empty_matrix = pd.DataFrame(columns=[
+            "Horizon", "Total Trades", "Active", "Closed", "Wins", "Losses",
+            "Win Rate %", "Realized PnL (₹)", "Unrealized PnL (₹)", "Total PnL (₹)", "Capital Deployed (₹)"
+        ])
+        empty_sub = pd.DataFrame()
+        return {"matrix_df": empty_matrix, "category_df": empty_sub, "preset_df": empty_sub}
+
+    df = trades_df.copy()
+    ref_dt = reference_dt if reference_dt is not None else pd.Timestamp.now()
+    ts_exec = pd.to_datetime(df.get("Execution_Timestamp"), errors="coerce")
+    ts_exit = pd.to_datetime(df.get("Exit_Timestamp"), errors="coerce")
+    valid_ts = ts_exec.fillna(ts_exit).fillna(ref_dt)
+    days_diff = (ref_dt - valid_ts).dt.total_seconds() / (24 * 3600.0)
+    df["_days_diff"] = days_diff.fillna(0.0)
+
+    horizons = [
+        ("1 Month (30D)", 30),
+        ("1 Quarter (90D)", 90),
+        ("6 Months (180D)", 180),
+        ("1 Year (365D)", 365),
+        ("3 Years (1095D)", 1095),
+        ("5 Years (1825D)", 1825),
+        ("All-Time", 999999)
+    ]
+
+    matrix_rows = []
+    for h_label, h_days in horizons:
+        sub = df[df["_days_diff"] <= h_days]
+        act = sub[sub["Status"] == "ACTIVE"]
+        cld = sub[(sub["Status"] != "ACTIVE") & (sub["Status"] != "EXIT_ALERT")]
+        cld_pnl = pd.to_numeric(cld.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum()
+        act_pnl = pd.to_numeric(act.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum()
+        cap = pd.to_numeric(sub.get("Invested_Value", pd.Series(dtype=float)), errors="coerce").sum()
+        
+        cld_pnl_num = pd.to_numeric(cld.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce")
+        wins = int((cld_pnl_num > 0).sum())
+        losses = int((cld_pnl_num <= 0).sum())
+        tot_c = len(cld)
+        wr = (wins / tot_c * 100.0) if tot_c > 0 else 0.0
+
+        matrix_rows.append({
+            "Horizon": h_label,
+            "Total Trades": len(sub),
+            "Active": len(act),
+            "Closed": tot_c,
+            "Wins": wins,
+            "Losses": losses,
+            "Win Rate %": f"{wr:.1f}%" if tot_c > 0 else "Pending",
+            "Realized PnL (₹)": round(float(cld_pnl), 2),
+            "Unrealized PnL (₹)": round(float(act_pnl), 2),
+            "Total PnL (₹)": round(float(cld_pnl + act_pnl), 2),
+            "Capital Deployed (₹)": round(float(cap), 2)
+        })
+
+    matrix_df = pd.DataFrame(matrix_rows)
+
+    def _build_horizon_breakdown(group_col):
+        if group_col not in df.columns:
+            return pd.DataFrame()
+        res_rows = []
+        for grp_val, grp in df.groupby(group_col):
+            cld = grp[(grp["Status"] != "ACTIVE") & (grp["Status"] != "EXIT_ALERT")]
+            tot_c = len(cld)
+            cld_pnl = pd.to_numeric(cld.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum()
+            unreal_pnl = pd.to_numeric(grp[grp["Status"] == "ACTIVE"].get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum()
+            wins = int((pd.to_numeric(cld.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce") > 0).sum())
+            wr = (wins / tot_c * 100.0) if tot_c > 0 else 0.0
+
+            def get_sub_pnl(max_d):
+                sub_c = cld[cld["_days_diff"] <= max_d]
+                return round(float(pd.to_numeric(sub_c.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum()), 2)
+
+            res_rows.append({
+                group_col: grp_val,
+                "Total Trades": len(grp),
+                "Active": len(grp[grp["Status"] == "ACTIVE"]),
+                "Closed": tot_c,
+                "Win Rate %": f"{wr:.1f}%" if tot_c > 0 else "Pending",
+                "1M PnL (₹)": get_sub_pnl(30),
+                "1Q PnL (₹)": get_sub_pnl(90),
+                "6M PnL (₹)": get_sub_pnl(180),
+                "1Y PnL (₹)": get_sub_pnl(365),
+                "3Y PnL (₹)": get_sub_pnl(1095),
+                "5Y PnL (₹)": get_sub_pnl(1825),
+                "Total Realized PnL (₹)": round(float(cld_pnl), 2),
+                "Unrealized PnL (₹)": round(float(unreal_pnl), 2)
+            })
+        return pd.DataFrame(res_rows)
+
+    cat_df = _build_horizon_breakdown("Category")
+    preset_df = _build_horizon_breakdown("Strategy_Preset")
+
+    return {
+        "matrix_df": matrix_df,
+        "category_df": cat_df,
+        "preset_df": preset_df
+    }

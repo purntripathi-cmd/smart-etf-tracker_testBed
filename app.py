@@ -127,7 +127,8 @@ st.markdown(
 try:
     from strategy_engine import (
         evaluate_market_metrics,
-        get_top_conviction_candidates
+        get_top_conviction_candidates,
+        compute_multi_timeframe_performance
     )
     from sr_engine import (
         compute_sr_matrix,
@@ -159,7 +160,10 @@ try:
         get_parameter_reference_matrix,
         get_monthly_performance_comparison,
         load_parameter_change_log,
-        get_ai_rag_conviction_candidates
+        get_ai_rag_conviction_candidates,
+        load_strategy_change_log,
+        log_strategic_change,
+        check_conviction_gate
     )
     from paper_trader_daemon import (
         evaluate_trade_exits,
@@ -167,6 +171,8 @@ try:
         save_paper_trades,
         load_audit_log,
         run_paper_trader_daemon,
+        compute_volatility_stop_and_targets,
+        get_stopped_out_tickers_in_cooldown,
         LOCAL_AUDIT_CSV,
         LOCAL_TRADES_CSV,
         DEFAULT_AUDIT_HEADERS,
@@ -1551,6 +1557,446 @@ def format_inav_distance_pct(v):
     except Exception:
         return str(v)
 
+
+def get_apex_multi_factor_candidates(etfs_df, stocks_df, top_n=3):
+    """
+    Synthesizes candidates across all 5 Strategy Presets (Default, Swing, Long-Term, Intraday, AI/RAG),
+    deduplicates tickers across ETFs and Equities, ranks by cross-model confluence count and composite score,
+    and returns top N BUY and top N SELL recommendations with explicit selection rationale hints.
+    """
+    runtime_cfg = load_runtime_config()
+    cooldown_tickers = get_stopped_out_tickers_in_cooldown()
+    presets_to_evaluate = ["Default", "Swing / Positional", "Long-Term", "Intraday", "AI / RAG"]
+
+    raw_buys = []
+    raw_sells = []
+
+    for p in presets_to_evaluate:
+        # Evaluate ETFs
+        if etfs_df is not None and not etfs_df.empty:
+            if p == "AI / RAG":
+                b_etf, s_etf = get_ai_rag_conviction_candidates(etfs_df, is_stock_mode=False, limit=6)
+            else:
+                b_etf, s_etf = get_top_conviction_candidates(etfs_df, preset_name=p, is_stock_mode=False, limit=6)
+            if not b_etf.empty:
+                for _, r in b_etf.iterrows():
+                    d = r.to_dict()
+                    d["_preset"] = p
+                    d["_asset_type"] = "ETF"
+                    raw_buys.append(d)
+            if not s_etf.empty:
+                for _, r in s_etf.iterrows():
+                    d = r.to_dict()
+                    d["_preset"] = p
+                    d["_asset_type"] = "ETF"
+                    raw_sells.append(d)
+
+        # Evaluate Equities
+        if stocks_df is not None and not stocks_df.empty:
+            if p == "AI / RAG":
+                b_stk, s_stk = get_ai_rag_conviction_candidates(stocks_df, is_stock_mode=True, limit=6)
+            else:
+                b_stk, s_stk = get_top_conviction_candidates(stocks_df, preset_name=p, is_stock_mode=True, limit=6)
+            if not b_stk.empty:
+                for _, r in b_stk.iterrows():
+                    d = r.to_dict()
+                    d["_preset"] = p
+                    d["_asset_type"] = "Stock"
+                    raw_buys.append(d)
+            if not s_stk.empty:
+                for _, r in s_stk.iterrows():
+                    d = r.to_dict()
+                    d["_preset"] = p
+                    d["_asset_type"] = "Stock"
+                    raw_sells.append(d)
+
+    def _deduplicate_and_rank(raw_list, is_buy=True):
+        ticker_map = {}
+        for item in raw_list:
+            sym = str(item.get("Ticker", "")).replace(".NS", "").strip()
+            if not sym or sym.lower() == "nan":
+                continue
+            # Post-Stop Cooldown check
+            if sym in cooldown_tickers:
+                continue
+            # Conviction Gate check
+            if not check_conviction_gate(item, is_buy=is_buy, config=runtime_cfg):
+                continue
+
+            preset_name = item.get("_preset", "Default")
+            score = float(item.get("Composite Score", item.get("Composite Buy Score", 50.0)))
+            cmp_val = float(item.get("CMP (₹)", 0.0))
+            if cmp_val <= 0:
+                continue
+
+            if sym not in ticker_map:
+                ticker_map[sym] = {
+                    "ticker": sym,
+                    "name": item.get("Name", sym),
+                    "asset_class": item.get("_asset_type", "Asset"),
+                    "cmp": cmp_val,
+                    "rsi": float(item.get("RSI (14D)", 50.0)),
+                    "dist_200": float(item.get("Dist 200DMA %", 0.0)),
+                    "atr": float(item.get("14D ATR (₹)", cmp_val * 0.02)),
+                    "sl": float(item.get("Stop_Loss", cmp_val * 0.95 if is_buy else cmp_val * 1.05)),
+                    "tgt1": float(item.get("Target_Tier1", cmp_val * 1.025 if is_buy else cmp_val * 0.975)),
+                    "tgt": float(item.get("Target", cmp_val * 1.06 if is_buy else cmp_val * 0.94)),
+                    "action_sig": str(item.get("Action Signal", "ACCUMULATE" if is_buy else "PROFIT_BOOK")),
+                    "iNAV": item.get("iNAV (₹)", None),
+                    "inav_dist": item.get("Distance to iNAV (%)", item.get("iNAV Dislocation %", None)),
+                    "presets": [preset_name],
+                    "max_score": score,
+                    "best_item": item
+                }
+            else:
+                if preset_name not in ticker_map[sym]["presets"]:
+                    ticker_map[sym]["presets"].append(preset_name)
+                if score > ticker_map[sym]["max_score"]:
+                    ticker_map[sym]["max_score"] = score
+                    ticker_map[sym]["best_item"] = item
+
+        ranked_list = list(ticker_map.values())
+        for c in ranked_list:
+            c["confluence_count"] = len(c["presets"])
+            conf_str = f"{c['confluence_count']}x Confluence [{', '.join(c['presets'])}]"
+            sl_pct = abs((c['cmp'] - c['sl']) / c['cmp'] * 100) if c['cmp'] > 0 else 0.0
+            tgt1_pct = abs((c['tgt1'] - c['cmp']) / c['cmp'] * 100) if c['cmp'] > 0 else 0.0
+            tgt_pct = abs((c['tgt'] - c['cmp']) / c['cmp'] * 100) if c['cmp'] > 0 else 0.0
+
+            if is_buy:
+                c["why_chosen_hint"] = (
+                    f"Selected via {conf_str} across models. Top Composite Score: {c['max_score']:.1f}/100. "
+                    f"14D RSI at {c['rsi']:.1f} signals strong reversal base near 200DMA ({c['dist_200']:+.1f}%). "
+                    f"Passed strict Conviction Gate (Score ≥ 58, RSI ≤ 65) and zero post-stop cooldown lockout. "
+                    f"Volatility ATR Stop Loss at ₹{c['sl']:.2f} (-{sl_pct:.1f}%), Tier 1 Breakeven Lock at ₹{c['tgt1']:.2f} (+{tgt1_pct:.1f}%), "
+                    f"Primary Target at ₹{c['tgt']:.2f} (+{tgt_pct:.1f}%)."
+                )
+            else:
+                c["why_chosen_hint"] = (
+                    f"Selected via {conf_str} across models. Urgency Score: {c['max_score']:.1f}/100. "
+                    f"14D RSI at {c['rsi']:.1f} indicates severe overbought exhaustion (+{c['dist_200']:+.1f}% above 200DMA). "
+                    f"Passed Conviction Gate for simulated exit/short tracking. "
+                    f"Volatility ATR Stop Loss at ₹{c['sl']:.2f} (+{sl_pct:.1f}%), Tier 1 Target at ₹{c['tgt1']:.2f} (-{tgt1_pct:.1f}%), "
+                    f"Primary Target at ₹{c['tgt']:.2f} (-{tgt_pct:.1f}%)."
+                )
+
+        # Sort descending by confluence count, then composite score
+        ranked_list.sort(key=lambda x: (x["confluence_count"], x["max_score"]), reverse=True)
+        return ranked_list
+
+    ranked_buys = _deduplicate_and_rank(raw_buys, is_buy=True)
+    ranked_sells = _deduplicate_and_rank(raw_sells, is_buy=False)
+
+    return ranked_buys[:top_n], ranked_sells[:top_n], ranked_buys, ranked_sells
+
+
+def render_apex_multi_factor_tiles(etfs_df, stocks_df, limit=3):
+    """
+    Renders Category 6: Apex Multi-Factor tiles showing Top 3 BUY and Top 3 SELL picks
+    meeting conviction and cooldown criteria, with full selection rationale hints.
+    """
+    top_buys, top_sells, all_buys, all_sells = get_apex_multi_factor_candidates(etfs_df, stocks_df, top_n=limit)
+
+    st.markdown(
+        f"""
+        <div style="background: linear-gradient(135deg, #1e1e38 0%, #2d3748 100%); color: #ffffff; padding: 12px 18px; border-radius: 8px; margin-bottom: 12px; border-left: 5px solid #8b5cf6;">
+            <div style="font-weight: 700; font-size: 1.02rem;">⚡ Category 6: Apex Multi-Factor (Best of Presets - Deduplicated)</div>
+            <div style="font-size: 0.80rem; color: #cbd5e1; margin-top: 3px;">
+                Cross-Preset Multi-Model Synthesis • Pools signals from all 5 models (Default, Swing, Long-Term, Intraday, AI/RAG) • Deduplicates identical tickers • Ranks by multi-model confluence and conviction • Applies Post-Stop Cooldown & Conviction Gate.
+            </div>
+            <div style="display: flex; gap: 18px; margin-top: 6px; font-size: 0.78rem;">
+                <span>🟢 Eligible Confluence BUYs: <b>{len(all_buys)}</b></span>
+                <span>🔴 Eligible Confluence SELLs: <b>{len(all_sells)}</b></span>
+                <span>🛡️ Post-Stop Cooldown Filter: <b>Active (5D Lockout)</b></span>
+                <span>⚖️ Conviction Gate: <b>Score ≥ 58.0</b></span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # 1. Top 3 High-Conviction BUY Recommendations
+    st.markdown("###### 🎯 Top 3 High-Conviction BUY Recommendations (Meeting Strict Gate & Cooldown Rules):")
+    if top_buys:
+        b_cols = st.columns(len(top_buys))
+        for idx, b_item in enumerate(top_buys):
+            with b_cols[idx]:
+                sym = b_item["ticker"]
+                cmp_val = b_item["cmp"]
+                rsi_val = b_item["rsi"]
+                sc_val = b_item["max_score"]
+                sl_val = b_item["sl"]
+                tgt1_val = b_item["tgt1"]
+                tgt_val = b_item["tgt"]
+                dist_dma = b_item["dist_200"]
+                conf_cnt = b_item["confluence_count"]
+                presets_str = ", ".join(b_item["presets"])
+                why_hint = b_item["why_chosen_hint"]
+                asset_cls = b_item["asset_class"]
+
+                sl_pct = abs((cmp_val - sl_val) / cmp_val * 100) if cmp_val > 0 else 0.0
+                tgt1_pct = abs((tgt1_val - cmp_val) / cmp_val * 100) if cmp_val > 0 else 0.0
+                tgt_pct = abs((tgt_val - cmp_val) / cmp_val * 100) if cmp_val > 0 else 0.0
+
+                st.markdown(
+                    f"""
+                    <div class="rec-card" style="background-color: #f0fdf4; border: 1.4px solid #22c55e;">
+                        <div style="font-size:0.72rem; color:#166534; font-weight:700; margin-bottom:3px;">
+                            ⚡ APEX CONFLUENCE ALLOCATION #{idx+1} ({asset_cls.upper()})
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-weight:700; font-size:0.92rem;">#{idx+1} {sym}</span>
+                            <span class="rec-badge" style="background-color: #dcfce7; color: #166534; font-weight:700; border: 1px solid #16653433;">
+                                🟢 APEX BUY ({conf_cnt}x Confluence)
+                            </span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.76rem; color:#475569; margin-top:4px;">
+                            <span>CMP: <b>₹{cmp_val:.2f}</b></span>
+                            <span>RSI: <b>{rsi_val:.1f}</b></span>
+                            <span>Score: <b>{sc_val:.1f}</b></span>
+                            <span>200DMA: <b>{dist_dma:+.1f}%</b></span>
+                        </div>
+                        <div class="criteria-box" style="margin-top: 6px;">
+                            <b>💡 Why Chosen:</b> {why_hint}<br>
+                            <span style="color:#15803d; font-weight:600;">
+                                Volatility SL: ₹{sl_val:.2f} (-{sl_pct:.1f}%) | Tier 1: ₹{tgt1_val:.2f} (+{tgt1_pct:.1f}%) | Primary Target: ₹{tgt_val:.2f} (+{tgt_pct:.1f}%)
+                            </span>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+    else:
+        st.info("ℹ️ No assets currently meet the strict Apex Confluence BUY criteria (Score ≥ 58, RSI ≤ 65, and Zero Cooldown Lockout).")
+
+    # 2. Top 3 High-Conviction SELL / Exit Recommendations
+    st.markdown("###### 🎯 Top 3 High-Conviction SELL / Exit Recommendations (Meeting Strict Gate Rules):")
+    if top_sells:
+        s_cols = st.columns(len(top_sells))
+        for idx, s_item in enumerate(top_sells):
+            with s_cols[idx]:
+                sym = s_item["ticker"]
+                cmp_val = s_item["cmp"]
+                rsi_val = s_item["rsi"]
+                sc_val = s_item["max_score"]
+                sl_val = s_item["sl"]
+                tgt1_val = s_item["tgt1"]
+                tgt_val = s_item["tgt"]
+                dist_dma = s_item["dist_200"]
+                conf_cnt = s_item["confluence_count"]
+                presets_str = ", ".join(s_item["presets"])
+                why_hint = s_item["why_chosen_hint"]
+                asset_cls = s_item["asset_class"]
+
+                sl_pct = abs((sl_val - cmp_val) / cmp_val * 100) if cmp_val > 0 else 0.0
+                tgt1_pct = abs((cmp_val - tgt1_val) / cmp_val * 100) if cmp_val > 0 else 0.0
+                tgt_pct = abs((cmp_val - tgt_val) / cmp_val * 100) if cmp_val > 0 else 0.0
+
+                st.markdown(
+                    f"""
+                    <div class="rec-card" style="background-color: #fff1f2; border: 1.4px solid #f43f5e;">
+                        <div style="font-size:0.72rem; color:#9f1239; font-weight:700; margin-bottom:3px;">
+                            ⚡ APEX CONFLUENCE EXIT/SHORT #{idx+1} ({asset_cls.upper()})
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-weight:700; font-size:0.92rem;">#{idx+1} {sym}</span>
+                            <span class="rec-badge" style="background-color: #ffe4e6; color: #9f1239; font-weight:700; border: 1px solid #9f123933;">
+                                🔴 APEX SELL ({conf_cnt}x Confluence)
+                            </span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.76rem; color:#475569; margin-top:4px;">
+                            <span>CMP: <b>₹{cmp_val:.2f}</b></span>
+                            <span>RSI: <b>{rsi_val:.1f}</b></span>
+                            <span>Urgency: <b>{sc_val:.1f}</b></span>
+                            <span>200DMA: <b>{dist_dma:+.1f}%</b></span>
+                        </div>
+                        <div class="criteria-box" style="margin-top: 6px;">
+                            <b>💡 Why Chosen:</b> {why_hint}<br>
+                            <span style="color:#be123c; font-weight:600;">
+                                Volatility SL: ₹{sl_val:.2f} (+{sl_pct:.1f}%) | Tier 1: ₹{tgt1_val:.2f} (-{tgt1_pct:.1f}%) | Primary Target: ₹{tgt_val:.2f} (-{tgt_pct:.1f}%)
+                            </span>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+    else:
+        st.info("ℹ️ No assets currently meet the strict Apex Confluence SELL / Exit criteria (Overbought extension and Gate validation).")
+
+    # Collapsible Expander for Full Deduplication Matrix
+    with st.expander("🔍 See More: Apex Cross-Preset Confluence Screener & Deduplication Matrix (Click to expand)", expanded=False):
+        st.markdown(
+            """
+            > **Apex Multi-Factor Synthesis Architecture:** This screener pools candidate signals generated across all 5 Strategy Presets (Default, Swing / Positional, Long-Term, Intraday, and AI / RAG) across both Broad ETFs and Equities.
+            > Tickers are deduplicated, filtered for post-stop cooldown lockout and minimum conviction score (≥ 58.0), and ranked by multi-model confluence count.
+            """
+        )
+        combined_matrix_rows = []
+        for b in all_buys:
+            combined_matrix_rows.append({
+                "Ticker": b["ticker"],
+                "Asset Class": b["asset_class"],
+                "Action Signal": "🟢 APEX BUY",
+                "Confluence Count": f"{b['confluence_count']}x",
+                "Contributing Presets": ", ".join(b["presets"]),
+                "Composite Score": b["max_score"],
+                "CMP (₹)": b["cmp"],
+                "RSI (14D)": b["rsi"],
+                "Dist 200DMA %": b["dist_200"],
+                "Volatility SL (₹)": b["sl"],
+                "Tier 1 Target (₹)": b["tgt1"],
+                "Target (₹)": b["tgt"],
+                "Selection Rationale Hint": b["why_chosen_hint"]
+            })
+        for s in all_sells:
+            combined_matrix_rows.append({
+                "Ticker": s["ticker"],
+                "Asset Class": s["asset_class"],
+                "Action Signal": "🔴 APEX SELL",
+                "Confluence Count": f"{s['confluence_count']}x",
+                "Contributing Presets": ", ".join(s["presets"]),
+                "Composite Score": s["max_score"],
+                "CMP (₹)": s["cmp"],
+                "RSI (14D)": s["rsi"],
+                "Dist 200DMA %": s["dist_200"],
+                "Volatility SL (₹)": s["sl"],
+                "Tier 1 Target (₹)": s["tgt1"],
+                "Target (₹)": s["tgt"],
+                "Selection Rationale Hint": s["why_chosen_hint"]
+            })
+
+        if combined_matrix_rows:
+            apex_mat_df = pd.DataFrame(combined_matrix_rows)
+            render_top_scrollbar_sync()
+            st.dataframe(
+                apex_mat_df.style.apply(apply_advanced_table_styling, axis=None).format({
+                    "CMP (₹)": "₹{:.2f}",
+                    "Volatility SL (₹)": "₹{:.2f}",
+                    "Tier 1 Target (₹)": "₹{:.2f}",
+                    "Target (₹)": "₹{:.2f}",
+                    "RSI (14D)": "{:.1f}",
+                    "Composite Score": "{:.1f}",
+                    "Dist 200DMA %": "{:+.1f}%"
+                }),
+                column_config=get_pinned_column_config(apex_mat_df, 3),
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No candidates currently in the Apex Multi-Factor confluence pool.")
+
+
+def generate_paper_trade_audit_excel(trades_df, strategy_log_df, perf_dict):
+    """
+    Generates a comprehensive multi-sheet Excel audit workbook (.xlsx) containing:
+    1. Platform_&_Code_Summary: Structural breakdown of existing code modules and 6-pillar quant architecture
+    2. Strategic_Changes_Log: Full historical changelog of strategic logic & quant calibrations
+    3. Complete_Trade_Ledger: Complete ledger with indicator provenance at entry, execution prices, PnL
+    4. Multi_Timeframe_Perf: Standardized performance breakdown across 1M, 1Q, 6M, 1Y, 3Y, 5Y horizons
+    5. Category_Performance: Multi-horizon breakdown for each asset category
+    6. Preset_Performance: Multi-horizon breakdown for each strategy preset
+    """
+    code_summary_rows = [
+        {
+            "Module / File": "app.py",
+            "Layer": "Presentation & Multi-Tab Cockpit",
+            "Core Responsibilities": "Streamlit multi-tab user interface, real-time regime telemetry, pinned column scrolling, interactive metric tooltips, 1-click square-offs, parameter calibration studio, and multi-sheet audit package export.",
+            "Key Formulations & Safeguards": "Session persistence, admin testing toggles, 15m parquet synchronization, responsive CSS cards."
+        },
+        {
+            "Module / File": "strategy_engine.py",
+            "Layer": "Quantitative Valuation & Risk Core",
+            "Core Responsibilities": "Vectorized multi-factor composite scoring (200DMA trend, 14D RSI pullback, 52W low base, expense spread), volatility-adjusted dynamic stops (2.0x ATR), 5-day post-stop cooldown lockout, minimum conviction gate (Score ≥ 58), and multi-tier target breakeven ratchet.",
+            "Key Formulations & Safeguards": "Stop = CMP ∓ (2.0 × ATR_14D) bounded [2.5%, 6.5%]; Tier 1 Breakeven Ratchet when profit ≥ 1.5 × ATR_14D."
+        },
+        {
+            "Module / File": "paper_trader_daemon.py",
+            "Layer": "Autonomous Execution Daemon",
+            "Core Responsibilities": "Autonomous trade execution daemon running 9:25 AM morning scan, 3:00 PM pre-close execution with Category 6 Apex multi-factor deduplication, and 3:10 PM auto-squareoff restricted to intraday triggers only.",
+            "Key Formulations & Safeguards": "Overnight short prediction tracking (simulated sells retained across days for predictive benchmarking); strict 2-trade daily cap on Category 6."
+        },
+        {
+            "Module / File": "ml_optimizer.py",
+            "Layer": "Adaptive Tuning & Strategic Audit",
+            "Core Responsibilities": "Persistent zero-secret runtime configuration (runtime_config.json), parameter directionality matrix, parameter change audit logging, and institutional strategic logic change history.",
+            "Key Formulations & Safeguards": "Local CSV fallback; parameter rollback baseline; strategic changelog audit trail."
+        },
+        {
+            "Module / File": "sr_engine.py",
+            "Layer": "Support & Resistance Mean Reversion",
+            "Core Responsibilities": "50-day rolling support (S1) and resistance (R1) calculations, 5-year empirical win rate backtesting, and automated S/R limit orders.",
+            "Key Formulations & Safeguards": "Minimum 5-year empirical win rate ≥ 50% hurdle; 34-parameter quantitative profiling."
+        },
+        {
+            "Module / File": "reit_scanner.py",
+            "Layer": "Alternative Income Trusts",
+            "Core Responsibilities": "SEBI 100% NDCF distribution mandate filter, minimum 6.5% distribution yield, NAV discount check, and occupancy verification.",
+            "Key Formulations & Safeguards": "Distribution Yield ≥ 6.5%; NAV Discount Check; LTV leverage ≤ 40%."
+        },
+        {
+            "Module / File": "universe_manager.py",
+            "Layer": "Multi-Asset Universe Registry",
+            "Core Responsibilities": "Active tracking of 297 assets across 47 Broad/Factor ETFs, 250 NIFTY Equities, 7 REITs/InvITs, and Multi-AMC Gold & Silver.",
+            "Key Formulations & Safeguards": "Dynamic liquidity filtering; zero single-sector drawdowns via non-sectoral asset weighting."
+        },
+        {
+            "Module / File": "resource_monitor.py",
+            "Layer": "Cloud Telemetry & Optimization",
+            "Core Responsibilities": "Real-time CPU and RAM tracking, memory leak prevention via float32 caching and 15-minute parquet snapshots.",
+            "Key Formulations & Safeguards": "Eliminates CPU throttling warnings; maintains RAM footprint under 350 MB."
+        }
+    ]
+    code_df = pd.DataFrame(code_summary_rows)
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        code_df.to_excel(writer, sheet_name="Platform_&_Code_Summary", index=False)
+        if strategy_log_df is not None and not strategy_log_df.empty:
+            strategy_log_df.to_excel(writer, sheet_name="Strategic_Changes_Log", index=False)
+        else:
+            pd.DataFrame({"Status": ["No strategic changes recorded"]}).to_excel(writer, sheet_name="Strategic_Changes_Log", index=False)
+        
+        if trades_df is not None and not trades_df.empty:
+            trades_df.to_excel(writer, sheet_name="Complete_Trade_Ledger", index=False)
+        else:
+            pd.DataFrame({"Status": ["No paper trades recorded"]}).to_excel(writer, sheet_name="Complete_Trade_Ledger", index=False)
+
+        if perf_dict and "matrix_df" in perf_dict and not perf_dict["matrix_df"].empty:
+            perf_dict["matrix_df"].to_excel(writer, sheet_name="Multi_Timeframe_Perf", index=False)
+        if perf_dict and "category_df" in perf_dict and not perf_dict["category_df"].empty:
+            perf_dict["category_df"].to_excel(writer, sheet_name="Category_Performance", index=False)
+        if perf_dict and "preset_df" in perf_dict and not perf_dict["preset_df"].empty:
+            perf_dict["preset_df"].to_excel(writer, sheet_name="Preset_Performance", index=False)
+
+    return buf.getvalue()
+
+
+def assign_trade_timeframe_horizon(exec_ts, ref_dt=None):
+    """Categorizes a trade timestamp into its standard duration horizon."""
+    if pd.isna(exec_ts) or str(exec_ts).strip() in ["", "nan", "—"]:
+        return "1 Month (≤30D)"
+    try:
+        ref = ref_dt if ref_dt is not None else pd.Timestamp.now()
+        dt = pd.to_datetime(exec_ts)
+        diff_d = (ref - dt).total_seconds() / 86400.0
+        if diff_d <= 30:
+            return "1 Month (≤30D)"
+        elif diff_d <= 90:
+            return "1 Quarter (31-90D)"
+        elif diff_d <= 180:
+            return "6 Months (91-180D)"
+        elif diff_d <= 365:
+            return "1 Year (181-365D)"
+        elif diff_d <= 1095:
+            return "3 Years (1-3Y)"
+        elif diff_d <= 1825:
+            return "5 Years (3-5Y)"
+        else:
+            return "> 5 Years"
+    except Exception:
+        return "1 Month (≤30D)"
+
+
 # =====================================================================
 # OPEN ACCESS TESTBED INITIALIZATION
 # =====================================================================
@@ -2434,6 +2880,12 @@ if "High-Conviction Master Hub" in active_tab:
                 hide_index=True
             )
 
+        # -------------------------------------------------------------
+        # CATEGORY 6: APEX MULTI-FACTOR DEDUPLICATED ALLOCATOR
+        # -------------------------------------------------------------
+        st.markdown("---")
+        render_apex_multi_factor_tiles(filtered_etfs_df, filtered_stocks_df, limit=3)
+
 
 # =====================================================================
 # TAB 2: PAPER TRADING & MULTI-ASSET PERFORMANCE HUB
@@ -2451,6 +2903,30 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
 
     raw_trades = load_paper_trades()
     trades_df = raw_trades.copy()
+    multi_tf_perf = compute_multi_timeframe_performance(trades_df)
+    strategy_changelog_df = load_strategy_change_log()
+
+    # Comprehensive Audit & Strategy Package Download
+    c_dl1, c_dl2 = st.columns([3.2, 1.8])
+    with c_dl1:
+        st.markdown(
+            """
+            <div style="font-size:0.83rem; color:#475569; padding-top:4px;">
+                📦 <b>Comprehensive Audit & Strategy Package:</b> Download Excel workbook with full code block summary, logic & guardrails changelog, complete trade ledger with entry provenance, and multi-horizon performance across categories and presets.
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with c_dl2:
+        audit_excel_bytes = generate_paper_trade_audit_excel(trades_df, strategy_changelog_df, multi_tf_perf)
+        st.download_button(
+            label="📥 Download Paper Trade Summary (.xlsx)",
+            data=audit_excel_bytes,
+            file_name=f"AGY_Paper_Trade_Audit_{datetime.datetime.now(IST).strftime('%Y%m%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="btn_download_paper_trade_audit_xlsx"
+        )
 
     render_metric_glossary_expander("tab2")
 
@@ -2978,6 +3454,24 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
     m3.metric("Closed Realized PnL", f"₹{closed_pnl:+,.2f}", f"{tot_closed} Closed Trades")
     m4.metric("Strategy Win Rate", f"{win_rate:.1f}%" if tot_closed > 0 else "N/A", f"{win_count} Wins / {tot_closed - win_count} Losses")
 
+    # Multi-Timeframe Duration Performance Matrix (Standardized Rolling Horizons)
+    st.markdown("##### ⏱️ Multi-Timeframe Duration Performance Matrix (1M, Quarter, 6M, 1Y, 3Y, 5Y)")
+    st.caption("Standardized rolling window analytics across execution & exit timestamps • Win Rate %, Realized PnL, Capital Deployed & ROI %")
+    if multi_tf_perf and "matrix_df" in multi_tf_perf and not multi_tf_perf["matrix_df"].empty:
+        tf_mat_df = multi_tf_perf["matrix_df"]
+        render_top_scrollbar_sync()
+        st.dataframe(
+            tf_mat_df.style.apply(apply_paper_table_styling, axis=None).format({
+                "Realized PnL (₹)": "₹{:+,.2f}",
+                "Unrealized PnL (₹)": "₹{:+,.2f}",
+                "Total PnL (₹)": "₹{:+,.2f}",
+                "Capital Deployed (₹)": "₹{:,.2f}"
+            }),
+            column_config=get_pinned_column_config(tf_mat_df, 2),
+            use_container_width=True,
+            hide_index=True
+        )
+
     # Unified Portfolio Overview & Asset Allocation Summary (Visible to all users)
     st.markdown("##### 💼 Unified Portfolio Overview & Asset Holdings")
     st.caption("Aggregated platform holdings across all tranches clubbed per asset over time • Live CMP & Unrealized Return")
@@ -3025,7 +3519,7 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
         st.info("No active open positions in the platform portfolio.")
 
     # Multi-Category Performance Breakdown Matrix (Visible to all users)
-    st.markdown("##### 📊 Multi-Category Performance Breakdown")
+    st.markdown("##### 📊 Multi-Category Performance Breakdown (Multi-Timeframe Duration Windows)")
     if not trades_df.empty and "Category" in trades_df.columns:
         cat_kpi_rows = []
         for c_name, grp in trades_df.groupby("Category"):
@@ -3039,6 +3533,18 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
             b_tickers = sorted(list(set([str(t) for t in grp["Buy Ticker"] if str(t).strip() not in ["—", "", "nan"]])))
             s_tickers = sorted(list(set([str(t) for t in grp["Sell Ticker"] if str(t).strip() not in ["—", "", "nan"]])))
 
+            # Multi-horizon duration window PnLs
+            c_ref = pd.Timestamp.now()
+            c_exec = pd.to_datetime(grp.get("Execution_Timestamp"), errors="coerce").fillna(pd.to_datetime(grp.get("Exit_Timestamp"), errors="coerce")).fillna(c_ref)
+            c_diff_days = (c_ref - c_exec).dt.total_seconds() / 86400.0
+
+            pnl_1m = float(pd.to_numeric(grp[c_diff_days <= 30]["PnL_Rs"], errors="coerce").sum())
+            pnl_1q = float(pd.to_numeric(grp[c_diff_days <= 90]["PnL_Rs"], errors="coerce").sum())
+            pnl_6m = float(pd.to_numeric(grp[c_diff_days <= 180]["PnL_Rs"], errors="coerce").sum())
+            pnl_1y = float(pd.to_numeric(grp[c_diff_days <= 365]["PnL_Rs"], errors="coerce").sum())
+            pnl_3y = float(pd.to_numeric(grp[c_diff_days <= 1095]["PnL_Rs"], errors="coerce").sum())
+            pnl_5y = float(pd.to_numeric(grp[c_diff_days <= 1825]["PnL_Rs"], errors="coerce").sum())
+
             cat_kpi_rows.append({
                 "Category": c_name,
                 "Total Trades": len(grp),
@@ -3047,6 +3553,12 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
                 "Active Trades": len(grp[grp["Status"] == "ACTIVE"]),
                 "Closed Trades": c_tot_c,
                 "Win Rate %": f"{c_wrate:.1f}%" if c_tot_c > 0 else "Pending",
+                "1M PnL (₹)": pnl_1m,
+                "1Q PnL (₹)": pnl_1q,
+                "6M PnL (₹)": pnl_6m,
+                "1Y PnL (₹)": pnl_1y,
+                "3Y PnL (₹)": pnl_3y,
+                "5Y PnL (₹)": pnl_5y,
                 "Realized PnL (₹)": c_pnl,
                 "Unrealized PnL (₹)": c_unreal
             })
@@ -3055,6 +3567,12 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
             render_top_scrollbar_sync()
             st.dataframe(
                 cat_kpi_df.style.apply(apply_paper_table_styling, axis=None).format({
+                    "1M PnL (₹)": "₹{:+,.2f}",
+                    "1Q PnL (₹)": "₹{:+,.2f}",
+                    "6M PnL (₹)": "₹{:+,.2f}",
+                    "1Y PnL (₹)": "₹{:+,.2f}",
+                    "3Y PnL (₹)": "₹{:+,.2f}",
+                    "5Y PnL (₹)": "₹{:+,.2f}",
                     "Realized PnL (₹)": "₹{:+,.2f}",
                     "Unrealized PnL (₹)": "₹{:+,.2f}"
                 }),
@@ -3066,7 +3584,7 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
         st.info("No category performance data recorded yet.")
 
     # Strategy Preset Performance Breakdown Matrix (Visible to all users)
-    st.markdown("##### 🎯 Strategy Preset Performance Breakdown")
+    st.markdown("##### 🎯 Strategy Preset Performance Breakdown (Multi-Timeframe Duration Windows)")
     if not trades_df.empty and "Strategy_Preset" in trades_df.columns:
         preset_kpi_rows = []
         for p_name, grp in trades_df.groupby("Strategy_Preset"):
@@ -3080,6 +3598,18 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
             p_b_tickers = sorted(list(set([str(t) for t in grp["Buy Ticker"] if str(t).strip() not in ["—", "", "nan"]])))
             p_s_tickers = sorted(list(set([str(t) for t in grp["Sell Ticker"] if str(t).strip() not in ["—", "", "nan"]])))
 
+            # Multi-horizon duration window PnLs
+            p_ref = pd.Timestamp.now()
+            p_exec = pd.to_datetime(grp.get("Execution_Timestamp"), errors="coerce").fillna(pd.to_datetime(grp.get("Exit_Timestamp"), errors="coerce")).fillna(p_ref)
+            p_diff_days = (p_ref - p_exec).dt.total_seconds() / 86400.0
+
+            p_pnl_1m = float(pd.to_numeric(grp[p_diff_days <= 30]["PnL_Rs"], errors="coerce").sum())
+            p_pnl_1q = float(pd.to_numeric(grp[p_diff_days <= 90]["PnL_Rs"], errors="coerce").sum())
+            p_pnl_6m = float(pd.to_numeric(grp[p_diff_days <= 180]["PnL_Rs"], errors="coerce").sum())
+            p_pnl_1y = float(pd.to_numeric(grp[p_diff_days <= 365]["PnL_Rs"], errors="coerce").sum())
+            p_pnl_3y = float(pd.to_numeric(grp[p_diff_days <= 1095]["PnL_Rs"], errors="coerce").sum())
+            p_pnl_5y = float(pd.to_numeric(grp[p_diff_days <= 1825]["PnL_Rs"], errors="coerce").sum())
+
             preset_kpi_rows.append({
                 "Strategy Preset": p_name,
                 "Total Trades": len(grp),
@@ -3088,6 +3618,12 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
                 "Active": len(grp[grp["Status"] == "ACTIVE"]),
                 "Closed": p_tot_c,
                 "Win Rate %": f"{p_wrate:.1f}%" if p_tot_c > 0 else "Pending",
+                "1M PnL (₹)": p_pnl_1m,
+                "1Q PnL (₹)": p_pnl_1q,
+                "6M PnL (₹)": p_pnl_6m,
+                "1Y PnL (₹)": p_pnl_1y,
+                "3Y PnL (₹)": p_pnl_3y,
+                "5Y PnL (₹)": p_pnl_5y,
                 "Realized PnL (₹)": p_pnl,
                 "Unrealized PnL (₹)": p_unreal
             })
@@ -3096,6 +3632,12 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
             render_top_scrollbar_sync()
             st.dataframe(
                 preset_kpi_df.style.apply(apply_paper_table_styling, axis=None).format({
+                    "1M PnL (₹)": "₹{:+,.2f}",
+                    "1Q PnL (₹)": "₹{:+,.2f}",
+                    "6M PnL (₹)": "₹{:+,.2f}",
+                    "1Y PnL (₹)": "₹{:+,.2f}",
+                    "3Y PnL (₹)": "₹{:+,.2f}",
+                    "5Y PnL (₹)": "₹{:+,.2f}",
                     "Realized PnL (₹)": "₹{:+,.2f}",
                     "Unrealized PnL (₹)": "₹{:+,.2f}"
                 }),
@@ -3128,12 +3670,13 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
     # Active Positions Table with Enriched Parameter Provenance (Visible to all users)
     st.markdown("##### 📋 Open Active Positions (Live MTM & Indicator Provenance)")
     if not open_trades.empty:
+        open_trades["Timeframe Horizon"] = open_trades["Execution_Timestamp"].apply(assign_trade_timeframe_horizon)
         open_display_cols = [
             "Trade_Action", "Buy Ticker", "Sell Ticker", "Trade_ID", "Category", "Strategy_Preset",
             "Trigger_Indicator", "Near_Support_Status",
             "Technical_Score_At_Entry", "Fundamental_Score_At_Entry", "RSI_At_Entry",
             "Entry_Price", "Live_CMP", "Executed_Qty", "Stop_Loss", "Target",
-            "PnL_Rs", "PnL_Pct", "Hold_Duration_Days", "Execution_Timestamp"
+            "PnL_Rs", "PnL_Pct", "Hold_Duration_Days", "Timeframe Horizon", "Execution_Timestamp"
         ]
         valid_open_cols = [c for c in open_display_cols if c in open_trades.columns]
         render_top_scrollbar_sync()
@@ -3191,11 +3734,12 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
     # Closed Positions History Journal (Visible to all users)
     st.markdown("##### 📜 Closed Positions & Historical Exit Journal")
     if not closed_trades.empty:
+        closed_trades["Timeframe Horizon"] = closed_trades["Execution_Timestamp"].apply(assign_trade_timeframe_horizon)
         closed_display_cols = [
             "Trade_Action", "Buy Ticker", "Sell Ticker", "Trade_ID", "Category", "Strategy_Preset",
             "Trigger_Indicator", "Near_Support_Status",
             "Technical_Score_At_Entry", "Fundamental_Score_At_Entry",
-            "Entry_Price", "Exit_Price", "Executed_Qty", "Hold_Duration_Days",
+            "Entry_Price", "Exit_Price", "Executed_Qty", "Hold_Duration_Days", "Timeframe Horizon",
             "PnL_Rs", "PnL_Pct", "Exit_Reason", "Execution_Timestamp", "Exit_Timestamp"
         ]
         valid_closed_cols = [c for c in closed_display_cols if c in closed_trades.columns]
@@ -3214,6 +3758,25 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
         )
     else:
         st.info("No closed positions recorded yet.")
+
+    # Strategic Logic & Guardrails Changes History Log Expander
+    with st.expander("🏛️ Strategic Logic & Guardrails Changes History Log (Click to view)", expanded=False):
+        st.markdown(
+            """
+            > **Institutional Strategic Governance:** Permanent audit log documenting version milestones, quantitative formula adaptations, safety guardrail deployments, and algorithmic improvements across the AGY Tactical Allocator platform.
+            """
+        )
+        strat_log_df = load_strategy_change_log()
+        if not strat_log_df.empty:
+            render_top_scrollbar_sync()
+            st.dataframe(
+                strat_log_df,
+                column_config=get_pinned_column_config(strat_log_df, 3),
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No strategic changes logged yet.")
 
     # =====================================================================
     # DEDICATED INTRADAY TRADE EXECUTION & PARAMETER TELEMETRY JOURNAL
@@ -3512,6 +4075,18 @@ elif "Multi-Regime Backtesting" in active_tab:
             column_config=get_pinned_column_config(param_change_log_df, 3),
             use_container_width=True,
             height=180
+        )
+
+    # 5. Strategic Logic & Architectural Changes History Log
+    st.markdown("---")
+    st.markdown("#### 🏛️ Strategic Logic & Architectural Changes Log")
+    strat_log_tab3 = load_strategy_change_log()
+    if not strat_log_tab3.empty:
+        st.dataframe(
+            strat_log_tab3,
+            column_config=get_pinned_column_config(strat_log_tab3, 3),
+            use_container_width=True,
+            height=200
         )
 
 

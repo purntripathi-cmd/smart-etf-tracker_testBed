@@ -1145,8 +1145,18 @@ def compute_multi_timeframe_performance(trades_df, reference_dt=None):
             "Horizon", "Total Trades", "Active", "Closed", "Wins", "Losses",
             "Win Rate %", "Realized PnL (₹)", "Unrealized PnL (₹)", "Total PnL (₹)", "Capital Deployed (₹)"
         ])
-        empty_sub = pd.DataFrame()
-        return {"matrix_df": empty_matrix, "category_df": empty_sub, "preset_df": empty_sub}
+        empty_preset = pd.DataFrame([
+            {
+                "Strategy Preset": p,
+                "Category Performance Hint": "ETFs, Equities (Awaiting execution)",
+                "Total Trades": 0, "Active": 0, "Closed": 0, "Win Rate %": "Pending",
+                "1M PnL (₹)": 0.0, "1Q PnL (₹)": 0.0, "6M PnL (₹)": 0.0, "1Y PnL (₹)": 0.0,
+                "3Y PnL (₹)": 0.0, "5Y PnL (₹)": 0.0, "Realized PnL (₹)": 0.0,
+                "Unrealized PnL (₹)": 0.0, "Total PnL (₹)": 0.0, "Capital Deployed (₹)": 0.0
+            }
+            for p in ["Default", "Swing / Positional", "Long-Term", "Intraday", "AI / RAG", "Apex Multi-Factor"]
+        ])
+        return {"matrix_df": empty_matrix, "category_df": pd.DataFrame(), "preset_df": empty_preset}
 
     df = trades_df.copy()
     ref_dt = reference_dt if reference_dt is not None else pd.Timestamp.now()
@@ -1197,6 +1207,149 @@ def compute_multi_timeframe_performance(trades_df, reference_dt=None):
 
     matrix_df = pd.DataFrame(matrix_rows)
 
+    def _normalize_preset_label(p):
+        p_str = str(p or "").strip()
+        p_u = p_str.upper()
+        if "APEX" in p_u or "CATEGORY 6" in p_u:
+            return "Apex Multi-Factor"
+        if "INTRADAY" in p_u:
+            return "Intraday"
+        if "SWING" in p_u:
+            return "Swing / Positional"
+        if "LONG" in p_u:
+            return "Long-Term"
+        if "AI" in p_u or "RAG" in p_u:
+            return "AI / RAG"
+        if "DEFAULT" in p_u:
+            return "Default"
+        return p_str
+
+    def _generate_category_hint(p_trades):
+        if p_trades is None or p_trades.empty:
+            return "ETFs, Equities (Awaiting execution)"
+        cat_col = "Category" if "Category" in p_trades.columns else "Asset_Class"
+        if cat_col not in p_trades.columns:
+            return "Multi-Asset (Ready)"
+        
+        parts = []
+        for cat_val, c_sub in p_trades.groupby(cat_col):
+            c_cld = c_sub[(c_sub["Status"] != "ACTIVE") & (c_sub["Status"] != "EXIT_ALERT")]
+            c_pnl = float(pd.to_numeric(c_cld.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum())
+            c_unreal = float(pd.to_numeric(c_sub[c_sub["Status"] == "ACTIVE"].get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum())
+            net_pnl = c_pnl + c_unreal
+            
+            lbl = str(cat_val).strip()
+            if "ETF" in lbl.upper():
+                short_lbl = "ETFs"
+            elif "EQUITIES" in lbl.upper() or "STOCK" in lbl.upper() or "NIFTY" in lbl.upper():
+                short_lbl = "Equities"
+            elif "REIT" in lbl.upper():
+                short_lbl = "REITs"
+            elif "METAL" in lbl.upper() or "GOLD" in lbl.upper():
+                short_lbl = "Metals"
+            else:
+                short_lbl = lbl[:10]
+
+            tot_c = len(c_cld)
+            wins = int((pd.to_numeric(c_cld.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce") > 0).sum())
+            pnl_str = f"₹{net_pnl:+,.0f}" if abs(net_pnl) >= 1 else "₹0"
+            if tot_c > 0:
+                parts.append(f"{short_lbl}: {pnl_str} ({wins}/{tot_c}W)")
+            elif len(c_sub) > 0:
+                parts.append(f"{short_lbl}: {pnl_str} (Active)")
+
+        if not parts:
+            return "ETFs, Equities (Awaiting execution)"
+        return " • ".join(parts)
+
+    def _build_preset_matrix():
+        canonical_presets = [
+            "Default",
+            "Swing / Positional",
+            "Long-Term",
+            "Intraday",
+            "AI / RAG",
+            "Apex Multi-Factor"
+        ]
+        
+        preset_map = {}
+        if "Strategy_Preset" in df.columns:
+            for p_raw, grp in df.groupby("Strategy_Preset"):
+                norm_p = _normalize_preset_label(p_raw)
+                if norm_p not in preset_map:
+                    preset_map[norm_p] = []
+                preset_map[norm_p].append(grp)
+
+        if "Intraday" not in preset_map and "Trigger_Type" in df.columns:
+            intra_sub = df[df["Trigger_Type"].astype(str).str.upper().str.contains("INTRADAY")]
+            if not intra_sub.empty:
+                preset_map["Intraday"] = [intra_sub]
+
+        ordered_presets = list(canonical_presets)
+        for p in preset_map:
+            if p not in ordered_presets:
+                ordered_presets.append(p)
+
+        res_rows = []
+        for p_name in ordered_presets:
+            if p_name in preset_map:
+                grp = pd.concat(preset_map[p_name], ignore_index=True)
+            else:
+                grp = pd.DataFrame()
+
+            if not grp.empty:
+                cld = grp[(grp["Status"] != "ACTIVE") & (grp["Status"] != "EXIT_ALERT")]
+                tot_c = len(cld)
+                cld_pnl = float(pd.to_numeric(cld.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum())
+                unreal_pnl = float(pd.to_numeric(grp[grp["Status"] == "ACTIVE"].get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum())
+                cap = float(pd.to_numeric(grp.get("Invested_Value", pd.Series(dtype=float)), errors="coerce").sum())
+                wins = int((pd.to_numeric(cld.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce") > 0).sum())
+                wr = (wins / tot_c * 100.0) if tot_c > 0 else 0.0
+
+                def get_sub_pnl(max_d):
+                    sub_c = cld[cld["_days_diff"] <= max_d]
+                    return round(float(pd.to_numeric(sub_c.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum()), 2)
+
+                res_rows.append({
+                    "Strategy Preset": p_name,
+                    "Category Performance Hint": _generate_category_hint(grp),
+                    "Total Trades": len(grp),
+                    "Active": len(grp[grp["Status"] == "ACTIVE"]),
+                    "Closed": tot_c,
+                    "Win Rate %": f"{wr:.1f}%" if tot_c > 0 else "Pending",
+                    "1M PnL (₹)": get_sub_pnl(30),
+                    "1Q PnL (₹)": get_sub_pnl(90),
+                    "6M PnL (₹)": get_sub_pnl(180),
+                    "1Y PnL (₹)": get_sub_pnl(365),
+                    "3Y PnL (₹)": get_sub_pnl(1095),
+                    "5Y PnL (₹)": get_sub_pnl(1825),
+                    "Realized PnL (₹)": round(cld_pnl, 2),
+                    "Unrealized PnL (₹)": round(unreal_pnl, 2),
+                    "Total PnL (₹)": round(cld_pnl + unreal_pnl, 2),
+                    "Capital Deployed (₹)": round(cap, 2)
+                })
+            else:
+                res_rows.append({
+                    "Strategy Preset": p_name,
+                    "Category Performance Hint": "ETFs, Equities (Awaiting execution)",
+                    "Total Trades": 0,
+                    "Active": 0,
+                    "Closed": 0,
+                    "Win Rate %": "Pending",
+                    "1M PnL (₹)": 0.0,
+                    "1Q PnL (₹)": 0.0,
+                    "6M PnL (₹)": 0.0,
+                    "1Y PnL (₹)": 0.0,
+                    "3Y PnL (₹)": 0.0,
+                    "5Y PnL (₹)": 0.0,
+                    "Realized PnL (₹)": 0.0,
+                    "Unrealized PnL (₹)": 0.0,
+                    "Total PnL (₹)": 0.0,
+                    "Capital Deployed (₹)": 0.0
+                })
+
+        return pd.DataFrame(res_rows)
+
     def _build_horizon_breakdown(group_col):
         if group_col not in df.columns:
             return pd.DataFrame()
@@ -1231,7 +1384,7 @@ def compute_multi_timeframe_performance(trades_df, reference_dt=None):
         return pd.DataFrame(res_rows)
 
     cat_df = _build_horizon_breakdown("Category")
-    preset_df = _build_horizon_breakdown("Strategy_Preset")
+    preset_df = _build_preset_matrix()
 
     return {
         "matrix_df": matrix_df,

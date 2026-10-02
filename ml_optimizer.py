@@ -28,6 +28,12 @@ except ImportError:
     def is_trading_day(dt=None):
         return True, "Active Trading Session"
 
+try:
+    from strategy_engine import check_conviction_gate
+except Exception:
+    def check_conviction_gate(candidate_row, is_buy=True, config=None):
+        return True
+
 LOCAL_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
 

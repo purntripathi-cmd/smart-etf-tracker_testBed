@@ -137,6 +137,9 @@ try:
     from strategy_engine import (
         evaluate_market_metrics,
         get_top_conviction_candidates,
+        compute_volatility_stop_and_targets,
+        get_stopped_out_tickers_in_cooldown,
+        check_conviction_gate,
         compute_multi_timeframe_performance
     )
     from sr_engine import (
@@ -204,6 +207,9 @@ except Exception as _import_err:
         from strategy_engine import (
             evaluate_market_metrics,
             get_top_conviction_candidates,
+            compute_volatility_stop_and_targets,
+            get_stopped_out_tickers_in_cooldown,
+            check_conviction_gate,
             compute_multi_timeframe_performance
         )
         from ml_optimizer import (
@@ -3537,21 +3543,75 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
 
     # Multi-Timeframe Duration Performance Matrix (Standardized Rolling Horizons)
     st.markdown("##### ⏱️ Multi-Timeframe Duration Performance Matrix (1M, Quarter, 6M, 1Y, 3Y, 5Y)")
-    st.caption("Standardized rolling window analytics across execution & exit timestamps • Win Rate %, Realized PnL, Capital Deployed & ROI %")
-    if multi_tf_perf and "matrix_df" in multi_tf_perf and not multi_tf_perf["matrix_df"].empty:
-        tf_mat_df = multi_tf_perf["matrix_df"]
-        render_top_scrollbar_sync()
-        st.dataframe(
-            tf_mat_df.style.apply(apply_paper_table_styling, axis=None).format({
-                "Realized PnL (₹)": "₹{:+,.2f}",
-                "Unrealized PnL (₹)": "₹{:+,.2f}",
-                "Total PnL (₹)": "₹{:+,.2f}",
-                "Capital Deployed (₹)": "₹{:,.2f}"
-            }),
-            column_config=get_pinned_column_config(tf_mat_df, 2),
-            use_container_width=True,
-            hide_index=True
-        )
+    st.caption("Standardized rolling window duration analytics across all presets & horizons • All 6 Presets including Intraday with Category Contribution Hints")
+
+    tf_tab_preset, tf_tab_global, tf_tab_cat = st.tabs([
+        "🎯 Presets Duration Matrix (All 6 Presets + Intraday)",
+        "🌐 Portfolio Rolling Horizons (1M, 1Q, 6M, 1Y, 3Y, 5Y)",
+        "📊 Asset Category Duration Horizons (ETFs, Equities, REITs, Metals)"
+    ])
+
+    with tf_tab_preset:
+        if multi_tf_perf and "preset_df" in multi_tf_perf and not multi_tf_perf["preset_df"].empty:
+            p_mat_df = multi_tf_perf["preset_df"]
+            render_top_scrollbar_sync()
+            st.dataframe(
+                p_mat_df.style.apply(apply_paper_table_styling, axis=None).format({
+                    "1M PnL (₹)": "₹{:+,.2f}",
+                    "1Q PnL (₹)": "₹{:+,.2f}",
+                    "6M PnL (₹)": "₹{:+,.2f}",
+                    "1Y PnL (₹)": "₹{:+,.2f}",
+                    "3Y PnL (₹)": "₹{:+,.2f}",
+                    "5Y PnL (₹)": "₹{:+,.2f}",
+                    "Realized PnL (₹)": "₹{:+,.2f}",
+                    "Unrealized PnL (₹)": "₹{:+,.2f}",
+                    "Total PnL (₹)": "₹{:+,.2f}",
+                    "Capital Deployed (₹)": "₹{:,.2f}"
+                }),
+                column_config=get_pinned_column_config(p_mat_df, 2),
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No preset duration performance recorded yet.")
+
+    with tf_tab_global:
+        if multi_tf_perf and "matrix_df" in multi_tf_perf and not multi_tf_perf["matrix_df"].empty:
+            tf_mat_df = multi_tf_perf["matrix_df"]
+            render_top_scrollbar_sync()
+            st.dataframe(
+                tf_mat_df.style.apply(apply_paper_table_styling, axis=None).format({
+                    "Realized PnL (₹)": "₹{:+,.2f}",
+                    "Unrealized PnL (₹)": "₹{:+,.2f}",
+                    "Total PnL (₹)": "₹{:+,.2f}",
+                    "Capital Deployed (₹)": "₹{:,.2f}"
+                }),
+                column_config=get_pinned_column_config(tf_mat_df, 2),
+                use_container_width=True,
+                hide_index=True
+            )
+
+    with tf_tab_cat:
+        if multi_tf_perf and "category_df" in multi_tf_perf and not multi_tf_perf["category_df"].empty:
+            c_mat_df = multi_tf_perf["category_df"]
+            render_top_scrollbar_sync()
+            st.dataframe(
+                c_mat_df.style.apply(apply_paper_table_styling, axis=None).format({
+                    "1M PnL (₹)": "₹{:+,.2f}",
+                    "1Q PnL (₹)": "₹{:+,.2f}",
+                    "6M PnL (₹)": "₹{:+,.2f}",
+                    "1Y PnL (₹)": "₹{:+,.2f}",
+                    "3Y PnL (₹)": "₹{:+,.2f}",
+                    "5Y PnL (₹)": "₹{:+,.2f}",
+                    "Total Realized PnL (₹)": "₹{:+,.2f}",
+                    "Unrealized PnL (₹)": "₹{:+,.2f}"
+                }),
+                column_config=get_pinned_column_config(c_mat_df, 2),
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No category duration performance recorded yet.")
 
     # Unified Portfolio Overview & Asset Allocation Summary (Visible to all users)
     st.markdown("##### 💼 Unified Portfolio Overview & Asset Holdings")

@@ -657,11 +657,17 @@ def evaluate_market_metrics(raw, universe_config, is_stock_mode=False, dynamic_w
 # =====================================================================
 # TACTICAL QUANT SAFEGUARDS: COOLDOWN & CONVICTION GATES
 # =====================================================================
-def get_stopped_out_tickers_in_cooldown(trades_df, cooldown_days=5):
+def get_stopped_out_tickers_in_cooldown(trades_df=None, cooldown_days=5):
     """
     Returns a set of uppercase tickers that suffered a STOP_LOSS_HIT or CLOSED_STOPLOSS
     within the last `cooldown_days` active NSE trading sessions.
     """
+    if trades_df is None:
+        try:
+            from paper_trader_daemon import load_paper_trades
+            trades_df = load_paper_trades()
+        except Exception:
+            return set()
     if trades_df is None or trades_df.empty or "Status" not in trades_df.columns:
         return set()
     sl_mask = trades_df["Status"].astype(str).str.strip().str.upper().isin(["STOP_LOSS_HIT", "CLOSED_STOPLOSS"])

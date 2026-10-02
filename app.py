@@ -13,6 +13,8 @@ Zero-Duplicates Architecture • Centralized Multi-Asset Execution Console • E
 
 import os
 import sys
+import io
+import importlib
 import json
 import logging
 import datetime
@@ -122,8 +124,15 @@ st.markdown(
 )
 
 # =====================================================================
-# INTERNAL MODULE IMPORTS
+# INTERNAL MODULE IMPORTS (WITH HOT-RELOAD CACHE INVALIDATION)
 # =====================================================================
+for _mod_name in ["strategy_engine", "ml_optimizer", "paper_trader_daemon", "reit_scanner", "universe_manager", "sr_engine"]:
+    if _mod_name in sys.modules:
+        try:
+            importlib.reload(sys.modules[_mod_name])
+        except Exception:
+            pass
+
 try:
     from strategy_engine import (
         evaluate_market_metrics,
@@ -185,11 +194,57 @@ try:
         save_platform_setting
     )
 except Exception as _import_err:
-    import traceback
-    st.error(f"⚠️ Internal Module Import Error: {_import_err}")
-    st.code(traceback.format_exc())
-    st.info("Tip: Click 'Manage app' in Streamlit Cloud, then click 'Reboot app' to purge any stale cached Python modules.")
-    st.stop()
+    try:
+        import strategy_engine
+        importlib.reload(strategy_engine)
+        import ml_optimizer
+        importlib.reload(ml_optimizer)
+        import paper_trader_daemon
+        importlib.reload(paper_trader_daemon)
+        from strategy_engine import (
+            evaluate_market_metrics,
+            get_top_conviction_candidates,
+            compute_multi_timeframe_performance
+        )
+        from ml_optimizer import (
+            load_runtime_config,
+            evaluate_strategy_performance_and_suggest_tweaks,
+            apply_suggested_optimizations,
+            reset_runtime_config_to_defaults,
+            save_manual_parameter_adjustments,
+            get_parameter_reference_matrix,
+            get_monthly_performance_comparison,
+            load_parameter_change_log,
+            get_ai_rag_conviction_candidates,
+            load_strategy_change_log,
+            log_strategic_change,
+            check_conviction_gate
+        )
+        from paper_trader_daemon import (
+            evaluate_trade_exits,
+            load_paper_trades,
+            save_paper_trades,
+            load_audit_log,
+            run_paper_trader_daemon,
+            compute_volatility_stop_and_targets,
+            get_stopped_out_tickers_in_cooldown,
+            LOCAL_AUDIT_CSV,
+            LOCAL_TRADES_CSV,
+            DEFAULT_AUDIT_HEADERS,
+            DEFAULT_PAPER_HEADERS,
+            DEFAULT_USER_HEADERS,
+            setup_or_repair_gsheets_schema,
+            get_direct_gspread_client,
+            is_weekend_trading_allowed,
+            load_platform_setting,
+            save_platform_setting
+        )
+    except Exception as _second_err:
+        import traceback
+        st.error(f"⚠️ Internal Module Import Error: {_second_err}")
+        st.code(traceback.format_exc())
+        st.info("Tip: Click 'Manage app' in Streamlit Cloud, then click 'Reboot app' to purge any stale cached Python modules.")
+        st.stop()
 
 try:
     from export_to_docx import export_v2_docx_file, generate_v2_docx_content
@@ -1565,7 +1620,15 @@ def get_apex_multi_factor_candidates(etfs_df, stocks_df, top_n=3):
     and returns top N BUY and top N SELL recommendations with explicit selection rationale hints.
     """
     runtime_cfg = load_runtime_config()
-    cooldown_tickers = get_stopped_out_tickers_in_cooldown()
+    try:
+        from paper_trader_daemon import load_paper_trades
+        _cooldown_trades = load_paper_trades()
+        cooldown_tickers = get_stopped_out_tickers_in_cooldown(_cooldown_trades)
+    except Exception:
+        try:
+            cooldown_tickers = get_stopped_out_tickers_in_cooldown()
+        except Exception:
+            cooldown_tickers = set()
     presets_to_evaluate = ["Default", "Swing / Positional", "Long-Term", "Intraday", "AI / RAG"]
 
     raw_buys = []
@@ -1948,27 +2011,35 @@ def generate_paper_trade_audit_excel(trades_df, strategy_log_df, perf_dict):
     ]
     code_df = pd.DataFrame(code_summary_rows)
 
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        code_df.to_excel(writer, sheet_name="Platform_&_Code_Summary", index=False)
-        if strategy_log_df is not None and not strategy_log_df.empty:
-            strategy_log_df.to_excel(writer, sheet_name="Strategic_Changes_Log", index=False)
-        else:
-            pd.DataFrame({"Status": ["No strategic changes recorded"]}).to_excel(writer, sheet_name="Strategic_Changes_Log", index=False)
-        
+    import io
+    try:
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            code_df.to_excel(writer, sheet_name="Platform_&_Code_Summary", index=False)
+            if strategy_log_df is not None and not strategy_log_df.empty:
+                strategy_log_df.to_excel(writer, sheet_name="Strategic_Changes_Log", index=False)
+            else:
+                pd.DataFrame({"Status": ["No strategic changes recorded"]}).to_excel(writer, sheet_name="Strategic_Changes_Log", index=False)
+            
+            if trades_df is not None and not trades_df.empty:
+                trades_df.to_excel(writer, sheet_name="Complete_Trade_Ledger", index=False)
+            else:
+                pd.DataFrame({"Status": ["No paper trades recorded"]}).to_excel(writer, sheet_name="Complete_Trade_Ledger", index=False)
+
+            if perf_dict and "matrix_df" in perf_dict and not perf_dict["matrix_df"].empty:
+                perf_dict["matrix_df"].to_excel(writer, sheet_name="Multi_Timeframe_Perf", index=False)
+            if perf_dict and "category_df" in perf_dict and not perf_dict["category_df"].empty:
+                perf_dict["category_df"].to_excel(writer, sheet_name="Category_Performance", index=False)
+            if perf_dict and "preset_df" in perf_dict and not perf_dict["preset_df"].empty:
+                perf_dict["preset_df"].to_excel(writer, sheet_name="Preset_Performance", index=False)
+
+        return buf.getvalue()
+    except Exception as e:
+        buf = io.BytesIO()
+        buf.write(f"Audit Export Report\nError: {e}\n\n".encode("utf-8"))
         if trades_df is not None and not trades_df.empty:
-            trades_df.to_excel(writer, sheet_name="Complete_Trade_Ledger", index=False)
-        else:
-            pd.DataFrame({"Status": ["No paper trades recorded"]}).to_excel(writer, sheet_name="Complete_Trade_Ledger", index=False)
-
-        if perf_dict and "matrix_df" in perf_dict and not perf_dict["matrix_df"].empty:
-            perf_dict["matrix_df"].to_excel(writer, sheet_name="Multi_Timeframe_Perf", index=False)
-        if perf_dict and "category_df" in perf_dict and not perf_dict["category_df"].empty:
-            perf_dict["category_df"].to_excel(writer, sheet_name="Category_Performance", index=False)
-        if perf_dict and "preset_df" in perf_dict and not perf_dict["preset_df"].empty:
-            perf_dict["preset_df"].to_excel(writer, sheet_name="Preset_Performance", index=False)
-
-    return buf.getvalue()
+            buf.write(trades_df.to_csv(index=False).encode("utf-8"))
+        return buf.getvalue()
 
 
 def assign_trade_timeframe_horizon(exec_ts, ref_dt=None):
@@ -2902,9 +2973,15 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
             st.rerun()
 
     raw_trades = load_paper_trades()
-    trades_df = raw_trades.copy()
-    multi_tf_perf = compute_multi_timeframe_performance(trades_df)
-    strategy_changelog_df = load_strategy_change_log()
+    trades_df = raw_trades.copy() if (raw_trades is not None and isinstance(raw_trades, pd.DataFrame)) else pd.DataFrame()
+    try:
+        multi_tf_perf = compute_multi_timeframe_performance(trades_df)
+    except Exception:
+        multi_tf_perf = {"matrix_df": pd.DataFrame(), "category_df": pd.DataFrame(), "preset_df": pd.DataFrame()}
+    try:
+        strategy_changelog_df = load_strategy_change_log()
+    except Exception:
+        strategy_changelog_df = pd.DataFrame()
 
     # Comprehensive Audit & Strategy Package Download
     c_dl1, c_dl2 = st.columns([3.2, 1.8])
@@ -2918,15 +2995,19 @@ elif "Paper Trading & Multi-Asset Ledger" in active_tab:
             unsafe_allow_html=True
         )
     with c_dl2:
-        audit_excel_bytes = generate_paper_trade_audit_excel(trades_df, strategy_changelog_df, multi_tf_perf)
-        st.download_button(
-            label="📥 Download Paper Trade Summary (.xlsx)",
-            data=audit_excel_bytes,
-            file_name=f"AGY_Paper_Trade_Audit_{datetime.datetime.now(IST).strftime('%Y%m%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            key="btn_download_paper_trade_audit_xlsx"
-        )
+        try:
+            audit_excel_bytes = generate_paper_trade_audit_excel(trades_df, strategy_changelog_df, multi_tf_perf)
+        except Exception:
+            audit_excel_bytes = b""
+        if audit_excel_bytes:
+            st.download_button(
+                label="📥 Download Paper Trade Summary (.xlsx)",
+                data=audit_excel_bytes,
+                file_name=f"AGY_Paper_Trade_Audit_{datetime.datetime.now(IST).strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key="btn_download_paper_trade_audit_xlsx"
+            )
 
     render_metric_glossary_expander("tab2")
 

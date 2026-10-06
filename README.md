@@ -1,112 +1,56 @@
 # ⚡ AGY Quant Platform V2: Public Testbed Edition
 
-The **V2 Public Testbed** is a completely self-contained, **zero-secret** edition of the AGY platform designed for public hosting on Streamlit Community Cloud, public GitHub repositories, or test VMs.
+The **V2 Public Testbed** is a completely self-contained, **zero-secret** quantitative research and screening edition of the AGY platform designed for public hosting on Streamlit Community Cloud, public GitHub repositories, or test VMs.
+
+> **Note on Paper Trading:** Paper trading execution and daemon crons are hosted exclusively in the production repository (`smart-etf-tracker`). The testbed focuses purely on high-conviction screening, multi-factor ranking, regime backtesting, and quantitative research without background crons or scheduled runs.
 
 ---
 
-## 🎯 Key Differences Between V1 and V2
+## 🎯 Key Differences Between Production and Testbed
 
-| Feature | V1 (Private Production) | V2 (Public Testbed) |
+| Feature | Private Production | Public Testbed |
 |---|---|---|
-| **Google Sheets Sync** | Yes (Requires Service Account & URL) | ❌ **No Secrets** (Pure local CSV in `data/`) |
-| **Telegram Notifications** | Yes (Requires Bot Token & Chat ID) | ❌ **Disabled** (Detailed console & file logs in `daemon_execution.log`) |
+| **Google Sheets Sync** | Yes (Service Account & URL) | ❌ **No Secrets** (Pure in-memory & local fallback) |
+| **Telegram Notifications** | Yes (Bot Token & Chat ID) | ❌ **Disabled** |
+| **Paper Trade Execution** | ✅ **Active with autonomous crons** | ❌ **Retired** (Managed exclusively in Production) |
 | **Public Hosting Safety** | ⚠️ Secrets must be protected | ✅ **100% Public-Safe** (Can be hosted in public GitHub repos) |
-| **External Cron Automation** | Requires GitHub Secrets | ✅ **cron-job.org, Webhook, GitHub Actions, or Python scheduler** |
-| **Universe & Math Models** | 52 Stocks + 35 ETFs | **Identical (52 Stocks + 35 ETFs)** |
+| **Universe & Math Models** | 250+ Stocks + 35 ETFs + REITs + Metals | **Identical (250+ Stocks + 35 ETFs + REITs + Metals)** |
 | **Top 3 BUY / SELL Matrix** | All 5 Presets on Tab 1 | **Identical (All 5 Presets on Tab 1)** |
 | **AI/ML Strategy Review & One-Click Tuning** | Yes | **Identical (Yes, tunes `runtime_config.json` via button)** |
-| **Inbuilt Exit Engine** | Target, Stop, Trailing Stop, Square-off | **Identical (Logs exit reason, exit price & hold duration)** |
-| **Multi-Regime KPI Matrix** | Tab 2 | **Yes (Sliced by Category & Entry Market Regime)** |
 | **Dual Top/Bottom Scrollbars** | Included | **Yes (`render_top_scrollbar_sync` JavaScript)** |
 | **Color-Coded Screener** | Included | **Yes (Top 5 BUY Green / Top 5 SELL Red per column)** |
 
 ---
 
-## 📁 V2 File Structure
+## 📁 Repository Structure
 
 ```text
-v2/
+smart-etf-tracker_testBed/
 ├── app.py                      # Public Streamlit dashboard with dual scrollbars & tooltips
 ├── strategy_engine.py          # Indicators, universe, top 3 matrix, exit rules, RS spread
 ├── ml_optimizer.py             # Headless AI/RAG synthesis & one-click tuner
-├── paper_trader_daemon.py      # Scheduled execution daemon (pure console logging)
-├── cron_webhook.py             # Standalone HTTP POST / GET webhook server for cron-job.org
-├── external_cron_job.py        # Standalone Python scheduler for external hosting
+├── sr_engine.py                # Support & resistance mean-reversion analysis
+├── reit_scanner.py             # REIT & InvIT fundamentals scanner
+├── universe_manager.py         # Multi-asset ticker configuration & coverage
+├── dual_logic_ui.py            # Deep-value contrarian & bear resilience UI
 ├── runtime_config.json         # Active tuned strategy parameters
 ├── requirements.txt            # Lightweight dependencies (no Google auth)
-├── README_V2.md                # Documentation & deployment guide
-└── .github/
-    └── workflows/
-        └── paper_trader_v2.yml # GitHub Actions cron without any secrets
+└── README.md                   # Documentation & deployment guide
 ```
 
 ---
 
 ## 🚀 How to Host Publicly on Streamlit Community Cloud (Free)
 
-1. Create a public repository on GitHub (e.g. `your-username/agy-quant-v2`).
-2. Copy all files from this `v2/` directory to your repository.
+1. Create a public repository on GitHub (e.g. `your-username/smart-etf-tracker_testBed`).
+2. Push this repository to GitHub.
 3. Go to [share.streamlit.io](https://share.streamlit.io) and log in with GitHub.
 4. Click **New app**:
-   - **Repository:** `your-username/agy-quant-v2`
+   - **Repository:** `your-username/smart-etf-tracker_testBed`
    - **Branch:** `main`
    - **Main file path:** `app.py`
 5. Click **Deploy!**
-6. That's it! Your testbed terminal is now live on the internet with **no secrets or API credentials to configure**.
-
----
-
-## ⏰ External Cron Options (cron-job.org & Others)
-
-### Option 1: https://cron-job.org/en/ via Direct App Query (Easiest & Free)
-When your app is hosted on Streamlit Cloud (e.g. `https://my-quant-terminal.streamlit.app`):
-1. Register free at [cron-job.org](https://cron-job.org/en/) and click **Create Cronjob**.
-2. **Title:** `AGY 3PM Accumulation`
-3. **URL:**
-   ```text
-   https://my-quant-terminal.streamlit.app/?cron_trigger=1&mode=PAPER_TRADE_3PM&token=agy_quant_secure_token_2026
-   ```
-4. **Schedule:** Monday to Friday at `15:00` (Timezone: `Asia/Kolkata`).
-5. **Request Method:** `GET`
-6. Click **Save**.
-
-Repeat for other routines:
-- **09:45 AM IST:** `.../?cron_trigger=1&mode=INTRADAY_ENTRY&token=agy_quant_secure_token_2026`
-- **03:10 PM IST:** `.../?cron_trigger=1&mode=INTRADAY_SQUAREOFF&token=agy_quant_secure_token_2026`
-
----
-
-### Option 2: https://cron-job.org/en/ via HTTP POST (`cron_webhook.py`)
-If you host `cron_webhook.py` on Render (Free Web Service), Railway, Koyeb, or a VPS:
-1. In [cron-job.org](https://cron-job.org/en/), create a new Cronjob.
-2. **Request Method:** `POST`
-3. **URL:** `https://your-webhook-service.onrender.com/trigger`
-4. **Headers:**
-   - `Content-Type`: `application/json`
-5. **Request Body:**
-   ```json
-   {
-     "mode": "PAPER_TRADE_3PM",
-     "token": "agy_quant_secure_token_2026"
-   }
-   ```
-6. **Schedule:** `15:00` Asia/Kolkata (Mon-Fri).
-
----
-
-### Option 3: GitHub Actions (Completely Free)
-The workflow file [`.github/workflows/paper_trader_v2.yml`](file:///c:/Users/epurntr/Downloads/Gravity/v2/.github/workflows/paper_trader_v2.yml) runs on GitHub's free runners:
-- **09:45 AM IST (`15 4 * * 1-5`):** Intraday Entry (Top 3 Stocks + Top 3 ETFs)
-- **03:00 PM IST (`30 9 * * 1-5`):** 3 PM Multi-Asset Accumulation & AI/RAG
-- **03:10 PM IST (`40 9 * * 1-5`):** Intraday Auto-Squareoff
-
----
-
-### Option 4: Standalone Python Scheduler (`external_cron_job.py`)
-On any server or local computer:
-```bash
-python external_cron_job.py
-```
+6. That's it! Your testbed terminal is now live on the internet with **no secrets, no background crons, and zero maintenance overhead**.
 
 ---
 

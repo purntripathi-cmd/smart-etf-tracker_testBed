@@ -18,7 +18,6 @@ DATA_DIR = os.path.join(CURRENT_DIR, "data")
 FINDINGS_JSON_PATH = os.path.join(DATA_DIR, "dual_logic_findings.json")
 RUNS_CSV_PATH = os.path.join(DATA_DIR, "dual_logic_runs.csv")
 AGENT_LOG_PATH = os.path.join(DATA_DIR, "dual_logic_agent.log")
-LOCAL_TRADES_CSV = os.path.join(DATA_DIR, "paper_trades.csv")
 
 try:
     from streamlit_autorefresh import st_autorefresh
@@ -630,93 +629,8 @@ def render_tab1_section6_bear_market_recommendations(stocks_market_df=None, etfs
                 unsafe_allow_html=True
             )
 
-            # 1-Click Paper Trade Execution Button
-            if st.button(f"⚡ 1-Click Paper Trade ({sym})", key=f"btn_paper_trade_sec6_{sym}_{idx}", use_container_width=True):
-                trade_record = {
-                    "Trade_ID": f"DL_{sym}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}",
-                    "Username": current_user,
-                    "Ticker": r["Full_Ticker"],
-                    "Trade_Action": "BUY",
-                    "Buy Ticker": r["Full_Ticker"],
-                    "Sell Ticker": "",
-                    "Category": f"Physical Moat ({r['Sector']})",
-                    "Asset_Class": "ETF" if "ETF" in sym or "BEES" in sym else "Equity",
-                    "Trigger_Type": "Dual-Logic v4.2 Bear Resilience",
-                    "Trigger_Indicator": f"Score {score:.2f} | D/E {de_val:.2f} | IC {ic_val:.1f}x | Moat {r['Asset_Moat_Score']:.2f}",
-                    "Strategy_Preset": "Deep-Value & Contrarian",
-                    "Status": "ACTIVE",
-                    "Entry_Price": cmp_val,
-                    "Live_CMP": cmp_val,
-                    "Executed_Qty": qty,
-                    "Stop_Loss": sl,
-                    "Target": tgt,
-                    "Execution_Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "Exit_Timestamp": "",
-                    "Exit_Price": 0.0,
-                    "Exit_Reason": "",
-                    "Hold_Duration_Days": 0,
-                    "PnL_Rs": 0.0,
-                    "PnL_Pct": 0.0,
-                    "Invested_Value": tranche,
-                    "Technical_Score_At_Entry": 75.0,
-                    "Fundamental_Score_At_Entry": round(r["Asset_Moat_Score"] * 100, 1),
-                    "Composite_Score_At_Entry": round(score * 100, 1),
-                    "Near_Support_Status": "True",
-                    "RSI_At_Entry": r["RSI (14D)"],
-                    "Empirical_Win_Rate_At_Entry": 93.1,
-                    "Market_Regime_At_Entry": "Contraction / Trough Deep-Value Moat"
-                }
-
-                if save_trade_fn is not None:
-                    try:
-                        save_trade_fn(pd.DataFrame([trade_record]))
-                        st.success(f"Executed paper buy order for {qty} units of {sym} at ₹{cmp_val:.2f} (Tranche: ₹{tranche:,.2f})!")
-                    except Exception as e:
-                        st.error(f"Error logging trade: {e}")
-                else:
-                    # Append directly to local trades CSV
-                    try:
-                        os.makedirs(DATA_DIR, exist_ok=True)
-                        t_df = pd.DataFrame([trade_record])
-                        if os.path.exists(LOCAL_TRADES_CSV) and os.path.getsize(LOCAL_TRADES_CSV) > 0:
-                            t_df.to_csv(LOCAL_TRADES_CSV, mode="a", header=False, index=False)
-                        else:
-                            t_df.to_csv(LOCAL_TRADES_CSV, index=False)
-
-                        # Also sync with Catalyst Pulse Pro prediction audit ledger if present
-                        pulse_ledger = "catalyst_prediction_ledger.csv"
-                        if os.path.exists(pulse_ledger):
-                            now_ist = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S IST")
-                            ledger_row = {
-                                "Prediction_ID": f"DL_{sym}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}",
-                                "Date": now_ist,
-                                "Ticker": sym,
-                                "Active_Catalyst": f"Physical Moat ({r['Sector']}) | Moat Score {r['Asset_Moat_Score']:.2f}",
-                                "CMP_At_Prediction": cmp_val,
-                                "Predicted_Outlook": "BULLISH_CONTRARIAN",
-                                "Confidence": f"{int(score*100)}%",
-                                "Target_Return_Pct": 15.0,
-                                "Stop_Loss_Pct": -8.0,
-                                "Days_Elapsed": 0,
-                                "Current_CMP": cmp_val,
-                                "Realized_Return_Pct": 0.0,
-                                "Outcome_Status": "OPEN",
-                                "Recommended_Action": "🟢 DEEP-VALUE ACCUMULATE (BUY)",
-                                "Holding_Horizon": "3-12 Months (Deep-Value)",
-                                "Target_Days": 90.0,
-                                "Trigger_Type": "DUAL_LOGIC_V4.2_BEAR_RESILIENCE",
-                                "Market_Regime": "Contraction / Trough Moat Hegemony",
-                                "Catalyst_Score": round(score * 100, 1),
-                                "Remarks": f"D/E {de_val:.2f} (<1.50) | IC {ic_val:.1f}x | 20Y Win Rate: 93.1%"
-                            }
-                            try:
-                                pd.DataFrame([ledger_row]).to_csv(pulse_ledger, mode="a", header=False, index=False)
-                            except Exception:
-                                pass
-
-                        st.success(f"Executed paper buy order for {qty} units of {sym} at ₹{cmp_val:.2f} (Tranche: ₹{tranche:,.2f})!")
-                    except Exception as e:
-                        st.error(f"Error appending trade: {e}")
+            # Paper trade execution retired on test bed
+            st.caption("ℹ️ *Paper trade execution is managed in the production environment.*")
 
     # 4. Interactive Live Deep-Value Screener Expander
     with st.expander("🔍 See More: Complete Live Deep-Value Screener & Multi-Factor Moat Table (Click to expand)", expanded=False):

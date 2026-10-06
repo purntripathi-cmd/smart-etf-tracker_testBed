@@ -645,129 +645,14 @@ def style_sr_matrix_dataframe(df):
 
 
 # =====================================================================
-# 6. S/R PAPER TRADING EXECUTION CONNECTOR
+# 6. S/R EXECUTION CONNECTOR (DISABLED IN TEST BED)
 # =====================================================================
 def execute_sr_paper_trade(clean_sym, sr_row, budget=15000.0, username="Public_User", dispatch_telegram=False):
     """
-    Executes an S/R Range Mean Reversion trade into the paper trading ledger (paper_trades.csv).
-    Optionally dispatches a formatted alert to Telegram.
-    Returns (success: bool, message: str)
+    Paper trade execution has been retired from the public test bed.
+    Paper trading is managed exclusively within the production environment.
     """
-    trades_path = os.path.join(os.path.dirname(__file__), "data", "paper_trades.csv")
-    audit_path = os.path.join(os.path.dirname(__file__), "data", "paper_audit_log.csv")
-
-    existing_df = pd.DataFrame()
-    if os.path.exists(trades_path) and os.path.getsize(trades_path) > 0:
-        try:
-            existing_df = pd.read_csv(trades_path)
-        except Exception:
-            existing_df = pd.DataFrame()
-
-    # Check duplicate active trade
-    if not existing_df.empty and "Status" in existing_df.columns:
-        active_dups = existing_df[(existing_df["Ticker"] == clean_sym) & (existing_df["Status"] == "ACTIVE")]
-        if not active_dups.empty:
-            return False, f"Ticker {clean_sym} already has an active trade in the Paper Trading Ledger."
-
-    cmp_val = float(sr_row.get("CMP (₹)", 0.0))
-    if cmp_val <= 0:
-        return False, f"Invalid CMP ₹{cmp_val:.2f} for {clean_sym}."
-
-    sl_val = float(sr_row.get("Suggested SL (₹)", round(cmp_val * 0.95, 2)))
-    tgt_val = float(sr_row.get("Suggested Target (₹)", round(cmp_val * 1.06, 2)))
-    qty = max(1, int(budget // cmp_val))
-    now_ist = datetime.datetime.now(IST)
-    trade_id = f"V2_SR_{int(now_ist.timestamp())}_{clean_sym}"
-    now_str = now_ist.strftime("%Y-%m-%d %H:%M:%S")
-
-    cat = sr_row.get("Category", "Stock")
-    s1_level = float(sr_row.get("Immediate Support S1 (₹)", sr_row.get("Major Support S1 (₹)", cmp_val * 0.97)))
-    dist_s1 = ((cmp_val - s1_level) / s1_level * 100) if s1_level > 0 else 0.0
-    near_supp = f"Yes (+{dist_s1:.1f}% from S1: ₹{s1_level:.1f})" if dist_s1 <= 3.5 else f"Above S1 (+{dist_s1:.1f}%)"
-    action_sig = str(sr_row.get("Action Signal", "S1 Support Bounce"))
-    win_rt = float(sr_row.get("5Y S/R Win Rate (%)", 50.0))
-    rsi_v = float(sr_row.get("RSI (14D)", 50.0))
-    tech_sc = float(sr_row.get("Technical Score", rsi_v))
-    fund_sc = float(sr_row.get("Fundamental Score", win_rt))
-    comp_sc = float(sr_row.get("Composite Buy Score", sr_row.get("Range Position (%)", 50.0)))
-    trig_ind = str(sr_row.get("Trigger_Indicator", f"{action_sig} (5Y Win: {win_rt:.1f}%, RSI: {rsi_v:.1f})"))
-
-    rec = {
-        "Trade_ID": trade_id,
-        "Username": username,
-        "Ticker": clean_sym,
-        "Category": cat,
-        "Asset_Class": cat,
-        "Trigger_Type": "SR_SUPPORT_BUY",
-        "Trigger_Indicator": trig_ind,
-        "Strategy_Preset": sr_row.get("Strategy_Preset", "S/R Range Mean Reversion"),
-        "Status": "ACTIVE",
-        "Entry_Price": cmp_val,
-        "Live_CMP": cmp_val,
-        "Executed_Qty": qty,
-        "Stop_Loss": sl_val,
-        "Target": tgt_val,
-        "Execution_Timestamp": now_str,
-        "Exit_Timestamp": "",
-        "Exit_Price": 0.0,
-        "Exit_Reason": "",
-        "Hold_Duration_Days": 0,
-        "PnL_Rs": 0.0,
-        "PnL_Pct": "0.0%",
-        "Invested_Value": round(cmp_val * qty, 2),
-        "Technical_Score_At_Entry": round(tech_sc, 1),
-        "Fundamental_Score_At_Entry": round(fund_sc, 1),
-        "Composite_Score_At_Entry": round(comp_sc, 1),
-        "Near_Support_Status": near_supp,
-        "RSI_At_Entry": round(rsi_v, 1),
-        "Empirical_Win_Rate_At_Entry": f"{win_rt:.1f}%",
-        "Predictability_Rating": str(sr_row.get("S/R Predictability Rating", "Good")),
-        "Market_Regime_At_Entry": str(sr_row.get("Regime", "🟢 Range-Bound"))
-    }
-
-    combined = pd.concat([existing_df, pd.DataFrame([rec])], ignore_index=True)
-    os.makedirs(os.path.dirname(trades_path), exist_ok=True)
-    combined.to_csv(trades_path, index=False)
-
-    # Save audit log
-    audit_rec = {
-        "Timestamp_IST": now_str,
-        "Trigger_Source": f"V2_SR_EXEC_{username}",
-        "Preset": "S/R Range Mean Reversion",
-        "Recommended_BUY": clean_sym,
-        "Recommended_SELL": "None",
-        "Execution_Status": f"🟢 Logged ({qty} Qty @ ₹{cmp_val:.2f})",
-        "Reason_Summary": f"S/R Entry triggered. SL: ₹{sl_val:.2f}, Target: ₹{tgt_val:.2f}, 5Y Win Rate: {sr_row.get('5Y S/R Win Rate (%)', 50)}%."
-    }
-    audit_df = pd.DataFrame()
-    if os.path.exists(audit_path) and os.path.getsize(audit_path) > 0:
-        try:
-            audit_df = pd.read_csv(audit_path)
-        except Exception:
-            audit_df = pd.DataFrame()
-    combined_audit = pd.concat([audit_df, pd.DataFrame([audit_rec])], ignore_index=True)
-    combined_audit.to_csv(audit_path, index=False)
-
-    # Optional Telegram Dispatch
-    tg_status_msg = ""
-    if dispatch_telegram:
-        try:
-            from telegram_notifier import send_telegram_message, format_paper_trade_alert, get_telegram_config
-            cfg = get_telegram_config()
-            if cfg.get("is_configured"):
-                tg_text = format_paper_trade_alert(rec, action_type="ENTRY")
-                tg_res = send_telegram_message(tg_text)
-                if tg_res.get("ok"):
-                    tg_status_msg = f" [📲 Telegram Alert Sent (Msg ID: {tg_res.get('message_id', 0)})]"
-                else:
-                    tg_status_msg = f" [⚠️ Telegram Dispatch Failed: {tg_res.get('error', 'Unknown Error')}]"
-            else:
-                tg_status_msg = " [ℹ️ Telegram Skipped: Bot Token or Chat ID not configured]"
-        except Exception as e:
-            logger.warning(f"Telegram dispatch error during S/R trade execution: {e}")
-            tg_status_msg = f" [⚠️ Telegram Exception: {e}]"
-
-    return True, f"Successfully executed {clean_sym} ({qty} Qty @ ₹{cmp_val:.2f}) with SL ₹{sl_val:.2f} and Target ₹{tgt_val:.2f}!{tg_status_msg}"
+    return False, "Paper trade execution is disabled in the test bed environment. Use production for paper trades."
 
 
 def get_balanced_4asset_sr_picks(sr_stocks_df: pd.DataFrame, sr_etfs_df: pd.DataFrame) -> dict:

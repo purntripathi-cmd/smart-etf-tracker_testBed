@@ -137,7 +137,7 @@ DEFAULT_STAGE2_STOCK_CONFIG = [
     {"ticker": "KOTAKBANK.NS", "name": "Kotak Mahindra Bank", "category": "Banking", "expense": np.nan},
     {"ticker": "M&M.NS", "name": "Mahindra & Mahindra", "category": "Automobile", "expense": np.nan},
     {"ticker": "MARUTI.NS", "name": "Maruti Suzuki", "category": "Automobile", "expense": np.nan},
-    {"ticker": "TATAMOTORS.NS", "name": "Tata Motors", "category": "Automobile", "expense": np.nan},
+    {"ticker": "TMPV.NS", "name": "Tata Motors (Passenger Vehicles)", "category": "Automobile", "expense": np.nan},
     {"ticker": "SUNPHARMA.NS", "name": "Sun Pharma", "category": "Pharma", "expense": np.nan},
     {"ticker": "TITAN.NS", "name": "Titan Company", "category": "Consumer Discretionary", "expense": np.nan},
     {"ticker": "BAJFINANCE.NS", "name": "Bajaj Finance", "category": "NBFC", "expense": np.nan},
@@ -192,10 +192,11 @@ DIVIDEND_YIELD_MAP = {
     # High Dividend ETFs
     "DIVOPPBEES.NS": 4.20, "CPSEETF.NS": 4.60, "ICICIB22.NS": 3.85, "NV20IETF.NS": 1.95, "MOVALUE.NS": 1.70,
     # Core Large Cap Stocks & ETFs
-    "NIFTYBEES.NS": 1.25, "SETFNIF50.NS": 1.25, "ICICINIFTY.NS": 1.25, "HDFCNIFTY.NS": 1.25,
+    "NIFTYBEES.NS": 1.25, "SETFNIF50.NS": 1.25, "ICICINIFTY.NS": 1.25, "NIFTYIETF.NS": 1.25, "HDFCNIFTY.NS": 1.25,
+    "NIFTY1.NS": 1.25, "NIFTYBETA.NS": 1.25,
     "HINDUNILVR.NS": 1.65, "SBIN.NS": 1.75, "BRITANNIA.NS": 1.55, "NESTLEIND.NS": 1.35,
     "HDFCBANK.NS": 1.25, "ICICIBANK.NS": 0.85, "KOTAKBANK.NS": 0.15, "AXISBANK.NS": 0.15,
-    "M&M.NS": 0.90, "MARUTI.NS": 1.15, "TATAMOTORS.NS": 0.65, "LT.NS": 0.95,
+    "M&M.NS": 0.90, "MARUTI.NS": 1.15, "TATAMOTORS.NS": 0.65, "TMPV.NS": 0.65, "LT.NS": 0.95,
     "BHARTIARTL.NS": 0.70, "RELIANCE.NS": 0.35, "SUNPHARMA.NS": 0.85, "CIPLA.NS": 0.80,
     "DRREDDY.NS": 0.70, "TITAN.NS": 0.40, "BAJFINANCE.NS": 0.45, "BAJAJFINSV.NS": 0.15,
     "EICHERMOT.NS": 1.10, "BEL.NS": 0.75, "HAL.NS": 0.80, "TRENT.NS": 0.10,
@@ -203,13 +204,19 @@ DIVIDEND_YIELD_MAP = {
     "PERSISTENT.NS": 0.80, "DIXON.NS": 0.10, "ULTRACEMCO.NS": 0.35, "GRASIM.NS": 0.40,
     "WIPRO.NS": 0.20, "APOLLOHOSP.NS": 0.25, "ASIANPAINT.NS": 1.10, "TATACONSUM.NS": 0.85,
     "JSWSTEEL.NS": 0.75, "HINDALCO.NS": 0.70, "ADANIENT.NS": 0.10, "ADANIPORTS.NS": 0.45,
+    "LTM.NS": 1.50, "ETERNAL.NS": 0.0, "ARE&M.NS": 0.70, "IPCALAB.NS": 0.35,
+    "UNITDSPR.NS": 0.50, "GUJENERGY.NS": 2.20, "TIINDIA.NS": 0.30,
     # Broad & Sector ETFs
     "JUNIORBEES.NS": 0.90, "NEXT50IETF.NS": 0.90, "MID150BEES.NS": 0.75, "MIDCAPIETF.NS": 0.75,
     "HDFCMID150.NS": 0.75, "SMALLCAP.NS": 0.50, "HDFCSML250.NS": 0.50, "NIFTYQLITY.NS": 1.30,
-    "QUAL30IETF.NS": 1.30, "ALPHAETF.NS": 0.65, "ALPL30IETF.NS": 1.10, "KOTAKALPHA.NS": 0.65,
-    "MOM30IETF.NS": 0.50, "MOMENTUM50.NS": 0.50, "HDFCMOM30.NS": 0.50, "MOM500.NS": 0.80,
-    # Non-Dividend Assets
-    "GOLDBEES.NS": 0.0, "SETFGOLD.NS": 0.0, "SILVERBEES.NS": 0.0, "SILVERIETF.NS": 0.0,
+    "QUAL30IETF.NS": 1.30, "ALPHAETF.NS": 0.65, "ALPL30IETF.NS": 1.10, "KOTAKALPHA.NS": 0.65, "ALPHA.NS": 0.65,
+    "MOM30IETF.NS": 0.50, "MOMENTUM50.NS": 0.50, "HDFCMOM30.NS": 0.50, "HDFCMOMENT.NS": 0.50, "MOM500.NS": 0.80,
+    "MONIFTY500.NS": 0.80, "EQUAL50ADD.NS": 1.20, "HDFCBSE500.NS": 1.10, "NV20BEES.NS": 1.95,
+    # Non-Dividend Assets & Commodities
+    "GOLDBEES.NS": 0.0, "SETFGOLD.NS": 0.0, "HDFCGOLD.NS": 0.0, "GOLDIETF.NS": 0.0, "GOLD1.NS": 0.0,
+    "GOLDAXIS.NS": 0.0, "TATAGOLD.NS": 0.0,
+    "SILVERBEES.NS": 0.0, "SILVERIETF.NS": 0.0, "SBISILVER.NS": 0.0, "HDFCSILVER.NS": 0.0,
+    "SILVER1.NS": 0.0, "SILVERAXIS.NS": 0.0, "TATSILV.NS": 0.0,
     "MON100.NS": 0.15, "MONQ50.NS": 0.15, "MASPTOP50.NS": 0.45, "MAFANG.NS": 0.0,
     "HNGSNGBEES.NS": 1.80, "MAHKTECH.NS": 0.20,
 }

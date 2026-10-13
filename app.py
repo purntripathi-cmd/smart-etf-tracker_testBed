@@ -814,19 +814,84 @@ def execute_category_paper_trade(*args, **kwargs):
 # =====================================================================
 # MULTI-AMC PRECIOUS METALS BUILDER (AVAILABLE ACROSS ALL TABS)
 # =====================================================================
-def build_all_precious_metals_df(etfs_df):
+def build_all_precious_metals_df(etfs_df, raw_data=None):
     all_metals_rows = []
     for m_cfg in ALL_PRECIOUS_METALS_CONFIG:
         sym_clean = m_cfg["ticker"].replace(".NS", "")
-        m_row = etfs_df[etfs_df["Ticker"].str.contains(sym_clean, case=False, na=False)] if (etfs_df is not None and not etfs_df.empty and "Ticker" in etfs_df.columns) else pd.DataFrame()
+        disp_sym = m_cfg.get("display_ticker", sym_clean)
+        ticker_full = m_cfg["ticker"]
+
+        m_row = pd.DataFrame()
+        if etfs_df is not None and not etfs_df.empty and "Ticker" in etfs_df.columns:
+            m_row = etfs_df[
+                (etfs_df["Ticker"].astype(str).str.upper() == sym_clean.upper()) |
+                (etfs_df["Ticker"].astype(str).str.upper() == disp_sym.upper()) |
+                (etfs_df["Ticker"].astype(str).str.upper() == ticker_full.upper())
+            ]
+            if m_row.empty:
+                m_row = etfs_df[etfs_df["Ticker"].astype(str).str.contains(sym_clean, case=False, na=False)]
+
         if not m_row.empty:
             m_dict = m_row.iloc[0].to_dict()
         else:
-            m_dict = {
-                "Ticker": sym_clean, "CMP (₹)": 65.0, "RSI (14D)": 52.0, "Dist 200DMA %": 3.5,
-                "Dist 52W Low %": 12.0, "52W Range %": 55.0, "Volume Surge Ratio": 1.0, "14D ATR (₹)": 0.8
-            }
-        m_dict["Ticker"] = sym_clean
+            extracted_df = pd.DataFrame()
+            if raw_data is not None:
+                try:
+                    from strategy_engine import extract_ticker_df
+                    extracted_df = extract_ticker_df(raw_data, ticker_full)
+                except Exception:
+                    pass
+
+            if extracted_df.empty:
+                try:
+                    extracted_df = yf.Ticker(ticker_full).history(period="1y")
+                except Exception as ex:
+                    logger.warning(f"Failed direct yf history for {ticker_full}: {ex}")
+
+            if not extracted_df.empty and len(extracted_df) > 0 and "Close" in extracted_df.columns:
+                close_series = extracted_df["Close"].dropna()
+                if len(close_series) > 0:
+                    close_p = float(close_series.iloc[-1])
+                    low_52 = float(extracted_df["Low"].min()) if "Low" in extracted_df.columns else close_p * 0.85
+                    high_52 = float(extracted_df["High"].max()) if "High" in extracted_df.columns else close_p * 1.15
+                    dma200 = float(close_series.rolling(200, min_periods=20).mean().iloc[-1])
+                    delta = close_series.diff()
+                    gain = delta.clip(lower=0).rolling(14, min_periods=1).mean()
+                    loss = (-delta.clip(upper=0)).rolling(14, min_periods=1).mean()
+                    rs = gain / (loss + 1e-9)
+                    rsi_v = float(100 - (100 / (1 + rs)).iloc[-1])
+                    rng_pos = ((close_p - low_52) / (high_52 - low_52) * 100) if high_52 > low_52 else 50.0
+                    dma_dist = ((close_p - dma200) / dma200 * 100) if dma200 > 0 else 0.0
+                    low_dist = ((close_p - low_52) / low_52 * 100) if low_52 > 0 else 0.0
+
+                    m_dict = {
+                        "Ticker": disp_sym,
+                        "CMP (₹)": round(close_p, 2),
+                        "RSI (14D)": round(rsi_v, 1),
+                        "Dist 200DMA %": round(dma_dist, 2),
+                        "Dist 52W Low %": round(low_dist, 2),
+                        "52W Range %": round(rng_pos, 1),
+                        "Volume Surge Ratio": 1.0,
+                        "14D ATR (₹)": round(close_p * 0.015, 2)
+                    }
+                else:
+                    m_dict = {
+                        "Ticker": disp_sym,
+                        "CMP (₹)": 125.0 if m_cfg.get("metal") == "Gold" else 210.0,
+                        "RSI (14D)": 52.0, "Dist 200DMA %": 3.5,
+                        "Dist 52W Low %": 12.0, "52W Range %": 55.0,
+                        "Volume Surge Ratio": 1.0, "14D ATR (₹)": 1.5
+                    }
+            else:
+                m_dict = {
+                    "Ticker": disp_sym,
+                    "CMP (₹)": 125.0 if m_cfg.get("metal") == "Gold" else 210.0,
+                    "RSI (14D)": 52.0, "Dist 200DMA %": 3.5,
+                    "Dist 52W Low %": 12.0, "52W Range %": 55.0,
+                    "Volume Surge Ratio": 1.0, "14D ATR (₹)": 1.5
+                }
+
+        m_dict["Ticker"] = disp_sym
         m_dict["Name"] = m_cfg["name"]
         m_dict["AMC"] = m_cfg["amc"]
         m_dict["Metal Type"] = m_cfg["metal"]
@@ -839,7 +904,7 @@ def build_all_precious_metals_df(etfs_df):
         m_dict["Target"] = float(m_dict.get("Target", round(float(m_dict["CMP (₹)"]) * 1.06, 2)))
 
         # Ensure iNAV (₹) and Distance to iNAV (%) are set for all precious metals
-        cmp_v = float(m_dict.get("CMP (₹)", 65.0))
+        cmp_v = float(m_dict.get("CMP (₹)", 125.0))
         if "iNAV (₹)" not in m_dict or pd.isna(m_dict["iNAV (₹)"]) or str(m_dict["iNAV (₹)"]).strip() in ["NA", "nan", ""]:
             m_dict["iNAV (₹)"] = round(cmp_v * 0.9985, 2)
         else:
@@ -873,7 +938,7 @@ def get_cached_market_evaluation(tickers_tuple):
     current_stock_universe, current_etf_universe = get_active_universe()
     stocks_df, stock_reg = evaluate_market_metrics(raw_data, current_stock_universe, is_stock_mode=True)
     etfs_df, etf_reg = evaluate_market_metrics(raw_data, current_etf_universe, is_stock_mode=False)
-    metals_df = build_all_precious_metals_df(etfs_df)
+    metals_df = build_all_precious_metals_df(etfs_df, raw_data)
     import gc
     gc.collect()
     return stocks_df, stock_reg, etfs_df, etf_reg, metals_df
@@ -1700,7 +1765,8 @@ is_admin = True
 # AUTHENTICATED DATA INITIALIZATION & CACHED METRIC ENGINE
 # =====================================================================
 current_stock_universe, current_etf_universe = get_active_universe()
-ALL_CONFIG_TICKERS = [x["ticker"] for x in (current_etf_universe + current_stock_universe)]
+metal_tickers = [m["ticker"] for m in ALL_PRECIOUS_METALS_CONFIG]
+ALL_CONFIG_TICKERS = list(dict.fromkeys([x["ticker"] for x in (current_etf_universe + current_stock_universe)] + metal_tickers))
 runtime_cfg = load_runtime_config()
 tickers_tuple = tuple(sorted(ALL_CONFIG_TICKERS))
 

@@ -1385,7 +1385,9 @@ def get_apex_multi_factor_candidates(etfs_df, stocks_df, top_n=3):
             if sym in cooldown_tickers:
                 continue
             # Conviction Gate check
-            if not check_conviction_gate(item, is_buy=is_buy, config=runtime_cfg):
+            gate_res = check_conviction_gate(item, is_buy=is_buy, config=runtime_cfg)
+            passed_gate = gate_res[0] if isinstance(gate_res, tuple) else bool(gate_res)
+            if not passed_gate:
                 continue
 
             preset_name = item.get("_preset", "Default")
@@ -1784,7 +1786,6 @@ ALL_CONFIG_TICKERS = list(dict.fromkeys([x["ticker"] for x in (current_etf_unive
 runtime_cfg = load_runtime_config()
 tickers_tuple = tuple(sorted(ALL_CONFIG_TICKERS))
 
-active_raw_data = load_historical_market_data(tickers_tuple)
 with st.spinner("Evaluating multi-factor metrics across 250+ Equities & Broad ETFs..."):
     stocks_market_df, stock_regime, etfs_market_df, etf_regime, all_metals_df = get_cached_market_evaluation(tickers_tuple)
 regime_data = etf_regime
@@ -2411,7 +2412,7 @@ if "High-Conviction Master Hub" in active_tab:
                 all_tickers_list = sorted(list(sr_full_df["Ticker"].unique()))
                 inspect_sym = st.selectbox("Select Asset for 34-Parameter Inspection:", all_tickers_list, key="inspect_asset_box")
                 if inspect_sym:
-                    prof = get_34_parameter_profile(active_raw_data, inspect_sym, is_stock_mode=True)
+                    prof = get_34_parameter_profile(load_historical_market_data(tickers_tuple), inspect_sym, is_stock_mode=True)
                     if prof:
                         p_col1, p_col2, p_col3 = st.columns(3)
                         with p_col1:
@@ -2636,11 +2637,11 @@ if "High-Conviction Master Hub" in active_tab:
                 hide_index=True
             )
 
-        # -------------------------------------------------------------
-        # CATEGORY 6: APEX MULTI-FACTOR DEDUPLICATED ALLOCATOR
-        # -------------------------------------------------------------
-        st.markdown("---")
-        render_apex_multi_factor_tiles(filtered_etfs_df, filtered_stocks_df, limit=3)
+    # -------------------------------------------------------------
+    # CATEGORY 6: APEX MULTI-FACTOR DEDUPLICATED ALLOCATOR
+    # -------------------------------------------------------------
+    st.markdown("---")
+    render_apex_multi_factor_tiles(filtered_etfs_df, filtered_stocks_df, limit=3)
 
 
 # =====================================================================
@@ -2682,7 +2683,7 @@ elif "Multi-Regime Backtesting" in active_tab:
         st.info("🔒 Calibration Studio is in Read-Only mode. Administrator privileges are required to modify and save strategy parameters.")
 
     weights_dict = runtime_cfg.get("weights", {})
-    risk_dict = runtime_cfg.get("risk_multipliers", {})
+    risk_dict = runtime_cfg.get("risk_parameters", runtime_cfg.get("risk_multipliers", {}))
     sched_dict = runtime_cfg.get("execution_schedule", {})
     slider_disabled = not is_admin
 
@@ -2711,11 +2712,11 @@ elif "Multi-Regime Backtesting" in active_tab:
             st.caption("Long-term secular compounding prioritizing dividend yield, moving average stability, and low tracking drag.")
             c1, c2, c3, c4, c5 = st.columns(5)
             w_dma_lt = c1.slider("200 DMA Trend (%)", 0, 100, int(weights_dict.get("Long-Term", {}).get("w_dma", 40)), disabled=slider_disabled, key="s_lt_dma")
-            w_div_lt = c2.slider("Dividend Yield (%)", 0, 100, int(weights_dict.get("Long-Term", {}).get("w_div", 20)), disabled=slider_disabled, key="s_lt_div")
+            w_div_lt = c2.slider("Dividend Yield (%)", 0, 100, int(weights_dict.get("Long-Term", {}).get("w_div", 15)), disabled=slider_disabled, key="s_lt_div")
             w_rsi_lt = c3.slider("Macro RSI (%)", 0, 100, int(weights_dict.get("Long-Term", {}).get("w_rsi", 15)), disabled=slider_disabled, key="s_lt_rsi")
-            w_bb_lt = c4.slider("Bollinger Cushion (%)", 0, 100, int(weights_dict.get("Long-Term", {}).get("w_bb", 15)), disabled=slider_disabled, key="s_lt_bb")
-            w_exp_lt = c5.slider("Fundamental Expense (%)", 0, 100, int(weights_dict.get("Long-Term", {}).get("w_exp", 10)), disabled=slider_disabled, key="s_lt_exp")
-            new_weights["Long-Term"] = {"w_dma": w_dma_lt, "w_div": w_div_lt, "w_rsi": w_rsi_lt, "w_bb": w_bb_lt, "w_exp": w_exp_lt}
+            w_low_lt = c4.slider("52W Low Cushion (%)", 0, 100, int(weights_dict.get("Long-Term", {}).get("w_low", weights_dict.get("Long-Term", {}).get("w_bb", 15))), disabled=slider_disabled, key="s_lt_bb")
+            w_exp_lt = c5.slider("Fundamental Expense (%)", 0, 100, int(weights_dict.get("Long-Term", {}).get("w_exp", 15)), disabled=slider_disabled, key="s_lt_exp")
+            new_weights["Long-Term"] = {"w_dma": w_dma_lt, "w_div": w_div_lt, "w_rsi": w_rsi_lt, "w_low": w_low_lt, "w_exp": w_exp_lt}
 
         with p_tab3:
             st.caption("Positional mean-reversion exploiting short-term oversold exhaustion and Bollinger Band contractions.")
@@ -2787,6 +2788,56 @@ elif "Multi-Regime Backtesting" in active_tab:
         max_metal_range = cf2.slider("Max Metal 52W Range Filter (%)", 60.0, 95.0, 80.0, step=5.0, disabled=slider_disabled, key="s_max_met_rng")
         min_sr_win = cf3.slider("Min S/R 5Y Empirical Win Rate (%)", 50.0, 75.0, 60.0, step=1.0, disabled=slider_disabled, key="s_min_sr_win")
 
+        st.markdown("---")
+
+        # Section D: Quantitative Safeguards & Multi-Preset Deduping
+        st.markdown("##### 🛡️ Quantitative Safeguards & 6th Category (Apex Multi-Factor)")
+        qg1, qg2 = st.columns(2)
+        with qg1:
+            conviction_en = st.checkbox(
+                "🛡️ Enable Minimum Conviction Gate (Filter Low-Conviction Picks)",
+                value=bool(runtime_cfg.get("conviction_gate", {}).get("enabled", True)),
+                disabled=slider_disabled,
+                help="Applies minimum composite score (≥58) and RSI limits to eliminate low-conviction picks across all presets. Can be disabled if market regimes dry up trades.",
+                key="s_conv_gate_en"
+            )
+            cooldown_en = st.checkbox(
+                "❄️ Enable Post-Stop Cooldown (5 Trading Days Anti-Revenge Lockout)",
+                value=bool(runtime_cfg.get("cooldown_gate", {}).get("enabled", True)),
+                disabled=slider_disabled,
+                help="Prevents re-entering any symbol that was stopped out within the last 5 trading days to protect capital from whipsaws.",
+                key="s_cd_gate_en"
+            )
+        with qg2:
+            vol_stops_en = st.checkbox(
+                "📈 Dynamic Volatility-Adjusted Stops (2.0× ATR Bounded 2.5% - 6.5%)",
+                value=bool(runtime_cfg.get("volatility_stops", {}).get("enabled", True)),
+                disabled=slider_disabled,
+                help="Adapts stop loss and profit targets dynamically to recent market volatility using 14-day ATR.",
+                key="s_vol_stops_en"
+            )
+            multi_tier_en = st.checkbox(
+                "🎯 Multi-Tier Staggered Target Booking & Breakeven Stop Lock",
+                value=bool(runtime_cfg.get("multi_tier_targets", {}).get("enabled", True)),
+                disabled=slider_disabled,
+                help="When profit reaches Tier 1 (+2.5% / 1.5× ATR), locks Stop Loss at Entry Price (breakeven) to guarantee risk-free continuation to Tier 2 target.",
+                key="s_multi_tier_en"
+            )
+
+        st.markdown("###### ⚡ 6th Category: Apex Multi-Factor Controls")
+        apex_col1, apex_col2 = st.columns([1, 2])
+        with apex_col1:
+            apex_cap = st.slider(
+                "Apex Category Daily Cap (Max Trades/Day)",
+                min_value=1, max_value=5,
+                value=int(runtime_cfg.get("apex_category", {}).get("max_daily_trades", 2)),
+                disabled=slider_disabled,
+                help="Strict cap applied ONLY to the 6th Category (Apex Multi-Factor) to preserve capital by taking only the highest-conviction deduplicated picks.",
+                key="s_apex_cap"
+            )
+        with apex_col2:
+            st.caption("ℹ️ **Category 6 (Apex Multi-Factor)** pools candidates across all presets at 3 PM, eliminates duplicates, filters out cooldown tickers, and executes only the top N picks according to multi-model confluence.")
+
         if is_admin:
             save_btn = st.form_submit_button("💾 Save All Parameter Calibrations to Runtime Config", type="primary", use_container_width=True)
         else:
@@ -2794,7 +2845,37 @@ elif "Multi-Regime Backtesting" in active_tab:
             save_btn = False
 
     if save_btn and is_admin:
-        save_res = save_manual_parameter_adjustments(new_weights, new_risk, sched_dict, user=current_user)
+        new_conviction = {
+            "enabled": conviction_en,
+            "min_buy_composite_score": float(runtime_cfg.get("conviction_gate", {}).get("min_buy_composite_score", 58.0)),
+            "max_buy_rsi": float(runtime_cfg.get("conviction_gate", {}).get("max_buy_rsi", 65.0)),
+            "min_sell_composite_score": float(runtime_cfg.get("conviction_gate", {}).get("min_sell_composite_score", 58.0)),
+            "min_sell_rsi": float(runtime_cfg.get("conviction_gate", {}).get("min_sell_rsi", 55.0))
+        }
+        new_cooldown = {
+            "enabled": cooldown_en,
+            "cooldown_trading_days": int(runtime_cfg.get("cooldown_gate", {}).get("cooldown_trading_days", 5))
+        }
+        new_vol_stops = {
+            "enabled": vol_stops_en,
+            "atr_sl_multiplier": float(runtime_cfg.get("volatility_stops", {}).get("atr_sl_multiplier", 2.0)),
+            "atr_tgt1_multiplier": float(runtime_cfg.get("volatility_stops", {}).get("atr_tgt1_multiplier", 1.5)),
+            "atr_tgt2_multiplier": float(runtime_cfg.get("volatility_stops", {}).get("atr_tgt2_multiplier", 3.0))
+        }
+        new_multi_tier = {
+            "enabled": multi_tier_en,
+            "lock_breakeven_on_tier1": True
+        }
+        new_apex = {
+            "enabled": True,
+            "max_daily_trades": apex_cap
+        }
+        save_res = save_manual_parameter_adjustments(
+            new_weights, new_risk, sched_dict, user=current_user,
+            new_conviction=new_conviction, new_cooldown=new_cooldown,
+            new_vol_stops=new_vol_stops, new_multi_tier=new_multi_tier,
+            new_apex=new_apex
+        )
         st.session_state.strategy_toast = f"🟢 Saved adjustments ({save_res['updated_count']} parameters updated live)!"
         st.cache_data.clear()
         st.rerun()

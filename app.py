@@ -29,6 +29,7 @@ try:
 except Exception:
     GSheetsConnection = None
 import requests
+from ai_rag_forensics import render_ai_rag_forensics_tab
 
 # Ensure local v2 directory is in sys.path for direct module discovery
 _app_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1801,6 +1802,7 @@ with st.sidebar:
     nav_items = [
         "🎯 High-Conviction Master Hub",
         "🧪 Multi-Regime Backtesting & Machine Learning",
+        "🧠 AI/ML & RAG Strategy Forensics",
         "📘 Platform Strategy Guide & DOCX Export"
     ]
 
@@ -2919,7 +2921,21 @@ elif "Multi-Regime Backtesting" in active_tab:
 
 
 # =====================================================================
-# TAB 3: PLATFORM STRATEGY GUIDE & DOCX EXPORT
+# TAB 3: AI/ML & RAG STRATEGY FORENSICS & BACKTEST ADVISOR
+# =====================================================================
+elif "AI/ML & RAG Strategy Forensics" in active_tab:
+    import ai_rag_forensics as _arf_mod
+    _reload_if_changed("ai_rag_forensics")
+    _arf_mod.render_ai_rag_forensics_tab(
+        trades_df=None,
+        is_admin=is_admin,
+        current_user=current_user,
+        docx_bytes=docx_bytes
+    )
+
+
+# =====================================================================
+# TAB 4: PLATFORM STRATEGY GUIDE & DOCX EXPORT
 # =====================================================================
 elif "Platform Strategy Guide" in active_tab:
     st.markdown("### 📘 Platform Strategy Architecture & Quantitative Documentation")

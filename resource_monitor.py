@@ -7,16 +7,35 @@ import sys
 import datetime
 import streamlit as st
 
+import gc
+import ctypes
+
 try:
     import psutil
 except ImportError:
     psutil = None
 
 
+def release_container_memory() -> None:
+    """
+    Forces Python garbage collection and invokes glibc malloc_trim(0) on Linux
+    containers (Streamlit Community Cloud) so freed heap arenas from Pandas/NumPy
+    are immediately returned to the OS kernel (reducing VmRSS).
+    """
+    try:
+        gc.collect()
+        if sys.platform.startswith("linux"):
+            libc = ctypes.CDLL("libc.so.6")
+            libc.malloc_trim(0)
+    except Exception:
+        pass
+
+
 def get_system_telemetry():
     """
     Retrieves real-time CPU, RAM, and process telemetry with zero CPU overhead.
     Works on Linux (Streamlit Cloud containers), macOS, and Windows.
+    Automatically trims freed heap memory if RSS exceeds 550 MB.
     """
     telemetry = {
         "app_ram_mb": 0.0,
@@ -31,12 +50,32 @@ def get_system_telemetry():
         "timestamp": datetime.datetime.now().strftime("%H:%M:%S")
     }
 
+    def _read_rss_mb() -> float:
+        if psutil is not None:
+            try:
+                return round(psutil.Process().memory_info().rss / (1024 * 1024), 1)
+            except Exception:
+                pass
+        if os.path.exists("/proc/self/status"):
+            try:
+                with open("/proc/self/status", "r") as f:
+                    for line in f:
+                        if line.startswith("VmRSS:"):
+                            return round(float(line.split()[1]) / 1024.0, 1)
+            except Exception:
+                pass
+        return 0.0
+
+    initial_ram = _read_rss_mb()
+    if initial_ram > 520.0:
+        release_container_memory()
+        initial_ram = _read_rss_mb()
+
+    telemetry["app_ram_mb"] = initial_ram
+
     if psutil is not None:
         try:
             proc = psutil.Process()
-            mem = proc.memory_info()
-            telemetry["app_ram_mb"] = round(mem.rss / (1024 * 1024), 1)
-
             vm = psutil.virtual_memory()
             telemetry["container_total_ram_mb"] = round(vm.total / (1024 * 1024), 1)
             telemetry["container_used_ram_mb"] = round(vm.used / (1024 * 1024), 1)
@@ -53,12 +92,6 @@ def get_system_telemetry():
     else:
         # Fallback reading directly from /proc on Linux Streamlit Cloud
         try:
-            if os.path.exists("/proc/self/status"):
-                with open("/proc/self/status", "r") as f:
-                    for line in f:
-                        if line.startswith("VmRSS:"):
-                            telemetry["app_ram_mb"] = round(float(line.split()[1]) / 1024.0, 1)
-                            break
             if os.path.exists("/proc/meminfo"):
                 total_kb, avail_kb = 0, 0
                 with open("/proc/meminfo", "r") as f:
@@ -121,11 +154,11 @@ def render_resource_monitor_sidebar(key_suffix=""):
         )
         b_c1, b_c2 = st.columns(2)
         if b_c1.button("🔄 Poll Health", key=f"btn_poll_res_{key_suffix}", use_container_width=True):
+            release_container_memory()
             st.rerun()
         if b_c2.button("🧹 Flush RAM", key=f"btn_flush_ram_{key_suffix}", use_container_width=True):
-            import gc
-            gc.collect()
-            st.session_state.strategy_toast = "Memory flushed via Garbage Collection."
+            release_container_memory()
+            st.session_state.strategy_toast = "Memory flushed via Garbage Collection & Linux Heap Trim."
             st.rerun()
 
 

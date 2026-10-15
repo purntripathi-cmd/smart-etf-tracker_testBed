@@ -29,7 +29,6 @@ try:
 except Exception:
     GSheetsConnection = None
 import requests
-from fleet_manager import render_fleet_manager_tab
 
 # Ensure local v2 directory is in sys.path for direct module discovery
 _app_dir = os.path.dirname(os.path.abspath(__file__))
@@ -124,14 +123,24 @@ st.markdown(
 )
 
 # =====================================================================
-# INTERNAL MODULE IMPORTS (WITH HOT-RELOAD CACHE INVALIDATION)
+# INTERNAL MODULE IMPORTS (WITH MTIME-GUARDED HOT-RELOAD)
 # =====================================================================
+_MODULE_MTIMES = {}
+def _reload_if_changed(mod_name):
+    mod = sys.modules.get(mod_name)
+    if mod is None or not getattr(mod, "__file__", None):
+        return
+    try:
+        mtime = os.path.getmtime(mod.__file__)
+        if _MODULE_MTIMES.get(mod_name) != mtime:
+            if _MODULE_MTIMES.get(mod_name) is not None:
+                importlib.reload(mod)
+            _MODULE_MTIMES[mod_name] = mtime
+    except Exception:
+        pass
+
 for _mod_name in ["strategy_engine", "ml_optimizer", "reit_scanner", "universe_manager", "sr_engine"]:
-    if _mod_name in sys.modules:
-        try:
-            importlib.reload(sys.modules[_mod_name])
-        except Exception:
-            pass
+    _reload_if_changed(_mod_name)
 
 try:
     from strategy_engine import (
@@ -768,6 +777,11 @@ def load_historical_market_data(all_tickers):
                 pass
             import gc
             gc.collect()
+            try:
+                from resource_monitor import release_container_memory
+                release_container_memory()
+            except Exception:
+                pass
             return df
     except Exception as e:
         logger.error(f"Error fetching historical data: {e}")
@@ -1786,8 +1800,7 @@ with st.sidebar:
     nav_items = [
         "🎯 High-Conviction Master Hub",
         "🧪 Multi-Regime Backtesting & Machine Learning",
-        "📘 Platform Strategy Guide & DOCX Export",
-        "🚀 Quant Ecosystem & Satellite Apps"
+        "📘 Platform Strategy Guide & DOCX Export"
     ]
 
     active_tab = st.radio(
@@ -2657,30 +2670,7 @@ elif "Multi-Regime Backtesting" in active_tab:
     except Exception:
         pass
 
-    # 1. AI Quant Advisor Analysis & Tweaks
-    raw_trades = load_paper_trades()
-    sug_df = evaluate_strategy_performance_and_suggest_tweaks(trades_df=raw_trades)
-    ac1, ac2, ac3 = st.columns([2, 1, 1])
-    with ac1:
-        st.markdown(f"**Optimization Engine Status:** `{runtime_cfg.get('optimization_status', 'Active')}`")
-    with ac2:
-        if st.button("🔄 Refresh Empirical Review", use_container_width=True):
-            raw_trades = load_paper_trades()
-            sug_df = evaluate_strategy_performance_and_suggest_tweaks(trades_df=raw_trades)
-            st.session_state.strategy_toast = "Empirical review refreshed."
-            st.rerun()
-    with ac3:
-        if is_admin:
-            if st.button("⚡ Apply AI Optimizations", use_container_width=True, type="primary"):
-                res = apply_suggested_optimizations()
-                st.success(f"Applied {len(res['changes'])} optimizations live!")
-                st.cache_data.clear()
-                st.rerun()
-        else:
-            st.caption("🔒 Apply AI Optimizations (Admin Only)")
-
-    st.markdown("##### 📊 Empirical Recommendations")
-    st.dataframe(sug_df, column_config=get_pinned_column_config(sug_df, 3), use_container_width=True)
+    st.markdown(f"**Optimization Engine Status:** `{runtime_cfg.get('optimization_status', 'Active')}`")
 
     st.markdown("---")
 
@@ -2897,10 +2887,3 @@ elif "Platform Strategy Guide" in active_tab:
         $$\\text{REIT Real Estate Yield} = \\frac{\\text{Annualized DPU (₹)}}{\\text{CMP (₹)}} \\times 100$$
         """
     )
-
-
-# =====================================================================
-# TAB 4: QUANT ECOSYSTEM & SATELLITE APPS FLEET MANAGER
-# =====================================================================
-elif "Quant Ecosystem & Satellite Apps" in active_tab:
-    render_fleet_manager_tab(is_admin=True)

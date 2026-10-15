@@ -522,6 +522,7 @@ def evaluate_market_metrics(raw, universe_config, is_stock_mode=False, dynamic_w
             "9 EMA": round(ema9, 2), "21 EMA": round(ema21, 2), "EMA Trend": "Bullish" if ema9 > ema21 else "Bearish",
             "52W Low (₹)": round(low52, 2), "Dist 52W Low %": round(((curr - low52) / low52) * 100.0, 2) if low52 > 0 else 0.0,
             "52W High (₹)": round(high52, 2), "Dist 52W High %": round(((curr - high52) / high52) * 100.0, 2) if high52 > 0 else 0.0,
+            "52W Range %": round(((curr - low52) / (high52 - low52)) * 100.0, 1) if high52 > low52 else 50.0,
             "ATR % of CMP": round((atr_val / curr) * 100.0, 2) if curr > 0 else 0.0,
             "RS Spread 21D %": round(roc_21d - bench_roc_21d, 2),
             "RSI (14D)": round(rsi_latest, 1), "RSI Delta": rsi_delta,
@@ -669,6 +670,12 @@ def get_stopped_out_tickers_in_cooldown(trades_df=None, cooldown_days=5):
     Returns a set of uppercase tickers that suffered a STOP_LOSS_HIT or CLOSED_STOPLOSS
     within the last `cooldown_days` active NSE trading sessions.
     """
+    if trades_df is None:
+        try:
+            from paper_trader_daemon import load_paper_trades
+            trades_df = load_paper_trades()
+        except Exception:
+            return set()
     if trades_df is None or trades_df.empty or "Status" not in trades_df.columns:
         return set()
     sl_mask = trades_df["Status"].astype(str).str.strip().str.upper().isin(["STOP_LOSS_HIT", "CLOSED_STOPLOSS"])
@@ -1123,6 +1130,35 @@ def get_ai_rag_conviction_candidates(metrics_df, is_stock_mode=False, limit=3):
         return get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mode=is_stock_mode, limit=limit)
 
 
+def is_buy_trade_prediction(row):
+    """
+    Classifies a paper trade row as a BUY prediction (True) or SELL prediction (False).
+    Checks Trigger_Type, Trade_ID, and Buy Ticker first so BUY positions later squared off
+    via Overbought Exit (which sets Trade_Action='🔴 SELL') remain classified as BUY trades.
+    """
+    tt = str(row.get("Trigger_Type", "")).upper()
+    if any(k in tt for k in ["SELL", "SHORT"]):
+        return False
+    if any(k in tt for k in ["BUY", "LONG"]):
+        return True
+    tid = str(row.get("Trade_ID", "")).upper()
+    if "_EXIT_" in tid or "_SHORT_" in tid:
+        return False
+    bt = str(row.get("Buy Ticker", "")).strip()
+    if bt and bt not in ["—", "", "nan", "None"]:
+        return True
+    st_t = str(row.get("Sell Ticker", "")).strip()
+    if st_t and st_t not in ["—", "", "nan", "None"]:
+        return False
+    ta = str(row.get("Trade_Action", "")).upper()
+    if "BUY" in ta:
+        return True
+    if any(k in ta for k in ["SELL", "EXIT", "SHORT"]):
+        return False
+    return True
+
+
+
 # =====================================================================
 # MULTI-TIMEFRAME PERFORMANCE ENGINE (1M, 1Q, 6M, 1Y, 3Y, 5Y)
 # =====================================================================
@@ -1144,13 +1180,14 @@ def compute_multi_timeframe_performance(trades_df, reference_dt=None):
     if trades_df is None or trades_df.empty:
         empty_matrix = pd.DataFrame(columns=[
             "Horizon", "Total Trades", "Active", "Closed", "Wins", "Losses",
-            "Win Rate %", "Realized PnL (₹)", "Unrealized PnL (₹)", "Total PnL (₹)", "Capital Deployed (₹)"
+            "Win Rate %", "Buy Win Rate %", "Sell Win Rate %", "Realized PnL (₹)", "Unrealized PnL (₹)", "Total PnL (₹)", "Capital Deployed (₹)"
         ])
         empty_preset = pd.DataFrame([
             {
                 "Strategy Preset": p,
                 "Category Performance Hint": "ETFs, Equities (Awaiting execution)",
-                "Total Trades": 0, "Active": 0, "Closed": 0, "Win Rate %": "Pending",
+                "Total Trades": "0 (Buy=0, Sell=0)", "Active": "0 (Buy=0, Sell=0)", "Closed": "0 (Buy=0, Sell=0)",
+                "Win Rate %": "Pending (0)", "Buy Win Rate %": "Pending (0)", "Sell Win Rate %": "Pending (0)",
                 "1M PnL (₹)": 0.0, "1Q PnL (₹)": 0.0, "6M PnL (₹)": 0.0, "1Y PnL (₹)": 0.0,
                 "3Y PnL (₹)": 0.0, "5Y PnL (₹)": 0.0, "Realized PnL (₹)": 0.0,
                 "Unrealized PnL (₹)": 0.0, "Total PnL (₹)": 0.0, "Capital Deployed (₹)": 0.0
@@ -1166,8 +1203,11 @@ def compute_multi_timeframe_performance(trades_df, reference_dt=None):
     valid_ts = ts_exec.fillna(ts_exit).fillna(ref_dt)
     days_diff = (ref_dt - valid_ts).dt.total_seconds() / (24 * 3600.0)
     df["_days_diff"] = days_diff.fillna(0.0)
+    df["_is_buy"] = df.apply(is_buy_trade_prediction, axis=1)
 
     horizons = [
+        ("1 Week (7D)", 7),
+        ("2 Weeks (14D)", 14),
         ("1 Month (30D)", 30),
         ("1 Quarter (90D)", 90),
         ("6 Months (180D)", 180),
@@ -1180,7 +1220,13 @@ def compute_multi_timeframe_performance(trades_df, reference_dt=None):
     matrix_rows = []
     for h_label, h_days in horizons:
         sub = df[df["_days_diff"] <= h_days]
+        sub_buy = int(sub["_is_buy"].sum()) if not sub.empty else 0
+        sub_sell = int((~sub["_is_buy"]).sum()) if not sub.empty else 0
+
         act = sub[sub["Status"] == "ACTIVE"]
+        act_buy = int(act["_is_buy"].sum()) if not act.empty else 0
+        act_sell = int((~act["_is_buy"]).sum()) if not act.empty else 0
+
         cld = sub[(sub["Status"] != "ACTIVE") & (sub["Status"] != "EXIT_ALERT")]
         cld_pnl = pd.to_numeric(cld.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum()
         act_pnl = pd.to_numeric(act.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum()
@@ -1192,14 +1238,26 @@ def compute_multi_timeframe_performance(trades_df, reference_dt=None):
         tot_c = len(cld)
         wr = (wins / tot_c * 100.0) if tot_c > 0 else 0.0
 
+        cld_buy = cld[cld["_is_buy"]]
+        cld_sell = cld[~cld["_is_buy"]]
+        tot_c_buy = len(cld_buy)
+        wins_buy = int((pd.to_numeric(cld_buy.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce") > 0).sum()) if tot_c_buy > 0 else 0
+        wr_buy = (wins_buy / tot_c_buy * 100.0) if tot_c_buy > 0 else 0.0
+
+        tot_c_sell = len(cld_sell)
+        wins_sell = int((pd.to_numeric(cld_sell.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce") > 0).sum()) if tot_c_sell > 0 else 0
+        wr_sell = (wins_sell / tot_c_sell * 100.0) if tot_c_sell > 0 else 0.0
+
         matrix_rows.append({
             "Horizon": h_label,
-            "Total Trades": len(sub),
-            "Active": len(act),
-            "Closed": tot_c,
+            "Total Trades": f"{len(sub)} (Buy={sub_buy}, Sell={sub_sell})",
+            "Active": f"{len(act)} (Buy={act_buy}, Sell={act_sell})",
+            "Closed": f"{tot_c} (Buy={tot_c_buy}, Sell={tot_c_sell})",
             "Wins": wins,
             "Losses": losses,
-            "Win Rate %": f"{wr:.1f}%" if tot_c > 0 else "Pending",
+            "Win Rate %": f"{wr:.1f}% ({wins}/{tot_c})" if tot_c > 0 else "Pending (0)",
+            "Buy Win Rate %": f"{wr_buy:.1f}% ({wins_buy}/{tot_c_buy})" if tot_c_buy > 0 else "Pending (0)",
+            "Sell Win Rate %": f"{wr_sell:.1f}% ({wins_sell}/{tot_c_sell})" if tot_c_sell > 0 else "Pending (0)",
             "Realized PnL (₹)": round(float(cld_pnl), 2),
             "Unrealized PnL (₹)": round(float(act_pnl), 2),
             "Total PnL (₹)": round(float(cld_pnl + act_pnl), 2),
@@ -1299,13 +1357,29 @@ def compute_multi_timeframe_performance(trades_df, reference_dt=None):
                 grp = pd.DataFrame()
 
             if not grp.empty:
+                grp_buy = int(grp["_is_buy"].sum())
+                grp_sell = int((~grp["_is_buy"]).sum())
+                act_grp = grp[grp["Status"] == "ACTIVE"]
+                act_buy = int(act_grp["_is_buy"].sum()) if not act_grp.empty else 0
+                act_sell = int((~act_grp["_is_buy"]).sum()) if not act_grp.empty else 0
+
                 cld = grp[(grp["Status"] != "ACTIVE") & (grp["Status"] != "EXIT_ALERT")]
                 tot_c = len(cld)
                 cld_pnl = float(pd.to_numeric(cld.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum())
-                unreal_pnl = float(pd.to_numeric(grp[grp["Status"] == "ACTIVE"].get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum())
+                unreal_pnl = float(pd.to_numeric(act_grp.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum())
                 cap = float(pd.to_numeric(grp.get("Invested_Value", pd.Series(dtype=float)), errors="coerce").sum())
                 wins = int((pd.to_numeric(cld.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce") > 0).sum())
                 wr = (wins / tot_c * 100.0) if tot_c > 0 else 0.0
+
+                cld_buy = cld[cld["_is_buy"]]
+                cld_sell = cld[~cld["_is_buy"]]
+                tot_c_buy = len(cld_buy)
+                wins_buy = int((pd.to_numeric(cld_buy.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce") > 0).sum()) if tot_c_buy > 0 else 0
+                wr_buy = (wins_buy / tot_c_buy * 100.0) if tot_c_buy > 0 else 0.0
+
+                tot_c_sell = len(cld_sell)
+                wins_sell = int((pd.to_numeric(cld_sell.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce") > 0).sum()) if tot_c_sell > 0 else 0
+                wr_sell = (wins_sell / tot_c_sell * 100.0) if tot_c_sell > 0 else 0.0
 
                 def get_sub_pnl(max_d):
                     sub_c = cld[cld["_days_diff"] <= max_d]
@@ -1314,10 +1388,12 @@ def compute_multi_timeframe_performance(trades_df, reference_dt=None):
                 res_rows.append({
                     "Strategy Preset": p_name,
                     "Category Performance Hint": _generate_category_hint(grp),
-                    "Total Trades": len(grp),
-                    "Active": len(grp[grp["Status"] == "ACTIVE"]),
-                    "Closed": tot_c,
-                    "Win Rate %": f"{wr:.1f}%" if tot_c > 0 else "Pending",
+                    "Total Trades": f"{len(grp)} (Buy={grp_buy}, Sell={grp_sell})",
+                    "Active": f"{len(act_grp)} (Buy={act_buy}, Sell={act_sell})",
+                    "Closed": f"{tot_c} (Buy={tot_c_buy}, Sell={tot_c_sell})",
+                    "Win Rate %": f"{wr:.1f}% ({wins}/{tot_c})" if tot_c > 0 else "Pending (0)",
+                    "Buy Win Rate %": f"{wr_buy:.1f}% ({wins_buy}/{tot_c_buy})" if tot_c_buy > 0 else "Pending (0)",
+                    "Sell Win Rate %": f"{wr_sell:.1f}% ({wins_sell}/{tot_c_sell})" if tot_c_sell > 0 else "Pending (0)",
                     "1M PnL (₹)": get_sub_pnl(30),
                     "1Q PnL (₹)": get_sub_pnl(90),
                     "6M PnL (₹)": get_sub_pnl(180),
@@ -1333,10 +1409,12 @@ def compute_multi_timeframe_performance(trades_df, reference_dt=None):
                 res_rows.append({
                     "Strategy Preset": p_name,
                     "Category Performance Hint": "ETFs, Equities (Awaiting execution)",
-                    "Total Trades": 0,
-                    "Active": 0,
-                    "Closed": 0,
-                    "Win Rate %": "Pending",
+                    "Total Trades": "0 (Buy=0, Sell=0)",
+                    "Active": "0 (Buy=0, Sell=0)",
+                    "Closed": "0 (Buy=0, Sell=0)",
+                    "Win Rate %": "Pending (0)",
+                    "Buy Win Rate %": "Pending (0)",
+                    "Sell Win Rate %": "Pending (0)",
                     "1M PnL (₹)": 0.0,
                     "1Q PnL (₹)": 0.0,
                     "6M PnL (₹)": 0.0,
@@ -1356,12 +1434,28 @@ def compute_multi_timeframe_performance(trades_df, reference_dt=None):
             return pd.DataFrame()
         res_rows = []
         for grp_val, grp in df.groupby(group_col):
+            grp_buy = int(grp["_is_buy"].sum()) if not grp.empty else 0
+            grp_sell = int((~grp["_is_buy"]).sum()) if not grp.empty else 0
+            act_grp = grp[grp["Status"] == "ACTIVE"]
+            act_buy = int(act_grp["_is_buy"].sum()) if not act_grp.empty else 0
+            act_sell = int((~act_grp["_is_buy"]).sum()) if not act_grp.empty else 0
+
             cld = grp[(grp["Status"] != "ACTIVE") & (grp["Status"] != "EXIT_ALERT")]
             tot_c = len(cld)
             cld_pnl = pd.to_numeric(cld.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum()
-            unreal_pnl = pd.to_numeric(grp[grp["Status"] == "ACTIVE"].get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum()
+            unreal_pnl = pd.to_numeric(act_grp.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce").sum()
             wins = int((pd.to_numeric(cld.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce") > 0).sum())
             wr = (wins / tot_c * 100.0) if tot_c > 0 else 0.0
+
+            cld_buy = cld[cld["_is_buy"]]
+            cld_sell = cld[~cld["_is_buy"]]
+            tot_c_buy = len(cld_buy)
+            wins_buy = int((pd.to_numeric(cld_buy.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce") > 0).sum()) if tot_c_buy > 0 else 0
+            wr_buy = (wins_buy / tot_c_buy * 100.0) if tot_c_buy > 0 else 0.0
+
+            tot_c_sell = len(cld_sell)
+            wins_sell = int((pd.to_numeric(cld_sell.get("PnL_Rs", pd.Series(dtype=float)), errors="coerce") > 0).sum()) if tot_c_sell > 0 else 0
+            wr_sell = (wins_sell / tot_c_sell * 100.0) if tot_c_sell > 0 else 0.0
 
             def get_sub_pnl(max_d):
                 sub_c = cld[cld["_days_diff"] <= max_d]
@@ -1369,10 +1463,12 @@ def compute_multi_timeframe_performance(trades_df, reference_dt=None):
 
             res_rows.append({
                 group_col: grp_val,
-                "Total Trades": len(grp),
-                "Active": len(grp[grp["Status"] == "ACTIVE"]),
-                "Closed": tot_c,
-                "Win Rate %": f"{wr:.1f}%" if tot_c > 0 else "Pending",
+                "Total Trades": f"{len(grp)} (Buy={grp_buy}, Sell={grp_sell})",
+                "Active": f"{len(act_grp)} (Buy={act_buy}, Sell={act_sell})",
+                "Closed": f"{tot_c} (Buy={tot_c_buy}, Sell={tot_c_sell})",
+                "Win Rate %": f"{wr:.1f}% ({wins}/{tot_c})" if tot_c > 0 else "Pending (0)",
+                "Buy Win Rate %": f"{wr_buy:.1f}% ({wins_buy}/{tot_c_buy})" if tot_c_buy > 0 else "Pending (0)",
+                "Sell Win Rate %": f"{wr_sell:.1f}% ({wins_sell}/{tot_c_sell})" if tot_c_sell > 0 else "Pending (0)",
                 "1M PnL (₹)": get_sub_pnl(30),
                 "1Q PnL (₹)": get_sub_pnl(90),
                 "6M PnL (₹)": get_sub_pnl(180),

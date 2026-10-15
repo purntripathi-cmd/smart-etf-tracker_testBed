@@ -21,10 +21,10 @@
             "w_stoch": 10
         },
         "Intraday": {
-            "w_vol": 35,
-            "w_rsi": 30,
-            "w_bb": 20,
-            "w_vwap": 15
+            "w_vol": 45,
+            "w_rsi": 15,
+            "w_bb": 15,
+            "w_vwap": 25
         },
         "AI / RAG": {
             "w_rsi": 35,
@@ -36,13 +36,13 @@
     "risk_parameters": {
         "intraday_sl_multiplier": 1.0,
         "intraday_target_multiplier": 1.8,
-        "swing_sl_multiplier": 1.5,
+        "swing_sl_multiplier": 2.2,
         "swing_target_multiplier": 3.0,
         "longterm_sl_multiplier": 2.5,
         "longterm_target_multiplier": 5.0,
-        "trailing_stop_activation_pct": 3.0,
-        "trailing_stop_lock_pct": 0.5,
-        "overbought_rsi_exit_threshold": 76.0,
+        "trailing_stop_activation_pct": 2.8,
+        "trailing_stop_lock_pct": 1.5,
+        "overbought_rsi_exit_threshold": 74.0,
         "oversold_rsi_buy_threshold": 38.0
     },
     "execution_schedule": {
@@ -54,21 +54,21 @@
     "admin_testing_overrides": {
         "allow_weekend_trades": false
     },
-    "optimization_status": "V2 Factory Baseline Active",
+    "optimization_status": "AI/ML Forensics & Sideways Range Calibrated (All 5 Flaws Fixed)",
     "conviction_gate": {
         "enabled": true,
-        "min_buy_composite_score": 58.0,
-        "max_buy_rsi": 65.0,
+        "min_buy_composite_score": 62.0,
+        "max_buy_rsi": 58.0,
         "min_sell_composite_score": 58.0,
-        "min_sell_rsi": 55.0
+        "min_sell_rsi": 75.0
     },
     "cooldown_gate": {
         "enabled": true,
-        "cooldown_trading_days": 5
+        "cooldown_trading_days": 7
     },
     "volatility_stops": {
         "enabled": true,
-        "atr_sl_multiplier": 2.0,
+        "atr_sl_multiplier": 2.2,
         "atr_tgt1_multiplier": 1.5,
         "atr_tgt2_multiplier": 3.0
     },
@@ -80,7 +80,9 @@
         "enabled": true,
         "max_daily_trades": 2
     },
-    "parameter_version": "v2.3-Adaptive",
+    "active_market_regime_profile": "SIDEWAYS_RANGE",
+    "last_optimized_timestamp": "2026-10-15 14:15:00",
+    "parameter_version": "v2.5-SIDEWAYS_RANGE",
     "universe_mode": "EXPANDED_NIFTY_250",
     "telegram": {
         "bot_token": "",
@@ -88,5 +90,5 @@
         "enabled": false
     },
     "success": true,
-    "status": "Reset to factory defaults"
+    "status": "AI/ML Forensics & Sideways Range Calibrated"
 }

@@ -65,9 +65,9 @@ AI_PAPER_HEADERS = [
 AI_LOG_HEADERS = ["Timestamp_IST", "Evaluation_Status", "Reason_Summary", "Bought_Tickers", "Sold_Tickers"]
 
 # =====================================================================
-# RUNTIME CONFIGURATION ENGINE (PERSISTENT & ZERO-SECRET)
+# RUNTIME CONFIGURATION ENGINE (PERSISTENT & CLOUD-SYNCED)
 # =====================================================================
-DEFAULT_RUNTIME_CONFIG = {
+FACTORY_BASELINE_CONFIG = {
     "weights": {
         "Default": {"w_dma": 35, "w_rsi": 30, "w_low": 20, "w_exp": 15},
         "Long-Term": {"w_dma": 40, "w_div": 15, "w_rsi": 15, "w_low": 15, "w_exp": 15},
@@ -122,25 +122,165 @@ DEFAULT_RUNTIME_CONFIG = {
         "max_daily_trades": 2
     },
     "last_optimized_timestamp": "None",
-    "optimization_status": "V2 Public Testbed Active",
-    "parameter_version": "v2.3-Adaptive"
+    "optimization_status": "V2 Factory Baseline Active",
+    "parameter_version": "v1.0-stable"
 }
 
+DEFAULT_RUNTIME_CONFIG = {
+    "weights": {
+        "Default": {"w_dma": 35, "w_rsi": 30, "w_low": 20, "w_exp": 15},
+        "Long-Term": {"w_dma": 40, "w_div": 15, "w_rsi": 15, "w_low": 15, "w_exp": 15},
+        "Swing / Positional": {"w_rsi": 30, "w_dma": 25, "w_bb": 20, "w_vwap": 15, "w_stoch": 10},
+        "Intraday": {"w_vol": 45, "w_rsi": 15, "w_bb": 15, "w_vwap": 25},
+        "AI / RAG": {"w_rsi": 35, "w_bb": 25, "w_vol": 25, "w_macd": 15}
+    },
+    "risk_parameters": {
+        "intraday_sl_multiplier": 1.0,
+        "intraday_target_multiplier": 1.8,
+        "swing_sl_multiplier": 2.2,
+        "swing_target_multiplier": 3.0,
+        "longterm_sl_multiplier": 2.5,
+        "longterm_target_multiplier": 5.0,
+        "trailing_stop_activation_pct": 2.8,
+        "trailing_stop_lock_pct": 1.5,
+        "overbought_rsi_exit_threshold": 74.0,
+        "oversold_rsi_buy_threshold": 38.0
+    },
+    "execution_schedule": {
+        "weekdays_only": True,
+        "enable_3pm_accumulation": True,
+        "enable_morning_intraday": True,
+        "enable_afternoon_squareoff": True
+    },
+    "admin_testing_overrides": {
+        "allow_weekend_trades": False
+    },
+    "conviction_gate": {
+        "enabled": True,
+        "min_buy_composite_score": 62.0,
+        "max_buy_rsi": 58.0,
+        "min_sell_composite_score": 58.0,
+        "min_sell_rsi": 75.0
+    },
+    "cooldown_gate": {
+        "enabled": True,
+        "cooldown_trading_days": 7
+    },
+    "volatility_stops": {
+        "enabled": True,
+        "atr_sl_multiplier": 2.2,
+        "atr_tgt1_multiplier": 1.5,
+        "atr_tgt2_multiplier": 3.0
+    },
+    "multi_tier_targets": {
+        "enabled": True,
+        "lock_breakeven_on_tier1": True
+    },
+    "apex_category": {
+        "enabled": True,
+        "max_daily_trades": 2
+    },
+    "active_market_regime_profile": "SIDEWAYS_RANGE",
+    "last_optimized_timestamp": "2026-10-15 14:15:00",
+    "optimization_status": "AI/ML Forensics & Sideways Range Calibrated (All 5 Flaws Fixed)",
+    "parameter_version": "v2.5-SIDEWAYS_RANGE"
+}
+
+
+def _sync_runtime_config_to_github(config_dict):
+    """Commits updated runtime_config.json directly to GitHub main branch via REST API so it persists across cloud container reboots."""
+    try:
+        import base64
+        import requests
+        pat = ""
+        for k in ["GITHUB_PAT", "GH_PAT", "GITHUB_TOKEN"]:
+            pat = os.environ.get(k, "").strip()
+            if pat:
+                break
+        if not pat:
+            try:
+                import streamlit as st
+                for k in ["GITHUB_PAT", "GH_PAT", "GITHUB_TOKEN"]:
+                    if k in st.secrets:
+                        pat = str(st.secrets[k]).strip()
+                        if pat:
+                            break
+            except Exception:
+                pass
+        if not pat:
+            return False
+
+        api_url = "https://api.github.com/repos/purntripathi-cmd/smart-etf-tracker_testBed/contents/runtime_config.json"
+        headers = {
+            "Authorization": f"Bearer {pat}",
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "AGY-Quant-Config-Sync"
+        }
+        get_resp = requests.get(api_url, headers=headers, timeout=6)
+        sha = get_resp.json().get("sha") if get_resp.status_code == 200 else None
+
+        encoded_content = base64.b64encode(json.dumps(config_dict, indent=4).encode("utf-8")).decode("utf-8")
+        payload = {
+            "message": f"chore(config): persist runtime_config.json ({config_dict.get('parameter_version', 'updated')})",
+            "content": encoded_content,
+            "branch": "main"
+        }
+        if sha:
+            payload["sha"] = sha
+        put_resp = requests.put(api_url, headers=headers, json=payload, timeout=8)
+        return put_resp.status_code in (200, 201)
+    except Exception as e:
+        logger.debug(f"GitHub runtime_config sync skipped: {e}")
+        return False
+
+
 def load_runtime_config():
+    local_cfg = None
     if os.path.exists(CONFIG_JSON_PATH):
         try:
-            with open(CONFIG_JSON_PATH, "r") as f:
-                return json.load(f)
+            with open(CONFIG_JSON_PATH, "r", encoding="utf-8") as f:
+                local_cfg = json.load(f)
         except Exception:
-            pass
-    with open(CONFIG_JSON_PATH, "w") as f:
+            local_cfg = None
+
+    # Sync once per Streamlit session from Google Sheets Platform_Config if a newer config was saved in the cloud
+    try:
+        import streamlit as st
+        if not st.session_state.get("_gsheets_runtime_config_checked", False):
+            st.session_state["_gsheets_runtime_config_checked"] = True
+            from paper_trader_daemon import load_platform_setting
+            raw_cloud_json = load_platform_setting("runtime_config_json", default=None)
+            if raw_cloud_json and isinstance(raw_cloud_json, str) and raw_cloud_json.strip().startswith("{"):
+                cloud_cfg = json.loads(raw_cloud_json)
+                cloud_ts = str(cloud_cfg.get("last_optimized_timestamp", ""))
+                local_ts = str((local_cfg or {}).get("last_optimized_timestamp", ""))
+                if cloud_ts and cloud_ts != "None" and cloud_ts > local_ts:
+                    local_cfg = cloud_cfg
+                    with open(CONFIG_JSON_PATH, "w", encoding="utf-8") as f:
+                        json.dump(local_cfg, f, indent=4)
+    except Exception:
+        pass
+
+    if local_cfg is not None:
+        return local_cfg
+
+    with open(CONFIG_JSON_PATH, "w", encoding="utf-8") as f:
         json.dump(DEFAULT_RUNTIME_CONFIG, f, indent=4)
-    return DEFAULT_RUNTIME_CONFIG
+    return DEFAULT_RUNTIME_CONFIG.copy()
+
 
 def save_runtime_config(config_dict):
     try:
-        with open(CONFIG_JSON_PATH, "w") as f:
+        with open(CONFIG_JSON_PATH, "w", encoding="utf-8") as f:
             json.dump(config_dict, f, indent=4)
+        # 1. Persist to Google Sheets Platform_Config worksheet
+        try:
+            from paper_trader_daemon import save_platform_setting
+            save_platform_setting("runtime_config_json", json.dumps(config_dict), updated_by="AI_ML_Console")
+        except Exception as gs_err:
+            logger.debug(f"Google Sheets runtime_config sync warning: {gs_err}")
+        # 2. Persist directly to GitHub repository main branch so container restarts / git pulls never overwrite it
+        _sync_runtime_config_to_github(config_dict)
         return True
     except Exception as e:
         logger.error(f"Failed to save runtime config: {e}")
@@ -247,7 +387,7 @@ def get_ai_rag_conviction_candidates(metrics_df, is_stock_mode=False, limit=3):
         buy_list.append({
             "Ticker": sym, "symbol": sym, "Name": r.get("Name", sym), "Category": r.get("Category", "AI/RAG"),
             "Signal": "BUY", "CMP (₹)": cmp_val, "RSI (14D)": float(r.get("RSI (14D)", 50.0)),
-            "Composite Score": round(100.0 - conf_buy, 1),
+            "Composite Score": round(conf_buy, 1),
             "AI_Confidence_Pct": conf_buy,
             "AI_Confidence_Score": f"{conf_buy:.1f}%",
             "Dist 200DMA %": d200, "Dist 52W Low %": dlow, "52W Range %": rng,

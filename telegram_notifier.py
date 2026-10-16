@@ -521,6 +521,20 @@ def compute_preset_performance_summary(trades_df=None):
             "• All Presets: Pending execution"
         ]
 
+    def _parse_leading_int(val):
+        try:
+            s = str(val).split("(")[0].replace(",", "").strip()
+            return int(float(s)) if s else 0
+        except Exception:
+            return 0
+
+    def _parse_float(val):
+        try:
+            s = str(val).replace("₹", "").replace(",", "").replace("+", "").strip()
+            return float(s) if s else 0.0
+        except Exception:
+            return 0.0
+
     items = []
     for _, r in preset_df.iterrows():
         p_name = str(r.get("Strategy Preset", "")).strip()
@@ -534,21 +548,22 @@ def compute_preset_performance_summary(trades_df=None):
         elif "Long" in p_name:
             short_name = "Long-Term"
 
-        wr = r.get("Win Rate %", "Pending")
-        tot_c = int(r.get("Closed", 0))
-        pnl = float(r.get("Total PnL (₹)", 0.0))
+        wr = str(r.get("Win Rate %", "Pending")).strip()
+        tot_c = _parse_leading_int(r.get("Closed", 0))
+        pnl = _parse_float(r.get("Total PnL (₹)", 0.0))
 
-        if wr != "Pending" and tot_c > 0:
-            # Format integer percentage if no fractional part
+        if not wr.startswith("Pending") and tot_c > 0:
+            # Format integer percentage if no fractional part (handles e.g. '47.1% (8/17)')
             try:
-                wr_num = float(str(wr).replace("%", "").strip())
+                wr_clean = wr.split("(")[0].replace("%", "").strip()
+                wr_num = float(wr_clean)
                 wr_fmt = f"{int(round(wr_num))}%" if abs(wr_num - round(wr_num)) < 0.05 else f"{wr_num:.1f}%"
             except Exception:
-                wr_fmt = str(wr)
+                wr_fmt = wr
             pnl_tag = f" (₹{pnl:+,.0f})" if abs(pnl) >= 1 else ""
             items.append(f"• {short_name}: {wr_fmt} success rate{pnl_tag}")
         else:
-            act = int(r.get("Active", 0))
+            act = _parse_leading_int(r.get("Active", 0))
             if act > 0:
                 items.append(f"• {short_name}: Pending ({act} active)")
             else:
@@ -671,6 +686,16 @@ def send_concise_telegram_alert(trade_type, signals_list, raw_data=None, stocks_
     except Exception:
         pass
 
+    if not tg_token:
+        try:
+            cfg = get_telegram_config()
+            if cfg.get("bot_token"):
+                tg_token = cfg["bot_token"]
+            if cfg.get("chat_id") and (not tg_chat or tg_chat == "887870969"):
+                tg_chat = cfg["chat_id"]
+        except Exception:
+            pass
+
     if not tg_token or tg_token in ["YOUR_BOT_TOKEN", "<YOUR_BOT_TOKEN>"] or not tg_chat:
         logger.warning("[WARN-TELEGRAM] Telegram token or chat ID missing. Alert skipped.")
         return False
@@ -687,25 +712,34 @@ def send_concise_telegram_alert(trade_type, signals_list, raw_data=None, stocks_
     msg_lines = [header, ""]
 
     # Market Situation (Included across all messages: 9:45 AM, 3:00 PM, 3:10 PM, etc.)
-    market_lines = compute_market_situation_summary(raw_data=raw_data, stocks_market_df=stocks_market_df)
-    if market_lines:
-        msg_lines.extend(market_lines)
-        msg_lines.append("")
+    try:
+        market_lines = compute_market_situation_summary(raw_data=raw_data, stocks_market_df=stocks_market_df)
+        if market_lines:
+            msg_lines.extend(market_lines)
+            msg_lines.append("")
+    except Exception as e:
+        logger.warning(f"[WARN-TELEGRAM] Market situation summary skipped: {e}")
 
     # 3 PM Message: Include brief performance indication of each preset
     if trade_type in ['Swing / Long-Term (3 PM)', '3PM', '3 PM']:
-        preset_lines = compute_preset_performance_summary(trades_df=trades_df)
-        if preset_lines:
-            msg_lines.extend(preset_lines)
-            msg_lines.append("")
+        try:
+            preset_lines = compute_preset_performance_summary(trades_df=trades_df)
+            if preset_lines:
+                msg_lines.extend(preset_lines)
+                msg_lines.append("")
+        except Exception as e:
+            logger.warning(f"[WARN-TELEGRAM] Preset performance summary skipped: {e}")
 
     # 3:10 PM Message: Include final profit or loss details on all intraday trades
     if trade_type in ['Intraday Exit', 'INTRADAY_SQUAREOFF']:
-        intraday_pnl_info = compute_today_intraday_pnl_summary(trades_df=trades_df, signals_list=signals_list)
-        if intraday_pnl_info and "summary_line" in intraday_pnl_info:
-            msg_lines.append("📊 *Today's Intraday Result:*")
-            msg_lines.append(intraday_pnl_info["summary_line"])
-            msg_lines.append("")
+        try:
+            intraday_pnl_info = compute_today_intraday_pnl_summary(trades_df=trades_df, signals_list=signals_list)
+            if intraday_pnl_info and "summary_line" in intraday_pnl_info:
+                msg_lines.append("📊 *Today's Intraday Result:*")
+                msg_lines.append(intraday_pnl_info["summary_line"])
+                msg_lines.append("")
+        except Exception as e:
+            logger.warning(f"[WARN-TELEGRAM] Intraday PnL summary skipped: {e}")
 
     # Positions Breakdown
     if trade_type in ['Intraday Exit', 'INTRADAY_SQUAREOFF']:

@@ -342,6 +342,7 @@ def format_paper_trade_alert(trade_dict, action_type="ENTRY"):
 ━━━━━━━━━━━━━━━━━━━━
 ⏱️ <i>Executed at {now_str}</i>"""
     else:
+        pnl_rs = float(trade_dict.get("PnL_Rs", 0.0) or 0.0)
         raw_pnl_pct = trade_dict.get("PnL_Pct", 0.0)
         try:
             pnl_pct = float(str(raw_pnl_pct).replace("%", "").strip())
@@ -363,3 +364,436 @@ def format_paper_trade_alert(trade_dict, action_type="ENTRY"):
 ⏱️ <i>Closed at {now_str}</i>"""
 
     return msg
+
+
+def compute_market_situation_summary(raw_data=None, stocks_market_df=None):
+    """
+    Computes concise indication of Market situation across key benchmarks:
+    - Nifty 50 (^NSEI): latest price and 1D percentage change
+    - NIFTY 250: average 1D change across stock universe or HDFCSML250.NS
+    - Nifty 500 (^CRSLDX): broad market 1D percentage change
+    - India VIX (^INDIAVIX): volatility level
+
+    Returns list of markdown-formatted lines for Telegram alerts.
+    """
+    import pandas as pd
+    try:
+        from strategy_engine import extract_ticker_df
+    except Exception:
+        def extract_ticker_df(raw, t):
+            if raw is None or (isinstance(raw, pd.DataFrame) and raw.empty):
+                return pd.DataFrame()
+            if hasattr(raw.columns, "levels") and len(raw.columns.levels) > 1:
+                clean_t = t.replace(".NS", "")
+                for c in [t, clean_t, f"{clean_t}.NS"]:
+                    if c in raw.columns.levels[0]:
+                        return raw[c].copy()
+            return pd.DataFrame()
+
+    n50_cmp, n50_chg = None, None
+    n250_chg = None
+    n500_cmp, n500_chg = None, None
+    vix_val = None
+
+    if raw_data is not None:
+        try:
+            sub_50 = extract_ticker_df(raw_data, '^NSEI')
+            if not sub_50.empty and 'Close' in sub_50.columns:
+                c = sub_50['Close'].dropna()
+                if len(c) >= 2:
+                    n50_cmp = float(c.iloc[-1])
+                    n50_chg = ((c.iloc[-1] - c.iloc[-2]) / c.iloc[-2]) * 100.0
+
+            sub_500 = extract_ticker_df(raw_data, '^CRSLDX')
+            if not sub_500.empty and 'Close' in sub_500.columns:
+                c = sub_500['Close'].dropna()
+                if len(c) >= 2:
+                    n500_cmp = float(c.iloc[-1])
+                    n500_chg = ((c.iloc[-1] - c.iloc[-2]) / c.iloc[-2]) * 100.0
+
+            sub_vix = extract_ticker_df(raw_data, '^INDIAVIX')
+            if not sub_vix.empty and 'Close' in sub_vix.columns:
+                c = sub_vix['Close'].dropna()
+                if len(c) >= 1:
+                    vix_val = float(c.iloc[-1])
+
+            if stocks_market_df is not None and not stocks_market_df.empty and '1D Return %' in stocks_market_df.columns:
+                ret_s = pd.to_numeric(stocks_market_df['1D Return %'].astype(str).str.replace('%', '').str.replace('+', ''), errors='coerce').dropna()
+                if len(ret_s) >= 5:
+                    n250_chg = float(ret_s.mean())
+
+            if n250_chg is None:
+                sub_250 = extract_ticker_df(raw_data, 'HDFCSML250.NS')
+                if not sub_250.empty and 'Close' in sub_250.columns:
+                    c = sub_250['Close'].dropna()
+                    if len(c) >= 2:
+                        n250_chg = ((c.iloc[-1] - c.iloc[-2]) / c.iloc[-2]) * 100.0
+        except Exception as e:
+            logger.debug(f"Error extracting market situation from raw_data: {e}")
+
+    if n50_chg is None:
+        try:
+            import yfinance as yf
+            bench_raw = yf.download(['^NSEI', '^CRSLDX', '^INDIAVIX', 'HDFCSML250.NS'], period='5d', interval='1d', progress=False)
+            if not bench_raw.empty:
+                sub_50 = extract_ticker_df(bench_raw, '^NSEI')
+                if not sub_50.empty and 'Close' in sub_50.columns:
+                    c = sub_50['Close'].dropna()
+                    if len(c) >= 2:
+                        n50_cmp = float(c.iloc[-1])
+                        n50_chg = ((c.iloc[-1] - c.iloc[-2]) / c.iloc[-2]) * 100.0
+
+                sub_500 = extract_ticker_df(bench_raw, '^CRSLDX')
+                if not sub_500.empty and 'Close' in sub_500.columns:
+                    c = sub_500['Close'].dropna()
+                    if len(c) >= 2:
+                        n500_cmp = float(c.iloc[-1])
+                        n500_chg = ((c.iloc[-1] - c.iloc[-2]) / c.iloc[-2]) * 100.0
+
+                sub_v = extract_ticker_df(bench_raw, '^INDIAVIX')
+                if not sub_v.empty and 'Close' in sub_v.columns:
+                    c = sub_v['Close'].dropna()
+                    if len(c) >= 1:
+                        vix_val = float(c.iloc[-1])
+
+                if n250_chg is None:
+                    sub_250 = extract_ticker_df(bench_raw, 'HDFCSML250.NS')
+                    if not sub_250.empty and 'Close' in sub_250.columns:
+                        c = sub_250['Close'].dropna()
+                        if len(c) >= 2:
+                            n250_chg = ((c.iloc[-1] - c.iloc[-2]) / c.iloc[-2]) * 100.0
+        except Exception as e:
+            logger.debug(f"Error fetching benchmark fallback: {e}")
+
+    def _fmt(name, pct, cmp_val=None):
+        if pct is None:
+            return f"{name} data pending"
+        dir_w = "up by" if pct > 0 else ("down by" if pct < 0 else "flat at")
+        abs_p = abs(pct)
+        cmp_s = f" ({cmp_val:,.0f})" if cmp_val is not None and cmp_val > 0 else ""
+        return f"{name} {dir_w} {abs_p:.1f}%{cmp_s}"
+
+    lines = ["🌐 *Market Situation:*"]
+    l1 = f"• {_fmt('Nifty 50', n50_chg, n50_cmp)}, {_fmt('NIFTY 250', n250_chg)}"
+    lines.append(l1)
+    if n500_chg is not None or vix_val is not None:
+        v_str = f" | India VIX: {vix_val:.1f}" if vix_val is not None else ""
+        l2 = f"• {_fmt('Nifty 500', n500_chg)}{v_str}"
+        lines.append(l2)
+
+    return lines
+
+
+def compute_preset_performance_summary(trades_df=None):
+    """
+    Computes brief success rate summary across strategy presets for the 3 PM message:
+    e.g. Default: 40% success rate, Long term: 60% success rate etc. in brief manner.
+    """
+    import pandas as pd
+    if trades_df is None:
+        try:
+            trades_path = os.path.join(os.path.dirname(__file__), "data", "paper_trades.csv")
+            if not os.path.exists(trades_path):
+                trades_path = os.path.join(os.path.dirname(__file__), "data", "paper_trading_ledger.csv")
+            if os.path.exists(trades_path):
+                trades_df = pd.read_csv(trades_path)
+            else:
+                trades_df = pd.DataFrame()
+        except Exception:
+            trades_df = pd.DataFrame()
+
+    if trades_df is None or trades_df.empty:
+        return [
+            "🎯 *Preset Performance (Success Rates):*",
+            "• All Presets: Pending execution"
+        ]
+
+    try:
+        from strategy_engine import compute_multi_timeframe_performance
+        res = compute_multi_timeframe_performance(trades_df)
+        preset_df = res.get("preset_df", pd.DataFrame())
+    except Exception:
+        preset_df = pd.DataFrame()
+
+    if preset_df.empty:
+        return [
+            "🎯 *Preset Performance (Success Rates):*",
+            "• All Presets: Pending execution"
+        ]
+
+    items = []
+    for _, r in preset_df.iterrows():
+        p_name = str(r.get("Strategy Preset", "")).strip()
+        short_name = p_name
+        if "Swing" in p_name:
+            short_name = "Swing / Positional"
+        elif "Apex" in p_name:
+            short_name = "Apex Multi-Factor"
+        elif "AI" in p_name:
+            short_name = "AI / RAG"
+        elif "Long" in p_name:
+            short_name = "Long-Term"
+
+        wr = r.get("Win Rate %", "Pending")
+        tot_c = int(r.get("Closed", 0))
+        pnl = float(r.get("Total PnL (₹)", 0.0))
+
+        if wr != "Pending" and tot_c > 0:
+            # Format integer percentage if no fractional part
+            try:
+                wr_num = float(str(wr).replace("%", "").strip())
+                wr_fmt = f"{int(round(wr_num))}%" if abs(wr_num - round(wr_num)) < 0.05 else f"{wr_num:.1f}%"
+            except Exception:
+                wr_fmt = str(wr)
+            pnl_tag = f" (₹{pnl:+,.0f})" if abs(pnl) >= 1 else ""
+            items.append(f"• {short_name}: {wr_fmt} success rate{pnl_tag}")
+        else:
+            act = int(r.get("Active", 0))
+            if act > 0:
+                items.append(f"• {short_name}: Pending ({act} active)")
+            else:
+                items.append(f"• {short_name}: Pending (0 closed)")
+
+    return ["🎯 *Preset Performance (Success Rates):*"] + items
+
+
+def compute_today_intraday_pnl_summary(trades_df=None, signals_list=None, now_ist=None):
+    """
+    Computes final profit or loss details on all intraday trades executed today for the 3:10 PM message:
+    e.g. loss of Rs. 150 or profit of Rs. 150 in today's intraday trade.
+    """
+    import pandas as pd
+    if now_ist is None:
+        now_ist = datetime.now(IST)
+    today_str = now_ist.strftime("%Y-%m-%d")
+
+    if trades_df is None:
+        try:
+            trades_path = os.path.join(os.path.dirname(__file__), "data", "paper_trades.csv")
+            if not os.path.exists(trades_path):
+                trades_path = os.path.join(os.path.dirname(__file__), "data", "paper_trading_ledger.csv")
+            if os.path.exists(trades_path):
+                trades_df = pd.read_csv(trades_path)
+            else:
+                trades_df = pd.DataFrame()
+        except Exception:
+            trades_df = pd.DataFrame()
+
+    today_intra = pd.DataFrame()
+    if trades_df is not None and not trades_df.empty:
+        df = trades_df.copy()
+        ts_col = df["Execution_Timestamp"].astype(str)
+        trig_col = df["Trigger_Type"].fillna("").astype(str).str.upper()
+        preset_col = df["Strategy_Preset"].fillna("").astype(str).str.upper()
+        tid_col = df["Trade_ID"].fillna("").astype(str)
+        is_intra = trig_col.str.contains("INTRADAY") | preset_col.str.contains("INTRADAY") | tid_col.str.startswith("INTRA_")
+        is_today = ts_col.str.contains(today_str)
+        today_intra = df[is_intra & is_today]
+        if today_intra.empty:
+            exit_ts_col = df["Exit_Timestamp"].fillna("").astype(str)
+            today_intra = df[is_intra & exit_ts_col.str.contains(today_str)]
+
+    if today_intra.empty and signals_list:
+        pnl_sum = sum([float(s.get("pnl_rs", 0.0)) for s in signals_list])
+        cnt = len(signals_list)
+        pnl_abs = abs(pnl_sum)
+        pnl_str = f"{int(round(pnl_abs)):,}" if abs(pnl_abs - round(pnl_abs)) < 0.05 else f"{pnl_abs:,.2f}"
+        if pnl_sum > 0:
+            return {
+                "net_pnl": pnl_sum,
+                "trade_count": cnt,
+                "summary_line": f"🚀 *Profit of Rs. {pnl_str}* in today's intraday trade (+₹{pnl_sum:,.2f} across {cnt} trades)"
+            }
+        elif pnl_sum < 0:
+            return {
+                "net_pnl": pnl_sum,
+                "trade_count": cnt,
+                "summary_line": f"🛑 *Loss of Rs. {pnl_str}* in today's intraday trade (-₹{pnl_abs:,.2f} across {cnt} trades)"
+            }
+        else:
+            return {
+                "net_pnl": 0.0,
+                "trade_count": cnt,
+                "summary_line": f"⚖️ *Breakeven (Rs. 0)* in today's intraday trade"
+            }
+
+    if today_intra.empty:
+        return {
+            "net_pnl": 0.0,
+            "trade_count": 0,
+            "summary_line": "• No intraday trades executed today."
+        }
+
+    pnl_series = pd.to_numeric(today_intra["PnL_Rs"], errors="coerce").fillna(0.0)
+    net_pnl = round(float(pnl_series.sum()), 2)
+    tot_trades = len(today_intra)
+    pnl_abs = abs(net_pnl)
+    pnl_str = f"{int(round(pnl_abs)):,}" if abs(pnl_abs - round(pnl_abs)) < 0.05 else f"{pnl_abs:,.2f}"
+
+    if net_pnl > 0:
+        return {
+            "net_pnl": net_pnl,
+            "trade_count": tot_trades,
+            "summary_line": f"🚀 *Profit of Rs. {pnl_str}* in today's intraday trade (+₹{net_pnl:,.2f} across {tot_trades} trades)"
+        }
+    elif net_pnl < 0:
+        return {
+            "net_pnl": net_pnl,
+            "trade_count": tot_trades,
+            "summary_line": f"🛑 *Loss of Rs. {pnl_str}* in today's intraday trade (-₹{pnl_abs:,.2f} across {tot_trades} trades)"
+        }
+    else:
+        return {
+            "net_pnl": 0.0,
+            "trade_count": tot_trades,
+            "summary_line": f"⚖️ *Breakeven (Rs. 0)* in today's intraday trade"
+        }
+
+
+def send_concise_telegram_alert(trade_type, signals_list, raw_data=None, stocks_market_df=None, trades_df=None):
+    """
+    Sends structured Telegram alerts with:
+    1. Header badge
+    2. Market Situation indication in ALL messages (Nifty 50, NIFTY 250, Nifty 500, India VIX)
+    3. Performance of each preset at 3 PM message
+    4. Final profit or loss on all intraday trades at 3:10 PM message
+    5. Detailed trade / square-off execution breakdown
+    """
+    tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    tg_chat = str(os.getenv("TELEGRAM_CHAT_ID", "887870969")).strip()
+
+    try:
+        import streamlit as st
+        if not tg_token and hasattr(st, "secrets") and "TELEGRAM_BOT_TOKEN" in st.secrets:
+            tg_token = str(st.secrets["TELEGRAM_BOT_TOKEN"]).strip()
+        if (not tg_chat or tg_chat == "887870969") and hasattr(st, "secrets") and "TELEGRAM_CHAT_ID" in st.secrets:
+            tg_chat = str(st.secrets["TELEGRAM_CHAT_ID"]).strip()
+    except Exception:
+        pass
+
+    if not tg_token or tg_token in ["YOUR_BOT_TOKEN", "<YOUR_BOT_TOKEN>"] or not tg_chat:
+        logger.warning("[WARN-TELEGRAM] Telegram token or chat ID missing. Alert skipped.")
+        return False
+
+    header_map = {
+        'Intraday Entry': '⚡ *Intraday Entry Triggered*',
+        'Swing / Long-Term (3 PM)': '🎯 *3 PM Multi-Asset & Multi-Preset Execution*',
+        'Intraday Exit': '🔴 *Intraday Position Exit & Square-Off*',
+        'Central Execution Console': '⚡ *Manual Multi-Asset Execution Hub*',
+        'Admin Direct Test': '🔔 *Admin Telegram Notification Test*'
+    }
+
+    header = header_map.get(trade_type, f"📊 *{trade_type}*")
+    msg_lines = [header, ""]
+
+    # Market Situation (Included across all messages: 9:45 AM, 3:00 PM, 3:10 PM, etc.)
+    market_lines = compute_market_situation_summary(raw_data=raw_data, stocks_market_df=stocks_market_df)
+    if market_lines:
+        msg_lines.extend(market_lines)
+        msg_lines.append("")
+
+    # 3 PM Message: Include brief performance indication of each preset
+    if trade_type in ['Swing / Long-Term (3 PM)', '3PM', '3 PM']:
+        preset_lines = compute_preset_performance_summary(trades_df=trades_df)
+        if preset_lines:
+            msg_lines.extend(preset_lines)
+            msg_lines.append("")
+
+    # 3:10 PM Message: Include final profit or loss details on all intraday trades
+    if trade_type in ['Intraday Exit', 'INTRADAY_SQUAREOFF']:
+        intraday_pnl_info = compute_today_intraday_pnl_summary(trades_df=trades_df, signals_list=signals_list)
+        if intraday_pnl_info and "summary_line" in intraday_pnl_info:
+            msg_lines.append("📊 *Today's Intraday Result:*")
+            msg_lines.append(intraday_pnl_info["summary_line"])
+            msg_lines.append("")
+
+    # Positions Breakdown
+    if trade_type in ['Intraday Exit', 'INTRADAY_SQUAREOFF']:
+        if not signals_list:
+            msg_lines.append("• No active intraday positions were open to square off at 3:10 PM.")
+        else:
+            msg_lines.append(f"📦 *Positions Squared Off (3:10 PM):* {len(signals_list)} Positions")
+            msg_lines.append("")
+            total_realized_pnl = 0.0
+            for sig in signals_list:
+                ticker = str(sig.get('ticker', '')).replace('.NS', '')
+                cmp = float(sig.get('cmp', 0.0))
+                ep = float(sig.get('entry_price', cmp))
+                qty = float(sig.get('qty', 1))
+                pnl_rs = float(sig.get('pnl_rs', 0.0))
+                pnl_pct = str(sig.get('pnl_pct', '0.0%'))
+                total_realized_pnl += pnl_rs
+                pnl_icon = '🟢' if pnl_rs >= 0 else '🔴'
+
+                entry_ts = str(sig.get('entry_ts', ''))
+                exit_ts = str(sig.get('exit_ts', ''))
+                rsi_e = sig.get('rsi_entry', 'N/A')
+                score_e = sig.get('score_entry', 'N/A')
+                trigger_ind = sig.get('trigger', 'Intraday Momentum / RSI Dip')
+
+                msg_lines.append(f"{pnl_icon} *{ticker}* (Qty: {int(qty)})")
+                msg_lines.append(f"   • Exit Price: ₹{cmp:,.2f} | Entry Price: ₹{ep:,.2f}")
+                msg_lines.append(f"   • Net PnL: *₹{pnl_rs:+,.2f} ({pnl_pct})*")
+                if entry_ts:
+                    msg_lines.append(f"   • Window: `{entry_ts}` ➔ `{exit_ts}`")
+                msg_lines.append(f"   • Entry Basis: RSI={rsi_e} | Score={score_e} ({trigger_ind})")
+                msg_lines.append("")
+
+            pnl_tot_icon = '🚀' if total_realized_pnl >= 0 else '⚠️'
+            msg_lines.append(f"{pnl_tot_icon} *Total Realized 3:10 PM Square-off PnL:* ₹{total_realized_pnl:+,.2f}")
+
+    elif trade_type == 'Intraday Entry':
+        if not signals_list:
+            msg_lines.append("• No intraday candidates met entry conviction thresholds.")
+        else:
+            msg_lines.append(f"📦 *Total Orders Executed:* {len(signals_list)} Orders")
+            msg_lines.append("")
+            for sig in signals_list:
+                ticker = str(sig.get('ticker', '')).replace('.NS', '')
+                cmp = float(sig.get('cmp', 0.0))
+                qty = float(sig.get('qty', 1))
+                sl = float(sig.get('sl', 0.0))
+                target = float(sig.get('target', 0.0))
+                rsi_e = sig.get('rsi', 'N/A')
+                score_e = sig.get('score', 'N/A')
+                trigger_ind = sig.get('trigger', 'Intraday Momentum / RSI Dip')
+
+                msg_lines.append(f"🟢 *{ticker}* | CMP: ₹{cmp:,.2f} | Qty: {int(qty)}")
+                msg_lines.append(f"   • Justification: RSI={rsi_e} | Score={score_e} ({trigger_ind})")
+                if sl > 0 and target > 0:
+                    msg_lines.append(f"   • Target: ₹{target:,.2f} | Stop-Loss: ₹{sl:,.2f}")
+                msg_lines.append("")
+
+    else:
+        if not signals_list:
+            msg_lines.append("• No trades executed in this window.")
+        else:
+            msg_lines.append(f"📦 *Total Orders Executed:* {len(signals_list)} Orders")
+            msg_lines.append("")
+            for sig in signals_list:
+                ticker = str(sig.get('ticker', '')).replace('.NS', '')
+                cmp = float(sig.get('cmp', 0.0))
+                action = str(sig.get('action', 'BUY')).upper()
+                source = str(sig.get('source', 'Quant'))
+                preset = str(sig.get('preset', ''))
+                icon = '🟢' if action == 'BUY' else ('🔴' if action in ['SELL', 'SQUARE-OFF'] else '🔄')
+                ai_tag = ' 🤖[AI]' if 'AI' in source else ''
+                preset_tag = f" [{preset}]" if preset else ""
+                msg_lines.append(f"{icon} `{ticker}` | ₹{cmp:,.2f} | *{action}*{ai_tag}{preset_tag} ({source})")
+
+    url = f"https://api.telegram.org/bot{tg_token}/sendMessage" if not tg_token.startswith("bot") else f"https://api.telegram.org/{tg_token}/sendMessage"
+    payload = {"chat_id": tg_chat, "text": "\n".join(msg_lines), "parse_mode": "Markdown"}
+
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code != 200:
+            logger.warning(f"[WARN-TELEGRAM] Markdown send returned {response.status_code}, retrying without parse_mode: {response.text}")
+            fallback_payload = {"chat_id": tg_chat, "text": "\n".join(msg_lines).replace("*", "").replace("`", "")}
+            response = requests.post(url, json=fallback_payload, timeout=10)
+            if response.status_code != 200:
+                logger.error(f"[ERR-TELEGRAM] Send failed with code {response.status_code}: {response.text}")
+        return response.status_code == 200
+    except Exception as e:
+        logger.error(f"[ERR-TELEGRAM] Failed to send alert: {e}")
+        return False
+

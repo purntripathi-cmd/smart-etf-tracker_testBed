@@ -142,66 +142,80 @@ REIT_FUNDAMENTALS_DB = {
 }
 
 
-def fetch_reit_market_data(ticker_symbol: str) -> dict:
+def _parse_reit_hist_df(ticker_symbol: str, hist: pd.DataFrame) -> dict:
+    """Computes technical and S/R metrics from a single REIT/InvIT OHLCV DataFrame."""
+    clean_sym = ticker_symbol.replace(".NS", "")
+    if hist is None or hist.empty or "Close" not in hist.columns:
+        return {}
+    hist = hist.dropna(subset=["Close"])
+    if len(hist) < 5:
+        return {}
+
+    cmp_val = round(float(hist["Close"].iloc[-1]), 2)
+    h_ser = hist["High"] if "High" in hist.columns else hist["Close"]
+    l_ser = hist["Low"] if "Low" in hist.columns else hist["Close"]
+    high_52w = round(float(h_ser.max()), 2)
+    low_52w = round(float(l_ser.min()), 2)
+    pct_from_52w_high = round(((cmp_val - high_52w) / high_52w) * 100, 2) if high_52w > 0 else 0.0
+    pct_from_52w_low = round(((cmp_val - low_52w) / low_52w) * 100, 2) if low_52w > 0 else 0.0
+
+    sma_50 = round(float(hist["Close"].rolling(50, min_periods=1).mean().iloc[-1]), 2)
+    sma_200 = round(float(hist["Close"].rolling(200, min_periods=1).mean().iloc[-1]), 2)
+
+    delta = hist["Close"].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(com=13, min_periods=1).mean()
+    avg_loss = loss.ewm(com=13, min_periods=1).mean()
+    rs = avg_gain / (avg_loss + 1e-9)
+    rsi_14 = round(float((100 - (100 / (1 + rs))).iloc[-1]), 1)
+
+    recent_bars = hist.tail(60)
+    r_high = float((recent_bars["High"] if "High" in recent_bars.columns else recent_bars["Close"]).max())
+    r_low = float((recent_bars["Low"] if "Low" in recent_bars.columns else recent_bars["Close"]).min())
+    r_close = float(recent_bars["Close"].iloc[-1])
+    pivot = (r_high + r_low + r_close) / 3.0
+    s1 = round(2 * pivot - r_high, 2)
+    r1 = round(2 * pivot - r_low, 2)
+    dist_to_s1_pct = round(((cmp_val - s1) / s1) * 100, 2) if s1 > 0 else 0.0
+
+    return {
+        "Ticker": clean_sym,
+        "Yahoo_Ticker": ticker_symbol,
+        "CMP (₹)": cmp_val,
+        "52W High (₹)": high_52w,
+        "52W Low (₹)": low_52w,
+        "Dist from 52W High (%)": pct_from_52w_high,
+        "Dist from 52W Low (%)": pct_from_52w_low,
+        "SMA 50 (₹)": sma_50,
+        "SMA 200 (₹)": sma_200,
+        "RSI (14D)": rsi_14,
+        "Immediate Support S1 (₹)": s1,
+        "Immediate Resistance R1 (₹)": r1,
+        "Dist to Support S1 (%)": dist_to_s1_pct,
+        "Volume": int(hist["Volume"].iloc[-1]) if "Volume" in hist.columns and pd.notna(hist["Volume"].iloc[-1]) else 0
+    }
+
+
+def fetch_reit_market_data(ticker_symbol: str, batch_raw: pd.DataFrame = None) -> dict:
     """
     Fetches real-time market data and historical price action for a REIT ticker.
+    Uses vectorized batch_raw via extract_ticker_df when provided to prevent N+1 API throttling.
     """
-    clean_sym = ticker_symbol.replace(".NS", "")
     try:
-        t = yf.Ticker(ticker_symbol)
-        hist = t.history(period="1y")
-        if hist.empty or len(hist) < 10:
-            hist = t.history(period="3mo")
+        if batch_raw is not None and not batch_raw.empty:
+            from strategy_engine import extract_ticker_df
+            sub = extract_ticker_df(batch_raw, ticker_symbol)
+            if not sub.empty:
+                return _parse_reit_hist_df(ticker_symbol, sub)
 
-        if hist.empty:
-            return {}
-
-        cmp_val = round(float(hist["Close"].iloc[-1]), 2)
-        high_52w = round(float(hist["High"].max()), 2)
-        low_52w = round(float(hist["Low"].min()), 2)
-        pct_from_52w_high = round(((cmp_val - high_52w) / high_52w) * 100, 2)
-        pct_from_52w_low = round(((cmp_val - low_52w) / low_52w) * 100, 2)
-
-        # Technical Indicators: SMA 50, SMA 200
-        sma_50 = round(float(hist["Close"].rolling(50).mean().iloc[-1]), 2) if len(hist) >= 50 else round(float(hist["Close"].mean()), 2)
-        sma_200 = round(float(hist["Close"].rolling(200).mean().iloc[-1]), 2) if len(hist) >= 200 else sma_50
-
-        # RSI 14D
-        delta = hist["Close"].diff()
-        gain = delta.clip(lower=0)
-        loss = -delta.clip(upper=0)
-        avg_gain = gain.rolling(14, min_periods=1).mean()
-        avg_loss = loss.rolling(14, min_periods=1).mean()
-        rs = avg_gain / (avg_loss + 1e-9)
-        rsi_14 = round(float(100 - (100 / (1 + rs)).iloc[-1]), 1)
-
-        # Support & Resistance (Pivot Points over last 60 days)
-        recent_bars = hist.tail(60)
-        r_high = float(recent_bars["High"].max())
-        r_low = float(recent_bars["Low"].min())
-        r_close = float(recent_bars["Close"].iloc[-1])
-        pivot = (r_high + r_low + r_close) / 3.0
-        s1 = round(2 * pivot - r_high, 2)
-        r1 = round(2 * pivot - r_low, 2)
-
-        dist_to_s1_pct = round(((cmp_val - s1) / s1) * 100, 2)
-
-        return {
-            "Ticker": clean_sym,
-            "Yahoo_Ticker": ticker_symbol,
-            "CMP (₹)": cmp_val,
-            "52W High (₹)": high_52w,
-            "52W Low (₹)": low_52w,
-            "Dist from 52W High (%)": pct_from_52w_high,
-            "Dist from 52W Low (%)": pct_from_52w_low,
-            "SMA 50 (₹)": sma_50,
-            "SMA 200 (₹)": sma_200,
-            "RSI (14D)": rsi_14,
-            "Immediate Support S1 (₹)": s1,
-            "Immediate Resistance R1 (₹)": r1,
-            "Dist to Support S1 (%)": dist_to_s1_pct,
-            "Volume": int(hist["Volume"].iloc[-1]) if "Volume" in hist.columns else 0
-        }
+        raw = yf.download(ticker_symbol, period="1y", progress=False, threads=False)
+        if raw is not None and not raw.empty:
+            from strategy_engine import extract_ticker_df
+            sub = extract_ticker_df(raw, ticker_symbol)
+            if not sub.empty:
+                return _parse_reit_hist_df(ticker_symbol, sub)
+        return {}
     except Exception as e:
         logger.warning(f"Error fetching REIT market data for {ticker_symbol}: {e}")
         return {}
@@ -213,20 +227,15 @@ def calculate_reit_scores(rec: dict) -> dict:
     Composite Score (0-100), and Action Recommendation for a REIT.
     """
     # 1. Fundamental Scoring (Weight: 60%)
-    # Yield component (Target: > 7.0% = 100 pts, < 5.0% = 40 pts)
     dist_yield = rec.get("Distribution Yield (%)", 6.5)
     yield_score = min(100, max(20, (dist_yield / 7.5) * 100))
 
-    # NAV Discount component (Discount < 0% is good, Premium > 0% is lower score)
     nav_discount = rec.get("NAV Discount / Premium (%)", 0.0)
     if nav_discount < 0:
-        # e.g. -10% discount gives 90-100 score
         nav_score = min(100, 80 + abs(nav_discount) * 2.0)
     else:
-        # e.g. +10% premium gives 60-70 score
         nav_score = max(30, 80 - nav_discount * 2.0)
 
-    # LTV Safety (SEBI ceiling 49%, <25% gives 100, 25-35% gives 85, >40% gives 50)
     ltv = rec.get("LTV Leverage (%)", 30.0)
     if ltv <= 25.0:
         ltv_score = 100.0
@@ -235,11 +244,9 @@ def calculate_reit_scores(rec: dict) -> dict:
     else:
         ltv_score = max(30.0, 100 - (ltv - 25.0) * 3.5)
 
-    # Occupancy component
     occ = rec.get("Occupancy (%)", 90.0)
     occ_score = min(100, max(40, (occ / 95.0) * 100))
 
-    # Dividend Payout Ratio score (100% NDCF payout is gold standard)
     payout = rec.get("Dividend Payout Ratio (%)", 100.0)
     payout_score = 100.0 if payout >= 95.0 else (payout / 95.0) * 90.0
 
@@ -253,7 +260,6 @@ def calculate_reit_scores(rec: dict) -> dict:
     )
 
     # 2. Technical Scoring (Weight: 40%)
-    # RSI Sweetspot (40-55 is accumulation zone, <35 oversold/great, >65 overbought)
     rsi = rec.get("RSI (14D)", 50.0)
     if rsi < 35:
         rsi_score = 95.0
@@ -264,7 +270,6 @@ def calculate_reit_scores(rec: dict) -> dict:
     else:
         rsi_score = max(20.0, 100 - (rsi - 60) * 4.0)
 
-    # Distance to Support (Closer to S1 support is higher conviction)
     dist_s1 = rec.get("Dist to Support S1 (%)", 2.0)
     if dist_s1 <= 1.5:
         s1_score = 95.0
@@ -275,7 +280,6 @@ def calculate_reit_scores(rec: dict) -> dict:
     else:
         s1_score = 45.0
 
-    # Trend (CMP > SMA 50)
     cmp_val = rec.get("CMP (₹)", 100.0)
     sma_50 = rec.get("SMA 50 (₹)", 100.0)
     trend_score = 85.0 if cmp_val >= sma_50 else 60.0
@@ -289,7 +293,6 @@ def calculate_reit_scores(rec: dict) -> dict:
 
     composite_score = round(0.60 * fundamental_score + 0.40 * technical_score, 1)
 
-    # Determine Action Signal
     if composite_score >= 82.0 or (dist_yield >= 7.0 and dist_s1 <= 3.0):
         action = "🟢 STRONG ACCUMULATE (HIGH YIELD + AT SUPPORT)"
         badge_color = "green"
@@ -316,37 +319,31 @@ def calculate_reit_scores(rec: dict) -> dict:
 _CACHED_REITS_DATA = None
 _CACHED_REITS_TIME = 0.0
 
-def scan_all_reits(force_refresh: bool = False) -> pd.DataFrame:
+def scan_all_reits(force_refresh: bool = False, raw_market_data: pd.DataFrame = None) -> pd.DataFrame:
     """
-    Executes a comprehensive institutional scan of all listed Indian REITs & InvITs.
-    Returns an enriched Pandas DataFrame.
+    Executes a comprehensive institutional scan of all listed Indian REITs & InvITs
+    using a single vectorized batch download (zero N+1 API throttling, zero fabricated prices).
     """
     global _CACHED_REITS_DATA, _CACHED_REITS_TIME
     now = datetime.datetime.now().timestamp()
-    if not force_refresh and _CACHED_REITS_DATA is not None and (now - _CACHED_REITS_TIME < 900):
+    if not force_refresh and _CACHED_REITS_DATA is not None and not _CACHED_REITS_DATA.empty and (now - _CACHED_REITS_TIME < 900):
         return _CACHED_REITS_DATA.copy()
+
+    batch_raw = raw_market_data
+    if batch_raw is None or batch_raw.empty:
+        try:
+            reit_tickers = list(REIT_FUNDAMENTALS_DB.keys())
+            batch_raw = yf.download(reit_tickers, period="1y", group_by="ticker", threads=True, progress=False)
+        except Exception as e:
+            logger.warning(f"Batch REIT download warning: {e}")
+            batch_raw = pd.DataFrame()
 
     records = []
     for yf_ticker, f_info in REIT_FUNDAMENTALS_DB.items():
-        market_data = fetch_reit_market_data(yf_ticker)
-        if not market_data:
-            # Fallback values if offline
-            market_data = {
-                "Ticker": yf_ticker.replace(".NS", ""),
-                "Yahoo_Ticker": yf_ticker,
-                "CMP (₹)": f_info["NAV_Per_Unit"] * 0.98,
-                "52W High (₹)": f_info["NAV_Per_Unit"] * 1.10,
-                "52W Low (₹)": f_info["NAV_Per_Unit"] * 0.85,
-                "Dist from 52W High (%)": -10.5,
-                "Dist from 52W Low (%)": 15.0,
-                "SMA 50 (₹)": f_info["NAV_Per_Unit"] * 0.97,
-                "SMA 200 (₹)": f_info["NAV_Per_Unit"] * 0.95,
-                "RSI (14D)": 48.0,
-                "Immediate Support S1 (₹)": round(f_info["NAV_Per_Unit"] * 0.94, 2),
-                "Immediate Resistance R1 (₹)": round(f_info["NAV_Per_Unit"] * 1.05, 2),
-                "Dist to Support S1 (%)": 2.5,
-                "Volume": 150000
-            }
+        market_data = fetch_reit_market_data(yf_ticker, batch_raw=batch_raw)
+        if not market_data or market_data.get("CMP (₹)", 0) <= 0:
+            # Skip unverified/delisted ticker rather than fabricating synthetic prices
+            continue
 
         cmp_val = market_data["CMP (₹)"]
         nav = f_info["NAV_Per_Unit"]
@@ -361,7 +358,7 @@ def scan_all_reits(force_refresh: bool = False) -> pd.DataFrame:
             "Sponsor": f_info["Sponsor"],
             "CMP (₹)": cmp_val,
             "Distribution Yield (%)": dist_yield_pct,
-            "Dividend Payout Ratio (%)": f_info["NDCF_Payout_Ratio_Pct"],  # MUST HAVE
+            "Dividend Payout Ratio (%)": f_info["NDCF_Payout_Ratio_Pct"],
             "Annualized DPU (₹)": annual_dpu,
             "Net Asset Value NAV (₹)": nav,
             "NAV Discount / Premium (%)": nav_discount_pct,
@@ -388,7 +385,6 @@ def scan_all_reits(force_refresh: bool = False) -> pd.DataFrame:
         records.append(item)
 
     df = pd.DataFrame(records)
-    # Sort descending by Composite Score
     if not df.empty and "Composite Score (0-100)" in df.columns:
         df = df.sort_values(by="Composite Score (0-100)", ascending=False).reset_index(drop=True)
     _CACHED_REITS_DATA = df.copy()
@@ -422,20 +418,31 @@ def check_reit_investment_eligibility(reit_row: dict) -> dict:
 
 def check_metal_investment_eligibility(metal_row: dict) -> dict:
     """
-    Evaluates whether Gold or Silver (Commodity/Metal) meets strict entry criteria:
-    - Must NOT be at resistance peak or overbought (RSI <= 60.0)
-    - Range position must be <= 55% (testing support or mid-range, not breakout top)
+    Evaluates whether Gold or Silver (Commodity/Metal) meets strict institutional entry criteria:
+    - Must be in a confirmed secular uptrend (Dist 200DMA % >= 0.0 or CMP >= 200 DMA)
+    - Must NOT be at resistance peak or overbought (36.0 <= RSI <= 57.0)
+    - Must show a bullish reversal hook (RSI Delta >= 0 or Reversal Hook guard)
+    - Range position must be <= 60%
     """
     rsi = float(metal_row.get("RSI (14D)", metal_row.get("RSI", 50.0)))
-    range_pos = float(metal_row.get("Range Position (%)", 50.0))
+    range_pos = float(metal_row.get("Range Position (%)", metal_row.get("52W Range %", 50.0)))
+    dist_200 = float(metal_row.get("Dist 200DMA %", 1.0))
+    dist_50 = float(metal_row.get("Dist 50DMA %", 0.5))
+    rsi_delta = float(metal_row.get("RSI Delta", 0.5))
+    fk_guard = str(metal_row.get("Falling Knife Guard", "🟢 Reversal Hook (Safe)"))
     sig = str(metal_row.get("Action Signal", "ACCUMULATE")).upper()
 
-    if rsi > 62.0:
-        return {"eligible": False, "status": "🛑 SKIPPED (Overbought Peak)", "reason": f"Metal RSI is {rsi:.1f} (> 62.0). Skipping cyclical peak."}
-    if range_pos > 60.0:
-        return {"eligible": False, "status": "🛑 SKIPPED (Near Resistance Ceiling)", "reason": f"Range position is {range_pos:.1f}% (> 60%). Too close to R1 ceiling."}
-    if "SELL" in sig or "DISTRIBUTION" in sig:
+    if dist_200 < 0.0 or dist_50 < -2.5:
+        return {"eligible": False, "status": "🛑 SKIPPED (Below Secular Trend)", "reason": f"Metal is below 200 DMA ({dist_200:+.1f}%). Waiting for uptrend confirmation."}
+    if rsi > 57.0 or rsi < 35.0:
+        return {"eligible": False, "status": "🛑 SKIPPED (RSI Out of Pullback Zone)", "reason": f"Metal RSI is {rsi:.1f} (requires 35–57 pullback in uptrend)."}
+    if rsi_delta < 0.0 and "Falling Knife" in fk_guard:
+        return {"eligible": False, "status": "🛑 SKIPPED (No Reversal Hook)", "reason": "Waiting for daily bullish hook confirmation."}
+    if range_pos > 82.0:
+        return {"eligible": False, "status": "🛑 SKIPPED (Near Resistance Ceiling)", "reason": f"Range position is {range_pos:.1f}%. Too close to ceiling."}
+    if "SELL" in sig or "DISTRIBUTION" in sig or "AVOID" in sig:
         return {"eligible": False, "status": "🛑 SKIPPED (Distribution Signal)", "reason": f"Signal is {sig}. Waiting for support bounce."}
 
-    return {"eligible": True, "status": "🟢 CRITERIA MET (Support Dip)", "reason": f"RSI {rsi:.1f} <= 60, Range {range_pos:.1f}% <= 55%. Favourable hedge entry."}
+    return {"eligible": True, "status": "🟢 CRITERIA MET (Uptrend Support Dip)", "reason": f"Uptrend (+{dist_200:.1f}% vs 200DMA), RSI {rsi:.1f}, Reversal Hook confirmed."}
+
 

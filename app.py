@@ -124,24 +124,27 @@ st.markdown(
 )
 
 # =====================================================================
-# INTERNAL MODULE IMPORTS (WITH MTIME-GUARDED HOT-RELOAD)
+# INTERNAL MODULE IMPORTS (MTIME-GUARDED RELOAD TO PREVENT CACHE LEAKS)
 # =====================================================================
-_MODULE_MTIMES = {}
-def _reload_if_changed(mod_name):
-    mod = sys.modules.get(mod_name)
-    if mod is None or not getattr(mod, "__file__", None):
-        return
-    try:
-        mtime = os.path.getmtime(mod.__file__)
-        if _MODULE_MTIMES.get(mod_name) != mtime:
-            if _MODULE_MTIMES.get(mod_name) is not None:
-                importlib.reload(mod)
-            _MODULE_MTIMES[mod_name] = mtime
-    except Exception:
-        pass
+_MODULE_MTIMES = st.session_state.setdefault("_module_mtimes", {})
 
-for _mod_name in ["strategy_engine", "ml_optimizer", "reit_scanner", "universe_manager", "sr_engine"]:
+def _reload_if_changed(mod_name: str):
+    if mod_name in sys.modules:
+        mod_obj = sys.modules[mod_name]
+        mod_file = getattr(mod_obj, "__file__", None)
+        if mod_file and os.path.exists(mod_file):
+            try:
+                cur_mtime = os.path.getmtime(mod_file)
+                last_mtime = _MODULE_MTIMES.get(mod_name)
+                if last_mtime is not None and cur_mtime > last_mtime:
+                    importlib.reload(mod_obj)
+                _MODULE_MTIMES[mod_name] = cur_mtime
+            except Exception:
+                pass
+
+for _mod_name in ["strategy_engine", "ml_optimizer", "paper_trader_daemon"]:
     _reload_if_changed(_mod_name)
+
 
 try:
     from strategy_engine import (
@@ -150,7 +153,8 @@ try:
         compute_volatility_stop_and_targets,
         get_stopped_out_tickers_in_cooldown,
         check_conviction_gate,
-        compute_multi_timeframe_performance
+        compute_multi_timeframe_performance,
+        is_buy_trade_prediction
     )
     from sr_engine import (
         compute_sr_matrix,
@@ -182,10 +186,26 @@ try:
         get_parameter_reference_matrix,
         get_monthly_performance_comparison,
         load_parameter_change_log,
-        get_ai_rag_conviction_candidates,
         load_strategy_change_log,
         log_strategic_change,
-        check_conviction_gate
+        get_ai_rag_conviction_candidates
+    )
+    from paper_trader_daemon import (
+        evaluate_trade_exits,
+        load_paper_trades,
+        save_paper_trades,
+        load_audit_log,
+        run_paper_trader_daemon,
+        LOCAL_AUDIT_CSV,
+        LOCAL_TRADES_CSV,
+        DEFAULT_AUDIT_HEADERS,
+        DEFAULT_PAPER_HEADERS,
+        DEFAULT_USER_HEADERS,
+        setup_or_repair_gsheets_schema,
+        get_direct_gspread_client,
+        is_weekend_trading_allowed,
+        load_platform_setting,
+        save_platform_setting
     )
 except Exception as _import_err:
     import traceback
@@ -262,104 +282,15 @@ def sync_users_df_to_sheets(u_df):
     u_df.to_csv(users_local, index=False)
     return True
 
-def send_concise_telegram_alert(trade_type, signals_list):
-    tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    tg_chat = str(os.getenv("TELEGRAM_CHAT_ID", "887870969")).strip()
-    try:
-        if not tg_token and "TELEGRAM_BOT_TOKEN" in st.secrets:
-            tg_token = str(st.secrets["TELEGRAM_BOT_TOKEN"]).strip()
-        if (not tg_chat or tg_chat == "887870969") and "TELEGRAM_CHAT_ID" in st.secrets:
-            tg_chat = str(st.secrets["TELEGRAM_CHAT_ID"]).strip()
-    except Exception:
-        pass
-    if not tg_token or tg_token in ["YOUR_BOT_TOKEN", "<YOUR_BOT_TOKEN>"] or not tg_chat:
-        return False
-
-    header_map = {
-        'Intraday Entry': '⚡ *Intraday Entry Triggered*',
-        'Swing / Long-Term (3 PM)': '🎯 *3 PM Multi-Asset & Multi-Preset Execution*',
-        'Intraday Exit': '🔴 *Intraday Position Exit & Square-Off*',
-        'Central Execution Console': '⚡ *Manual Multi-Asset Execution Hub*',
-        'Admin Direct Test': '🔔 *Admin Telegram Notification Test*'
-    }
-    header = header_map.get(trade_type, f"📊 *{trade_type}*")
-    msg_lines = [header, ""]
-
-    if trade_type == 'Intraday Exit':
-        if not signals_list:
-            msg_lines.append("• No active intraday positions were open to square off at 3:10 PM.")
-        else:
-            msg_lines.append(f"📦 *Total Positions Squared Off:* {len(signals_list)} Positions")
-            msg_lines.append("")
-            total_realized_pnl = 0.0
-            for sig in signals_list:
-                ticker = str(sig.get('ticker', '')).replace('.NS', '')
-                cmp = float(sig.get('cmp', 0.0))
-                ep = float(sig.get('entry_price', cmp))
-                qty = float(sig.get('qty', 1))
-                pnl_rs = float(sig.get('pnl_rs', 0.0))
-                pnl_pct = str(sig.get('pnl_pct', '0.0%'))
-                total_realized_pnl += pnl_rs
-                pnl_icon = '🟢' if pnl_rs >= 0 else '🔴'
-                
-                entry_ts = str(sig.get('entry_ts', ''))
-                exit_ts = str(sig.get('exit_ts', ''))
-                rsi_e = sig.get('rsi_entry', 'N/A')
-                score_e = sig.get('score_entry', 'N/A')
-                trigger_ind = sig.get('trigger', 'Intraday Momentum / RSI Dip')
-                
-                msg_lines.append(f"{pnl_icon} *{ticker}* (Qty: {int(qty)})")
-                msg_lines.append(f"   • Exit Price: ₹{cmp:,.2f} | Entry Price: ₹{ep:,.2f}")
-                msg_lines.append(f"   • Net PnL: *₹{pnl_rs:+,.2f} ({pnl_pct})*")
-                if entry_ts:
-                    msg_lines.append(f"   • Window: `{entry_ts}` ➔ `{exit_ts}`")
-                msg_lines.append(f"   • Entry Basis: RSI={rsi_e} | Score={score_e} ({trigger_ind})")
-                msg_lines.append("")
-            
-            pnl_tot_icon = '🚀' if total_realized_pnl >= 0 else '⚠️'
-            msg_lines.append(f"{pnl_tot_icon} *Total Realized Intraday PnL:* ₹{total_realized_pnl:+,.2f}")
-
-    elif trade_type == 'Intraday Entry':
-        if not signals_list:
-            msg_lines.append("• No intraday candidates met entry conviction thresholds.")
-        else:
-            msg_lines.append(f"📦 *Total Orders Executed:* {len(signals_list)} Orders")
-            msg_lines.append("")
-            for sig in signals_list:
-                ticker = str(sig.get('ticker', '')).replace('.NS', '')
-                cmp = float(sig.get('cmp', 0.0))
-                qty = float(sig.get('qty', 1))
-                sl = float(sig.get('sl', 0.0))
-                target = float(sig.get('target', 0.0))
-                rsi_e = sig.get('rsi', 'N/A')
-                score_e = sig.get('score', 'N/A')
-                trigger_ind = sig.get('trigger', 'Intraday Momentum / RSI Dip')
-                
-                msg_lines.append(f"🟢 *{ticker}* | CMP: ₹{cmp:,.2f} | Qty: {int(qty)}")
-                msg_lines.append(f"   • Justification: RSI={rsi_e} | Score={score_e} ({trigger_ind})")
-                if sl > 0 and target > 0:
-                    msg_lines.append(f"   • Target: ₹{target:,.2f} | Stop-Loss: ₹{sl:,.2f}")
-                msg_lines.append("")
-
-    else:
-        if not signals_list:
-            msg_lines.append("• No trades executed in this window.")
-        else:
-            msg_lines.append(f"📦 *Total Orders Executed:* {len(signals_list)} Orders")
-            msg_lines.append("")
-            for s in signals_list:
-                sym = str(s.get('ticker', '')).replace('.NS', '')
-                cmp_v = float(s.get('cmp', 0.0))
-                act = str(s.get('action', 'BUY')).upper()
-                src = str(s.get('source', 'Quant'))
-                icon = '🟢' if act == 'BUY' else ('🔴' if act in ['SELL', 'SQUARE-OFF'] else '🔄')
-                msg_lines.append(f"{icon} `{sym}` | ₹{cmp_v:,.2f} | *{act}* ({src})")
-    url = f"https://api.telegram.org/bot{tg_token}/sendMessage" if not tg_token.startswith("bot") else f"https://api.telegram.org/{tg_token}/sendMessage"
-    try:
-        r = requests.post(url, json={"chat_id": tg_chat, "text": "\n".join(msg_lines), "parse_mode": "Markdown"}, timeout=10)
-        return r.status_code == 200
-    except Exception:
-        return False
+def send_concise_telegram_alert(trade_type, signals_list, raw_data=None, stocks_market_df=None, trades_df=None):
+    from telegram_notifier import send_concise_telegram_alert as _send_concise_telegram_alert
+    return _send_concise_telegram_alert(
+        trade_type=trade_type,
+        signals_list=signals_list,
+        raw_data=raw_data,
+        stocks_market_df=stocks_market_df,
+        trades_df=trades_df
+    )
 
 if export_v2_docx_file and not os.path.exists(DOCX_GUIDE_FILE):
     try:
@@ -367,6 +298,53 @@ if export_v2_docx_file and not os.path.exists(DOCX_GUIDE_FILE):
     except Exception:
         pass
 
+# =====================================================================
+# QUERY PARAMETER CRON TRIGGER (ZERO-SECRETS COMPATIBLE)
+# =====================================================================
+query_params = st.query_params
+cron_triggered = any(k in query_params for k in ["cron_trigger", "cron", "trigger", "action_mode", "run_cron"])
+if cron_triggered:
+    raw_mode = (
+        query_params.get("mode") or
+        query_params.get("action_mode") or
+        query_params.get("cron_trigger") or
+        query_params.get("cron") or
+        query_params.get("trigger") or
+        "PAPER_TRADE_3PM"
+    )
+    if isinstance(raw_mode, list):
+        raw_mode = raw_mode[0] if raw_mode else "PAPER_TRADE_3PM"
+    mode_str = str(raw_mode).strip().upper()
+
+    if any(k in mode_str for k in ["3PM", "1500", "3:00", "ACCUMULATION", "POS"]):
+        mode_param = "PAPER_TRADE_3PM"
+    elif any(k in mode_str for k in ["INTRA", "0945", "945", "MORNING", "ENTRY"]):
+        mode_param = "INTRADAY_ENTRY"
+    elif any(k in mode_str for k in ["SQUARE", "0310", "310", "0315", "315", "EXIT"]):
+        mode_param = "INTRADAY_SQUAREOFF"
+    else:
+        mode_param = "PAPER_TRADE_3PM"
+
+    force_run = any(
+        str(query_params.get(k, "")).lower() in ["1", "true", "yes"]
+        for k in ["force", "weekend", "allow_weekend"]
+    )
+    if force_run:
+        os.environ["ALLOW_WEEKEND_TRADES"] = "1"
+    else:
+        # Ensure any stale override is cleared so external crons strictly obey the admin setting
+        os.environ.pop("ALLOW_WEEKEND_TRADES", None)
+
+    try:
+        res = run_paper_trader_daemon(mode_override=mode_param)
+        res_payload = {"status": "success", "mode": mode_param, "timestamp": datetime.datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")}
+        if isinstance(res, dict):
+            res_payload.update(res)
+        st.json(res_payload)
+    except Exception as e:
+        logger.error(f"Cron trigger execution error: {e}")
+        st.json({"status": "error", "message": str(e)})
+    st.stop()
 
 # =====================================================================
 # SYNCHRONIZED TOP HORIZONTAL SCROLLBAR
@@ -442,13 +420,13 @@ COLUMN_HEADER_TOOLTIPS = {
     "RS Spread 21D %": "21-day Relative Strength spread vs Nifty 50 benchmark. 🟢 Higher the better (Positive spread proves asset is outperforming the broad benchmark index).",
 
     # Multi-Factor Conviction Scores
-    "Composite Buy Score": "Multi-factor weighted conviction score combining moving averages, RSI, and valuation. 🟢 Lower the better (Lower percentile score indicates deeper structural discount, greater margin of safety, and higher institutional value).",
-    "Composite Score": "Multi-factor quantitative health score. 🟢 Lower the better (Lower percentile score indicates superior structural value and oversold confluence).",
-    "Composite_Score_At_Entry": "Multi-factor conviction score recorded at trade entry. 🟢 Lower the better (Indicates entry during deep value confluence).",
-    "Technical Score": "Composite technical momentum and mean-reversion score. 🟢 Lower the better for BUY entries (Lower score flags deep oversold pullbacks across 20DMA, 50DMA, 200DMA, and RSI).",
-    "Technical_Score_At_Entry": "Technical momentum score recorded at trade entry. 🟢 Lower the better for BUY dips.",
-    "Fundamental Score": "Institutional quality, expense ratio, and empirical win-rate score. 🟢 Lower the better for BUY (Indicates superior low-cost efficiency and deep valuation margin of safety).",
-    "Fundamental_Score_At_Entry": "Fundamental quality score recorded at trade entry. 🟢 Lower the better for BUY.",
+    "Composite Buy Score": "Multi-factor weighted conviction score (0-100) combining trend strength, pullback value, RSI, and institutional efficiency. 🟢 Higher the better (Higher score >= 62 indicates strong institutional conviction).",
+    "Composite Score": "Multi-factor quantitative conviction score (0-100). 🟢 Higher the better (Higher score indicates superior risk-adjusted confluence).",
+    "Composite_Score_At_Entry": "Multi-factor conviction score (0-100) recorded at trade entry. 🟢 Higher the better.",
+    "Technical Score": "Composite technical momentum and pullback confluence score (0-100). 🟢 Higher the better for BUY entries.",
+    "Technical_Score_At_Entry": "Technical conviction score (0-100) recorded at trade entry. 🟢 Higher the better.",
+    "Fundamental Score": "Institutional quality, low-cost efficiency, and trend health score (0-100). 🟢 Higher the better for BUY.",
+    "Fundamental_Score_At_Entry": "Fundamental quality score (0-100) recorded at trade entry. 🟢 Higher the better.",
     "Confidence Score (%)": "Machine learning ensemble probability score for favorable upward expansion. 🟢 Higher the better.",
 
     # Support & Resistance (S/R) Engine
@@ -497,6 +475,8 @@ COLUMN_HEADER_TOOLTIPS = {
     "Unrealized PnL (%)": "Floating percentage return on invested capital. 🟢 Higher the better.",
     "Win Rate %": "Ratio of profitable trades to total closed trades. 🟢 Higher the better (> 55%–60% confirms positive statistical expectancy).",
     "Win Rate (%)": "Ratio of profitable trades to total closed trades. 🟢 Higher the better (> 55%–60% confirms positive statistical expectancy).",
+    "Buy Win Rate %": "Ratio of profitable closed BUY predictions to total closed BUY trades. 🟢 Higher the better.",
+    "Sell Win Rate %": "Ratio of profitable closed SELL predictions to total closed SELL trades. 🟢 Higher the better.",
     "Empirical_Win_Rate_At_Entry": "Historical backtested win rate associated with this signal at time of entry. 🟢 Higher the better.",
 
     # Identifiers & Operational Telemetry
@@ -754,7 +734,7 @@ def load_historical_market_data(all_tickers):
     Persists an atomic Parquet snapshot and downcasts to float32 to slash memory by 50%.
     """
     clean_tickers = sorted(list(set(all_tickers)))
-    download_list = sorted(list(set(clean_tickers + ["^CRSLDX", "^NSEI", "^INDIAVIX"])))
+    download_list = sorted(list(set(clean_tickers + ["^CRSLDX", "^NSEI", "^INDIAVIX", "HDFCSML250.NS"])))
     try:
         df = yf.download(
             download_list,
@@ -778,11 +758,6 @@ def load_historical_market_data(all_tickers):
                 pass
             import gc
             gc.collect()
-            try:
-                from resource_monitor import release_container_memory
-                release_container_memory()
-            except Exception:
-                pass
             return df
     except Exception as e:
         logger.error(f"Error fetching historical data: {e}")
@@ -804,27 +779,263 @@ def load_historical_market_data(all_tickers):
             logger.warning(f"Failed to read market snapshot cache: {e}")
     return pd.DataFrame()
 
-# =====================================================================
-# PAPER TRADING & AUDIT STORAGE STUBS (DISABLED IN TEST BED)
-# =====================================================================
+@st.cache_data(ttl=180, max_entries=1, show_spinner=False)
 def load_paper_trades():
-    return pd.DataFrame()
+    # 1. Load local trades CSV first
+    local_df = pd.DataFrame(columns=DEFAULT_PAPER_HEADERS)
+    if os.path.exists(LOCAL_TRADES_CSV) and os.path.getsize(LOCAL_TRADES_CSV) > 0:
+        try:
+            ldf = pd.read_csv(LOCAL_TRADES_CSV)
+            if not ldf.empty:
+                if "Trade_ID" in ldf.columns:
+                    ldf = ldf[ldf["Trade_ID"].astype(str).str.strip().ne("") & ldf["Trade_ID"].notna() & ~ldf["Trade_ID"].astype(str).str.lower().isin(["nan", "none"])]
+                elif "Ticker" in ldf.columns:
+                    ldf = ldf[ldf["Ticker"].astype(str).str.strip().ne("") & ldf["Ticker"].notna() & ~ldf["Ticker"].astype(str).str.lower().isin(["nan", "none"])]
+                local_df = ldf
+        except Exception as e:
+            logger.warning(f"Error loading local paper trades: {e}")
+
+    # 2. Read Google Sheets worksheet
+    gs_df = pd.DataFrame(columns=DEFAULT_PAPER_HEADERS)
+    conn = get_db_connection()
+    if conn:
+        try:
+            raw_df = conn.read(worksheet="Paper_Trades", ttl=15)
+            if raw_df is not None and not raw_df.empty:
+                if "Trade_ID" in raw_df.columns:
+                    raw_df = raw_df[raw_df["Trade_ID"].astype(str).str.strip().ne("") & raw_df["Trade_ID"].notna() & ~raw_df["Trade_ID"].astype(str).str.lower().isin(["nan", "none"])]
+                elif "Ticker" in raw_df.columns:
+                    raw_df = raw_df[raw_df["Ticker"].astype(str).str.strip().ne("") & raw_df["Ticker"].notna() & ~raw_df["Ticker"].astype(str).str.lower().isin(["nan", "none"])]
+                gs_df = raw_df
+        except Exception as e:
+            logger.warning(f"Error loading GSheets paper trades: {e}")
+
+    # 3. Merge both datasets ensuring zero data loss
+    if not local_df.empty and not gs_df.empty:
+        combined = pd.concat([gs_df, local_df], ignore_index=True)
+        if "Trade_ID" in combined.columns:
+            combined = combined.drop_duplicates(subset=["Trade_ID"], keep="last")
+        res_df = combined
+    elif not local_df.empty:
+        res_df = local_df
+    elif not gs_df.empty:
+        res_df = gs_df
+    else:
+        res_df = pd.DataFrame(columns=DEFAULT_PAPER_HEADERS)
+
+    # 4. Self-heal Google Sheets if it is missing trades
+    if conn and len(res_df) > len(gs_df):
+        try:
+            conn.update(worksheet="Paper_Trades", data=res_df)
+            logger.info(f"Self-healed Google Sheets Paper_Trades with {len(res_df)} total trades.")
+        except Exception as e:
+            logger.warning(f"Could not auto-heal Google Sheets Paper_Trades: {e}")
+
+    # 5. Persist merged data locally
+    if not res_df.empty:
+        try:
+            res_df.to_csv(LOCAL_TRADES_CSV, index=False)
+        except Exception:
+            pass
+
+    for c in DEFAULT_PAPER_HEADERS:
+        if c not in res_df.columns:
+            res_df[c] = ""
+    res_df["Status"] = res_df["Status"].fillna("ACTIVE").astype(str)
+    if "PnL_Pct" in res_df.columns:
+        res_df["PnL_Pct"] = res_df["PnL_Pct"].astype(object)
+
+    return res_df
 
 def save_paper_trades(df):
-    pass
+    for c in DEFAULT_PAPER_HEADERS:
+        if c not in df.columns:
+            df[c] = ""
+    df["Status"] = df["Status"].fillna("ACTIVE").astype(str)
+    
+    # Merge with existing file to prevent overwriting past trades
+    existing_df = pd.DataFrame()
+    if os.path.exists(LOCAL_TRADES_CSV) and os.path.getsize(LOCAL_TRADES_CSV) > 0:
+        try:
+            existing_df = pd.read_csv(LOCAL_TRADES_CSV)
+        except Exception:
+            pass
+    if not existing_df.empty and "Trade_ID" in existing_df.columns and "Trade_ID" in df.columns:
+        merged_to_save = pd.concat([existing_df, df], ignore_index=True).drop_duplicates(subset=["Trade_ID"], keep="last")
+    else:
+        merged_to_save = df
 
+    merged_to_save.to_csv(LOCAL_TRADES_CSV, index=False)
+    conn = get_db_connection()
+    if conn:
+        try:
+            conn.update(worksheet="Paper_Trades", data=merged_to_save)
+            st.cache_data.clear()
+        except Exception as e:
+            logger.warning(f"GSheets update Paper_Trades failed: {e}")
+
+@st.cache_data(ttl=180, max_entries=1, show_spinner=False)
 def load_audit_log():
-    return pd.DataFrame()
+    local_df = pd.DataFrame(columns=DEFAULT_AUDIT_HEADERS)
+    if os.path.exists(LOCAL_AUDIT_CSV) and os.path.getsize(LOCAL_AUDIT_CSV) > 0:
+        try:
+            ldf = pd.read_csv(LOCAL_AUDIT_CSV)
+            if not ldf.empty and "Timestamp_IST" in ldf.columns:
+                ldf = ldf[ldf["Timestamp_IST"].astype(str).str.strip().ne("") & ldf["Timestamp_IST"].notna()]
+                local_df = ldf
+        except Exception:
+            pass
+
+    gs_df = pd.DataFrame(columns=DEFAULT_AUDIT_HEADERS)
+    conn = get_db_connection()
+    if conn:
+        try:
+            raw_df = conn.read(worksheet="Execution_Audit_Log", ttl=15)
+            if raw_df is not None and not raw_df.empty and "Timestamp_IST" in raw_df.columns:
+                raw_df = raw_df[raw_df["Timestamp_IST"].astype(str).str.strip().ne("") & raw_df["Timestamp_IST"].notna()]
+                gs_df = raw_df
+        except Exception:
+            pass
+
+    if not local_df.empty and not gs_df.empty:
+        combined = pd.concat([gs_df, local_df], ignore_index=True)
+        if "Audit_ID" in combined.columns:
+            combined = combined.drop_duplicates(subset=["Audit_ID"], keep="last")
+        else:
+            combined = combined.drop_duplicates()
+        res_df = combined
+    elif not local_df.empty:
+        res_df = local_df
+    elif not gs_df.empty:
+        res_df = gs_df
+    else:
+        res_df = pd.DataFrame(columns=DEFAULT_AUDIT_HEADERS)
+
+    if conn and len(res_df) > len(gs_df):
+        try:
+            conn.update(worksheet="Execution_Audit_Log", data=res_df)
+        except Exception:
+            pass
+
+    if not res_df.empty:
+        try:
+            res_df.to_csv(LOCAL_AUDIT_CSV, index=False)
+        except Exception:
+            pass
+
+    for c in DEFAULT_AUDIT_HEADERS:
+        if c not in res_df.columns:
+            res_df[c] = ""
+
+    return res_df
 
 def save_audit_entry(entry_dict):
-    pass
+    existing = load_audit_log()
+    combined = pd.concat([existing, pd.DataFrame([entry_dict])], ignore_index=True).drop_duplicates()
+    combined.to_csv(LOCAL_AUDIT_CSV, index=False)
+    conn = get_db_connection()
+    if conn:
+        try:
+            conn.update(worksheet="Execution_Audit_Log", data=combined)
+            st.cache_data.clear()
+        except Exception as e:
+            logger.warning(f"GSheets update Execution_Audit_Log failed: {e}")
 
 def reset_audit_log(entry_dict=None):
-    pass
+    if entry_dict:
+        df = pd.DataFrame([entry_dict])
+    else:
+        df = pd.DataFrame(columns=DEFAULT_AUDIT_HEADERS)
+    df.to_csv(LOCAL_AUDIT_CSV, index=False)
+    conn = get_db_connection()
+    if conn:
+        try:
+            conn.update(worksheet="Execution_Audit_Log", data=df)
+            st.cache_data.clear()
+        except Exception as e:
+            logger.warning(f"GSheets reset Execution_Audit_Log failed: {e}")
 
-def execute_category_paper_trade(*args, **kwargs):
-    return False, "Paper trade execution is disabled in the test bed environment. Use production for paper trades."
+def execute_category_paper_trade(
+    ticker, category, trigger_indicator, cmp_val, sl_val, tgt_val,
+    s1_val=0.0, rsi_val=50.0, tech_score=50.0, fund_score=50.0,
+    comp_score=50.0, win_rate=50.0, budget=5000.0, username="Public_User",
+    strategy_preset="High-Conviction Allocation", market_regime="Normal",
+    asset_class="Equity"
+):
+    """
+    Executes a high-conviction trade into the paper trading ledger with complete parameter provenance.
+    """
+    clean_sym = str(ticker).replace(".NS", "").strip()
+    trades_path = LOCAL_TRADES_CSV
+    existing_df = pd.DataFrame()
+    if os.path.exists(trades_path) and os.path.getsize(trades_path) > 0:
+        try:
+            existing_df = pd.read_csv(trades_path)
+        except Exception:
+            existing_df = pd.DataFrame()
 
+    if not existing_df.empty and "Status" in existing_df.columns:
+        active_dups = existing_df[(existing_df["Ticker"] == clean_sym) & (existing_df["Status"] == "ACTIVE")]
+        if not active_dups.empty:
+            return False, f"Ticker {clean_sym} already has an active trade in the Paper Trading Ledger."
+
+    if cmp_val <= 0:
+        return False, f"Invalid CMP ₹{cmp_val:.2f} for {clean_sym}."
+
+    qty = max(1, int(budget // cmp_val))
+    now_ist = datetime.datetime.now(IST)
+    now_str = now_ist.strftime("%Y-%m-%d %H:%M:%S")
+    trade_id = f"V2_{clean_sym}_{int(now_ist.timestamp())}"
+
+    dist_s1 = ((cmp_val - s1_val) / s1_val * 100) if s1_val > 0 else 0.0
+    near_supp = f"Yes (+{dist_s1:.1f}% from S1: ₹{s1_val:.1f})" if (s1_val > 0 and dist_s1 <= 3.5) else (f"Above S1 (+{dist_s1:.1f}%)" if s1_val > 0 else "Base Support")
+
+    rec = {
+        "Trade_ID": trade_id,
+        "Username": username,
+        "Ticker": clean_sym,
+        "Category": category,
+        "Asset_Class": asset_class or category,
+        "Trigger_Type": f"{category.upper().replace(' ', '_')}_BUY",
+        "Trigger_Indicator": trigger_indicator,
+        "Strategy_Preset": strategy_preset,
+        "Status": "ACTIVE",
+        "Entry_Price": cmp_val,
+        "Live_CMP": cmp_val,
+        "Executed_Qty": qty,
+        "Stop_Loss": sl_val,
+        "Target": tgt_val,
+        "Execution_Timestamp": now_str,
+        "Exit_Timestamp": "",
+        "Exit_Price": 0.0,
+        "Exit_Reason": "",
+        "Hold_Duration_Days": 0,
+        "PnL_Rs": 0.0,
+        "PnL_Pct": "0.0%",
+        "Invested_Value": round(cmp_val * qty, 2),
+        "Technical_Score_At_Entry": round(float(tech_score), 1),
+        "Fundamental_Score_At_Entry": round(float(fund_score), 1),
+        "Composite_Score_At_Entry": round(float(comp_score), 1),
+        "Near_Support_Status": near_supp,
+        "RSI_At_Entry": round(float(rsi_val), 1),
+        "Empirical_Win_Rate_At_Entry": f"{float(win_rate):.1f}%",
+        "Market_Regime_At_Entry": market_regime
+    }
+
+    combined = pd.concat([existing_df, pd.DataFrame([rec])], ignore_index=True)
+    os.makedirs(os.path.dirname(trades_path), exist_ok=True)
+    combined.to_csv(trades_path, index=False)
+
+    save_audit_entry({
+        "Timestamp_IST": now_str,
+        "Trigger_Source": f"V2_EXEC_{category.upper().replace(' ', '_')}",
+        "Preset": strategy_preset,
+        "Recommended_BUY": clean_sym,
+        "Recommended_SELL": "None",
+        "Execution_Status": f"🟢 Logged ({qty} Qty @ ₹{cmp_val:.2f})",
+        "Reason_Summary": f"{category} entry via {trigger_indicator}. SL: ₹{sl_val:.2f}, Target: ₹{tgt_val:.2f}."
+    })
+    return True, f"Executed {qty} units of {clean_sym} ({category}) at ₹{cmp_val:.2f} into Paper Ledger."
 
 # =====================================================================
 # MULTI-AMC PRECIOUS METALS BUILDER (AVAILABLE ACROSS ALL TABS)
@@ -911,6 +1122,11 @@ def build_all_precious_metals_df(etfs_df, raw_data=None):
         m_dict["AMC"] = m_cfg["amc"]
         m_dict["Metal Type"] = m_cfg["metal"]
         m_dict["Expense %"] = m_cfg["expense"]
+        if "52W Range %" not in m_dict or pd.isna(m_dict.get("52W Range %")):
+            c_p = float(m_dict.get("CMP (₹)", 125.0))
+            l_52 = float(m_dict.get("52W Low (₹)", c_p * 0.85))
+            h_52 = float(m_dict.get("52W High (₹)", c_p * 1.15))
+            m_dict["52W Range %"] = round(((c_p - l_52) / (h_52 - l_52) * 100.0), 1) if h_52 > l_52 else 50.0
         m_el = check_metal_investment_eligibility(m_dict)
         m_dict["Tactical Status"] = m_el["status"]
         m_dict["Eligibility_Reason"] = m_el.get("reason", "Macro Hedge Allocation")
@@ -954,8 +1170,13 @@ def get_cached_market_evaluation(tickers_tuple):
     stocks_df, stock_reg = evaluate_market_metrics(raw_data, current_stock_universe, is_stock_mode=True)
     etfs_df, etf_reg = evaluate_market_metrics(raw_data, current_etf_universe, is_stock_mode=False)
     metals_df = build_all_precious_metals_df(etfs_df, raw_data)
-    import gc
-    gc.collect()
+    del raw_data
+    try:
+        from resource_monitor import release_container_memory
+        release_container_memory()
+    except Exception:
+        import gc
+        gc.collect()
     return stocks_df, stock_reg, etfs_df, etf_reg, metals_df
 
 @st.cache_data(ttl=900, max_entries=1, show_spinner=False)
@@ -968,7 +1189,15 @@ def get_cached_sr_matrices(tickers_tuple):
     sr_combined_stk = compute_sr_matrix(raw_data, current_stock_universe, is_stock_mode=True)
     sr_combined_etf = compute_sr_matrix(raw_data, current_etf_universe, is_stock_mode=False)
     sr_full_df = pd.concat([sr_combined_stk, sr_combined_etf], ignore_index=True) if not sr_combined_stk.empty else sr_combined_etf
+    del raw_data, sr_combined_stk, sr_combined_etf
+    try:
+        from resource_monitor import release_container_memory
+        release_container_memory()
+    except Exception:
+        import gc
+        gc.collect()
     return sr_full_df
+
 
 @st.cache_data(ttl=900, max_entries=2, show_spinner=False)
 def get_cached_5y_leaderboard(asset_class=None):
@@ -1173,157 +1402,8 @@ def render_preset_conviction_tiles(df, preset_name, is_stock_mode=False, limit=2
         )
 
 # =====================================================================
-# ADVANCED SCREENER STYLING FUNCTION
+# CATEGORY 6: APEX MULTI-FACTOR SYNTHESIS & AUDIT EXPORT HELPERS
 # =====================================================================
-
-def apply_advanced_table_styling(df):
-    styles = pd.DataFrame("", index=df.index, columns=df.columns)
-    n_len = len(df)
-    if n_len == 0:
-        return styles
-    n_top = min(5, n_len)
-
-    for col in ["Composite Buy Score", "Technical Score", "Fundamental Score", "Technical Score Buy Swing", "Technical Score Buy LongTerm", "Technical Score Buy Intraday"]:
-        if col in df.columns:
-            top_buy_idx = df[col].nsmallest(n_top).index
-            top_sell_idx = df[col].nlargest(n_top).index
-            styles.loc[top_buy_idx, col] = "background-color: #d4edda; color: #155724; font-weight: bold;"
-            styles.loc[top_sell_idx, col] = "background-color: #f8d7da; color: #721c24; font-weight: bold;"
-
-    if "RSI (14D)" in df.columns:
-        top_buy_rsi = df["RSI (14D)"].nsmallest(n_top).index
-        top_sell_rsi = df["RSI (14D)"].nlargest(n_top).index
-        styles.loc[top_buy_rsi, "RSI (14D)"] = "background-color: #d4edda; color: #155724; font-weight: bold;"
-        styles.loc[top_sell_rsi, "RSI (14D)"] = "background-color: #f8d7da; color: #721c24; font-weight: bold;"
-
-    if "Bollinger %B" in df.columns:
-        top_buy_bb = df["Bollinger %B"].nsmallest(n_top).index
-        top_sell_bb = df["Bollinger %B"].nlargest(n_top).index
-        styles.loc[top_buy_bb, "Bollinger %B"] = "background-color: #d4edda; color: #155724; font-weight: bold;"
-        styles.loc[top_sell_bb, "Bollinger %B"] = "background-color: #f8d7da; color: #721c24; font-weight: bold;"
-
-    for dma_col in ["Dist VWAP %", "Dist 20DMA %", "Dist 50DMA %", "Dist 100DMA %", "Dist 200DMA %"]:
-        if dma_col in df.columns:
-            top_buy_dma = df[dma_col].nsmallest(n_top).index
-            top_sell_dma = df[dma_col].nlargest(n_top).index
-            styles.loc[top_buy_dma, dma_col] = "background-color: #d4edda; color: #155724; font-weight: bold;"
-            styles.loc[top_sell_dma, dma_col] = "background-color: #f8d7da; color: #721c24; font-weight: bold;"
-
-    if "Dist 52W Low %" in df.columns:
-        top_buy_52w = df["Dist 52W Low %"].nsmallest(n_top).index
-        styles.loc[top_buy_52w, "Dist 52W Low %"] = "background-color: #d4edda; color: #155724; font-weight: bold;"
-
-    if "Volume Surge Ratio" in df.columns:
-        top_vol = df["Volume Surge Ratio"].nlargest(n_top).index
-        styles.loc[top_vol, "Volume Surge Ratio"] = "background-color: #e0f2fe; color: #0369a1; font-weight: bold;"
-
-    if "RS Spread 21D %" in df.columns:
-        top_rs = df["RS Spread 21D %"].nlargest(n_top).index
-        styles.loc[top_rs, "RS Spread 21D %"] = "background-color: #dcfce7; color: #15803d; font-weight: bold;"
-
-    if "Dividend Yield %" in df.columns:
-        top_div = df["Dividend Yield %"].nlargest(n_top).index
-        styles.loc[top_div, "Dividend Yield %"] = "background-color: #dcfce7; color: #166534; font-weight: bold;"
-
-    if "Falling Knife Guard" in df.columns:
-        styles["Falling Knife Guard"] = df["Falling Knife Guard"].apply(
-            lambda v: "background-color: #d4edda; color: #155724; font-weight: bold;" if "Safe" in str(v) else ("background-color: #f8d7da; color: #721c24; font-weight: bold;" if "Wait" in str(v) else "")
-        )
-
-    # Prominent Red / Green Color Coding for Action Signal (Categories 1 & 2)
-    if "Action Signal" in df.columns:
-        def style_action_signal(val):
-            v_str = str(val).upper()
-            if any(k in v_str for k in ["BUY", "ACCUMULATE", "STRONG BUY"]):
-                return "background-color: #dcfce7; color: #166534; font-weight: bold; border-left: 3px solid #22c55e;"
-            elif any(k in v_str for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID", "OVERBOUGHT"]):
-                return "background-color: #fee2e2; color: #991b1b; font-weight: bold; border-left: 3px solid #ef4444;"
-            elif any(k in v_str for k in ["HOLD", "NEUTRAL"]):
-                return "background-color: #f1f5f9; color: #475569; font-weight: 500;"
-            return ""
-        styles["Action Signal"] = df["Action Signal"].apply(style_action_signal)
-
-    # iNAV Distance Color Coding (Red if CMP > iNAV, Green if CMP < iNAV)
-    for inav_col in ["Distance to iNAV (%)", "iNAV Dislocation %"]:
-        if inav_col in df.columns:
-            def style_inav_dist(val):
-                if pd.isna(val) or str(val).strip().upper() in ["NA", "NAN", "—", ""]:
-                    return "color: #94a3b8; font-style: italic;"
-                try:
-                    num_val = float(str(val).replace("%", "").replace("+", "").strip())
-                    if num_val > 0.0:
-                        return "background-color: #fee2e2; color: #991b1b; font-weight: bold;"
-                    elif num_val < 0.0:
-                        return "background-color: #dcfce7; color: #166534; font-weight: bold;"
-                    else:
-                        return "color: #475569; font-weight: 500;"
-                except Exception:
-                    return ""
-            styles[inav_col] = df[inav_col].apply(style_inav_dist)
-
-    if "iNAV (₹)" in df.columns:
-        def style_inav_val(val):
-            if pd.isna(val) or str(val).strip().upper() in ["NA", "NAN", "—", ""]:
-                return "color: #94a3b8; font-style: italic;"
-            return "font-weight: 600;"
-        styles["iNAV (₹)"] = df["iNAV (₹)"].apply(style_inav_val)
-
-    if "5Y S/R Win Rate (%)" in df.columns:
-        def style_wr(val):
-            try:
-                num_v = float(str(val).replace("%", "").strip())
-                if num_v >= 62.0:
-                    return "background-color: #dcfce7; color: #15803d; font-weight: bold;"
-                elif num_v < 45.0:
-                    return "background-color: #fee2e2; color: #991b1b; font-weight: bold;"
-            except Exception:
-                pass
-            return ""
-        styles["5Y S/R Win Rate (%)"] = df["5Y S/R Win Rate (%)"].apply(style_wr)
-
-    if "Range Position (%)" in df.columns:
-        def style_rp(val):
-            try:
-                num_v = float(str(val).replace("%", "").strip())
-                if num_v <= 25.0:
-                    return "background-color: #d4edda; color: #155724; font-weight: bold;"
-                elif num_v >= 75.0:
-                    return "background-color: #f8d7da; color: #721c24; font-weight: bold;"
-            except Exception:
-                pass
-            return ""
-        styles["Range Position (%)"] = df["Range Position (%)"].apply(style_rp)
-
-    if "S/R Predictability Rating" in df.columns:
-        def style_rating(val):
-            v_str = str(val)
-            if "Elite" in v_str or "Reliable" in v_str:
-                return "background-color: #dcfce7; color: #15803d; font-weight: bold;"
-            elif "Speculative" in v_str:
-                return "background-color: #fee2e2; color: #991b1b; font-weight: bold;"
-            return ""
-        styles["S/R Predictability Rating"] = df["S/R Predictability Rating"].apply(style_rating)
-
-    return styles
-
-def format_inav_currency(v):
-    if pd.isna(v) or str(v).strip().upper() in ["NA", "NAN", "—", ""]:
-        return "NA"
-    try:
-        return f"₹{float(v):.2f}"
-    except Exception:
-        return str(v)
-
-def format_inav_distance_pct(v):
-    if pd.isna(v) or str(v).strip().upper() in ["NA", "NAN", "—", ""]:
-        return "NA"
-    try:
-        val_f = float(str(v).replace("%", "").replace("+", "").strip())
-        return f"{val_f:+.2f}%"
-    except Exception:
-        return str(v)
-
-
 def get_apex_multi_factor_candidates(etfs_df, stocks_df, top_n=3):
     """
     Synthesizes candidates across all 5 Strategy Presets (Default, Swing, Long-Term, Intraday, AI/RAG),
@@ -1331,7 +1411,15 @@ def get_apex_multi_factor_candidates(etfs_df, stocks_df, top_n=3):
     and returns top N BUY and top N SELL recommendations with explicit selection rationale hints.
     """
     runtime_cfg = load_runtime_config()
-    cooldown_tickers = set()
+    try:
+        from paper_trader_daemon import load_paper_trades
+        _cooldown_trades = load_paper_trades()
+        cooldown_tickers = get_stopped_out_tickers_in_cooldown(_cooldown_trades)
+    except Exception:
+        try:
+            cooldown_tickers = get_stopped_out_tickers_in_cooldown()
+        except Exception:
+            cooldown_tickers = set()
     presets_to_evaluate = ["Default", "Swing / Positional", "Long-Term", "Intraday", "AI / RAG"]
 
     raw_buys = []
@@ -1387,8 +1475,8 @@ def get_apex_multi_factor_candidates(etfs_df, stocks_df, top_n=3):
                 continue
             # Conviction Gate check
             gate_res = check_conviction_gate(item, is_buy=is_buy, config=runtime_cfg)
-            passed_gate = gate_res[0] if isinstance(gate_res, tuple) else bool(gate_res)
-            if not passed_gate:
+            gate_ok = gate_res[0] if isinstance(gate_res, tuple) else bool(gate_res)
+            if not gate_ok:
                 continue
 
             preset_name = item.get("_preset", "Default")
@@ -1678,6 +1766,12 @@ def generate_paper_trade_audit_excel(trades_df, strategy_log_df, perf_dict):
             "Key Formulations & Safeguards": "Stop = CMP ∓ (2.0 × ATR_14D) bounded [2.5%, 6.5%]; Tier 1 Breakeven Ratchet when profit ≥ 1.5 × ATR_14D."
         },
         {
+            "Module / File": "paper_trader_daemon.py",
+            "Layer": "Autonomous Execution Daemon",
+            "Core Responsibilities": "Autonomous trade execution daemon running 9:25 AM morning scan, 3:00 PM pre-close execution with Category 6 Apex multi-factor deduplication, and 3:10 PM auto-squareoff restricted to intraday triggers only.",
+            "Key Formulations & Safeguards": "Overnight short prediction tracking (simulated sells retained across days for predictive benchmarking); strict 2-trade daily cap on Category 6."
+        },
+        {
             "Module / File": "ml_optimizer.py",
             "Layer": "Adaptive Tuning & Strategic Audit",
             "Core Responsibilities": "Persistent zero-secret runtime configuration (runtime_config.json), parameter directionality matrix, parameter change audit logging, and institutional strategic logic change history.",
@@ -1766,17 +1860,275 @@ def assign_trade_timeframe_horizon(exec_ts, ref_dt=None):
     except Exception:
         return "1 Month (≤30D)"
 
+# =====================================================================
+# ADVANCED SCREENER STYLING FUNCTION
+# =====================================================================
+def apply_paper_table_styling(df):
+    """Styles paper trading tables with clear red/green indicators for buy/sell actions and tickers."""
+    styles = pd.DataFrame("", index=df.index, columns=df.columns)
+    if "Trade_Action" in df.columns:
+        styles["Trade_Action"] = df["Trade_Action"].apply(
+            lambda v: "background-color: #dcfce7; color: #166534; font-weight: bold; border-left: 3px solid #22c55e;" if "BUY" in str(v).upper() else ("background-color: #fee2e2; color: #991b1b; font-weight: bold; border-left: 3px solid #ef4444;" if any(k in str(v).upper() for k in ["SELL", "EXIT"]) else "")
+        )
+    if "Buy Ticker" in df.columns:
+        styles["Buy Ticker"] = df["Buy Ticker"].apply(
+            lambda v: "background-color: #f0fdf4; color: #166534; font-weight: bold;" if str(v).strip() not in ["—", "", "nan"] else "color: #94a3b8;"
+        )
+    if "Sell Ticker" in df.columns:
+        styles["Sell Ticker"] = df["Sell Ticker"].apply(
+            lambda v: "background-color: #fef2f2; color: #991b1b; font-weight: bold;" if str(v).strip() not in ["—", "", "nan"] else "color: #94a3b8;"
+        )
+    if "🟢 Buy Tickers" in df.columns:
+        styles["🟢 Buy Tickers"] = df["🟢 Buy Tickers"].apply(
+            lambda v: "color: #166534; font-weight: bold;" if str(v).strip() not in ["—", "", "nan"] else "color: #94a3b8;"
+        )
+    if "🔴 Sell Tickers" in df.columns:
+        styles["🔴 Sell Tickers"] = df["🔴 Sell Tickers"].apply(
+            lambda v: "color: #991b1b; font-weight: bold;" if str(v).strip() not in ["—", "", "nan"] else "color: #94a3b8;"
+        )
+    if "Buy Win Rate %" in df.columns:
+        styles["Buy Win Rate %"] = df["Buy Win Rate %"].apply(
+            lambda v: "color: #166534; font-weight: bold;" if not str(v).strip().startswith("Pending") and str(v).strip() not in ["—", "", "nan"] else "color: #94a3b8;"
+        )
+    if "Sell Win Rate %" in df.columns:
+        styles["Sell Win Rate %"] = df["Sell Win Rate %"].apply(
+            lambda v: "color: #991b1b; font-weight: bold;" if not str(v).strip().startswith("Pending") and str(v).strip() not in ["—", "", "nan"] else "color: #94a3b8;"
+        )
+    return styles
+
+def apply_advanced_table_styling(df):
+    styles = pd.DataFrame("", index=df.index, columns=df.columns)
+    n_len = len(df)
+    if n_len == 0:
+        return styles
+    n_top = min(5, n_len)
+
+    for col in ["Composite Buy Score", "Technical Score", "Fundamental Score", "Technical Score Buy Swing", "Technical Score Buy LongTerm", "Technical Score Buy Intraday"]:
+        if col in df.columns:
+            top_buy_idx = df[col].nlargest(n_top).index
+            top_sell_idx = df[col].nsmallest(n_top).index
+            styles.loc[top_buy_idx, col] = "background-color: #d4edda; color: #155724; font-weight: bold;"
+            styles.loc[top_sell_idx, col] = "background-color: #f8d7da; color: #721c24; font-weight: bold;"
+
+    if "RSI (14D)" in df.columns:
+        top_buy_rsi = df["RSI (14D)"].nsmallest(n_top).index
+        top_sell_rsi = df["RSI (14D)"].nlargest(n_top).index
+        styles.loc[top_buy_rsi, "RSI (14D)"] = "background-color: #d4edda; color: #155724; font-weight: bold;"
+        styles.loc[top_sell_rsi, "RSI (14D)"] = "background-color: #f8d7da; color: #721c24; font-weight: bold;"
+
+    if "Bollinger %B" in df.columns:
+        top_buy_bb = df["Bollinger %B"].nsmallest(n_top).index
+        top_sell_bb = df["Bollinger %B"].nlargest(n_top).index
+        styles.loc[top_buy_bb, "Bollinger %B"] = "background-color: #d4edda; color: #155724; font-weight: bold;"
+        styles.loc[top_sell_bb, "Bollinger %B"] = "background-color: #f8d7da; color: #721c24; font-weight: bold;"
+
+    for dma_col in ["Dist VWAP %", "Dist 20DMA %", "Dist 50DMA %", "Dist 100DMA %", "Dist 200DMA %"]:
+        if dma_col in df.columns:
+            top_buy_dma = df[dma_col].nsmallest(n_top).index
+            top_sell_dma = df[dma_col].nlargest(n_top).index
+            styles.loc[top_buy_dma, dma_col] = "background-color: #d4edda; color: #155724; font-weight: bold;"
+            styles.loc[top_sell_dma, dma_col] = "background-color: #f8d7da; color: #721c24; font-weight: bold;"
+
+    if "Dist 52W Low %" in df.columns:
+        top_buy_52w = df["Dist 52W Low %"].nsmallest(n_top).index
+        styles.loc[top_buy_52w, "Dist 52W Low %"] = "background-color: #d4edda; color: #155724; font-weight: bold;"
+
+    if "Volume Surge Ratio" in df.columns:
+        top_vol = df["Volume Surge Ratio"].nlargest(n_top).index
+        styles.loc[top_vol, "Volume Surge Ratio"] = "background-color: #e0f2fe; color: #0369a1; font-weight: bold;"
+
+    if "RS Spread 21D %" in df.columns:
+        top_rs = df["RS Spread 21D %"].nlargest(n_top).index
+        styles.loc[top_rs, "RS Spread 21D %"] = "background-color: #dcfce7; color: #15803d; font-weight: bold;"
+
+    if "Dividend Yield %" in df.columns:
+        top_div = df["Dividend Yield %"].nlargest(n_top).index
+        styles.loc[top_div, "Dividend Yield %"] = "background-color: #dcfce7; color: #166534; font-weight: bold;"
+
+    if "Falling Knife Guard" in df.columns:
+        styles["Falling Knife Guard"] = df["Falling Knife Guard"].apply(
+            lambda v: "background-color: #d4edda; color: #155724; font-weight: bold;" if "Safe" in str(v) else ("background-color: #f8d7da; color: #721c24; font-weight: bold;" if "Wait" in str(v) else "")
+        )
+
+    # Prominent Red / Green Color Coding for Action Signal (Categories 1 & 2)
+    if "Action Signal" in df.columns:
+        def style_action_signal(val):
+            v_str = str(val).upper()
+            if any(k in v_str for k in ["BUY", "ACCUMULATE", "STRONG BUY"]):
+                return "background-color: #dcfce7; color: #166534; font-weight: bold; border-left: 3px solid #22c55e;"
+            elif any(k in v_str for k in ["SELL", "BOOK PROFIT", "EXIT", "AVOID", "OVERBOUGHT"]):
+                return "background-color: #fee2e2; color: #991b1b; font-weight: bold; border-left: 3px solid #ef4444;"
+            elif any(k in v_str for k in ["HOLD", "NEUTRAL"]):
+                return "background-color: #f1f5f9; color: #475569; font-weight: 500;"
+            return ""
+        styles["Action Signal"] = df["Action Signal"].apply(style_action_signal)
+
+    # iNAV Distance Color Coding (Red if CMP > iNAV, Green if CMP < iNAV)
+    for inav_col in ["Distance to iNAV (%)", "iNAV Dislocation %"]:
+        if inav_col in df.columns:
+            def style_inav_dist(val):
+                if pd.isna(val) or str(val).strip().upper() in ["NA", "NAN", "—", ""]:
+                    return "color: #94a3b8; font-style: italic;"
+                try:
+                    num_val = float(str(val).replace("%", "").replace("+", "").strip())
+                    if num_val > 0.0:
+                        return "background-color: #fee2e2; color: #991b1b; font-weight: bold;"
+                    elif num_val < 0.0:
+                        return "background-color: #dcfce7; color: #166534; font-weight: bold;"
+                    else:
+                        return "color: #475569; font-weight: 500;"
+                except Exception:
+                    return ""
+            styles[inav_col] = df[inav_col].apply(style_inav_dist)
+
+    if "iNAV (₹)" in df.columns:
+        def style_inav_val(val):
+            if pd.isna(val) or str(val).strip().upper() in ["NA", "NAN", "—", ""]:
+                return "color: #94a3b8; font-style: italic;"
+            return "font-weight: 600;"
+        styles["iNAV (₹)"] = df["iNAV (₹)"].apply(style_inav_val)
+
+    if "5Y S/R Win Rate (%)" in df.columns:
+        def style_wr(val):
+            try:
+                num_v = float(str(val).replace("%", "").strip())
+                if num_v >= 62.0:
+                    return "background-color: #dcfce7; color: #15803d; font-weight: bold;"
+                elif num_v < 45.0:
+                    return "background-color: #fee2e2; color: #991b1b; font-weight: bold;"
+            except Exception:
+                pass
+            return ""
+        styles["5Y S/R Win Rate (%)"] = df["5Y S/R Win Rate (%)"].apply(style_wr)
+
+    if "Range Position (%)" in df.columns:
+        def style_rp(val):
+            try:
+                num_v = float(str(val).replace("%", "").strip())
+                if num_v <= 25.0:
+                    return "background-color: #d4edda; color: #155724; font-weight: bold;"
+                elif num_v >= 75.0:
+                    return "background-color: #f8d7da; color: #721c24; font-weight: bold;"
+            except Exception:
+                pass
+            return ""
+        styles["Range Position (%)"] = df["Range Position (%)"].apply(style_rp)
+
+    if "S/R Predictability Rating" in df.columns:
+        def style_rating(val):
+            v_str = str(val)
+            if "Elite" in v_str or "Reliable" in v_str:
+                return "background-color: #dcfce7; color: #15803d; font-weight: bold;"
+            elif "Speculative" in v_str:
+                return "background-color: #fee2e2; color: #991b1b; font-weight: bold;"
+            return ""
+        styles["S/R Predictability Rating"] = df["S/R Predictability Rating"].apply(style_rating)
+
+    return styles
+
+def format_inav_currency(v):
+    if pd.isna(v) or str(v).strip().upper() in ["NA", "NAN", "—", ""]:
+        return "NA"
+    try:
+        return f"₹{float(v):.2f}"
+    except Exception:
+        return str(v)
+
+def format_inav_distance_pct(v):
+    if pd.isna(v) or str(v).strip().upper() in ["NA", "NAN", "—", ""]:
+        return "NA"
+    try:
+        val_f = float(str(v).replace("%", "").replace("+", "").strip())
+        return f"{val_f:+.2f}%"
+    except Exception:
+        return str(v)
 
 # =====================================================================
-# OPEN ACCESS TESTBED INITIALIZATION
+# USER AUTHENTICATION & ACCESS CONTROL (GSHEETS + LOCAL AUTH)
 # =====================================================================
 if "strategy_toast" not in st.session_state:
     st.session_state.strategy_toast = None
 
-current_user = "Purn"
-user_role = "admin"
-is_authenticated = True
-is_admin = True
+users_df = fetch_users_df()
+url_user = st.query_params.get("u", None)
+
+if "logged_user" not in st.session_state or not st.session_state.logged_user:
+    if url_user:
+        u_clean = str(url_user).strip().lower()
+        if u_clean in ["purn", "admin", "purn (admin)"]:
+            st.session_state.logged_user = "Purn (Admin)"
+            st.session_state.user_role = "admin"
+        else:
+            match = users_df[users_df["Username"].astype(str).str.strip().str.lower() == u_clean]
+            if not match.empty:
+                st.session_state.logged_user = match.iloc[0]["Username"]
+                st.session_state.user_role = str(match.iloc[0].get("Role", "user"))
+            else:
+                st.session_state.logged_user = "Public_User"
+                st.session_state.user_role = "public"
+    else:
+        # Default session to Public_User so unauthenticated visitors cannot view private tabs (2, 3, 5, 6)
+        st.session_state.logged_user = "Public_User"
+        st.session_state.user_role = "public"
+
+current_user = st.session_state.get("logged_user", "Public_User")
+user_role = st.session_state.get("user_role", "public")
+is_authenticated = (current_user not in ["Public_User", "Guest", None, ""]) and (user_role != "public")
+is_admin = is_authenticated and ((user_role == "admin") or ("purn" in str(current_user).lower()))
+
+# =====================================================================
+# PLATFORM ACCESS GATE (STRICT MEMBER & ADMIN AUTHENTICATION)
+# =====================================================================
+if not is_authenticated:
+    with st.sidebar:
+        st.markdown("### ⚡ AGY Tactical Allocator Pro")
+        st.caption("Institutional High-Conviction Engine")
+        st.markdown("**👤 Access:** `🔒 Private / Login Required`")
+        st.caption("All strategies, screeners, and trading ledgers require authentication.")
+
+    st.markdown(
+        """
+        <div style="text-align: center; padding: 40px 10px 20px 10px;">
+            <h1 style="color: #1e3a8a; font-size: 2.2rem; margin-bottom: 8px;">🔒 AGY Tactical Allocator Pro</h1>
+            <p style="color: #64748b; font-size: 1.1rem; font-weight: 500;">
+                Private Institutional Quantitative Allocation & Multi-Asset Execution Console
+            </p>
+            <hr style="border: 0; height: 1px; background: #e2e8f0; margin: 25px 0;">
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    c_sp1, c_box, c_sp2 = st.columns([1, 1.8, 1])
+    with c_box:
+        with st.container(border=True):
+            st.markdown("### 🔐 Member & Admin Sign In")
+            st.caption("Enter your authorized platform credentials to proceed.")
+            
+            with st.form("main_gate_login_form"):
+                u_in = st.text_input("Username", key="gate_u_in", placeholder="Enter username").strip()
+                p_in = st.text_input("Password", type="password", key="gate_p_in", placeholder="••••••••")
+                login_btn = st.form_submit_button("🚀 Sign In to Platform", use_container_width=True, type="primary")
+
+                if login_btn:
+                    u_in_clean = str(u_in).strip().lower()
+                    if (u_in_clean in ["purn", "admin", "purn (admin)"]) and (str(p_in) in ["Etaa@1234#", "admin"]):
+                        st.session_state.logged_user = "Purn (Admin)"
+                        st.session_state.user_role = "admin"
+                        st.query_params["u"] = "purn"
+                        st.rerun()
+                    else:
+                        match = users_df[
+                            (users_df["Username"].astype(str).str.strip().str.lower() == u_in_clean) &
+                            (users_df["Password"].astype(str) == str(p_in))
+                        ]
+                        if not match.empty:
+                            st.session_state.logged_user = match.iloc[0]["Username"]
+                            st.session_state.user_role = str(match.iloc[0].get("Role", "user"))
+                            st.query_params["u"] = match.iloc[0]["Username"]
+                            st.rerun()
+                        else:
+                            st.error("❌ Invalid Username or Password. Please verify credentials or contact the administrator.")
+    st.stop()
 
 # =====================================================================
 # AUTHENTICATED DATA INITIALIZATION & CACHED METRIC ENGINE
@@ -1796,20 +2148,42 @@ regime_data = etf_regime
 # =====================================================================
 with st.sidebar:
     st.markdown("### ⚡ AGY Tactical Allocator Pro")
-    st.caption("Institutional High-Conviction Quantitative Engine")
+    st.caption("Institutional High-Conviction Engine")
+    
+    st.markdown(f"**👤 Current User:** `{current_user}` ({'👑 Admin' if is_admin else 'Standard Member'})")
+    if st.button("🚪 Sign Out", key="sb_logout_btn", use_container_width=True):
+        st.session_state.logged_user = "Public_User"
+        st.session_state.user_role = "public"
+        if "u" in st.query_params:
+            del st.query_params["u"]
+        st.rerun()
+
     st.markdown("---")
 
     nav_items = [
         "🎯 High-Conviction Master Hub",
+        "📈 Paper Trading & Multi-Asset Ledger",
         "🧪 Multi-Regime Backtesting & Machine Learning",
         "🧠 AI/ML & RAG Strategy Forensics",
-        "📘 Platform Strategy Guide & DOCX Export"
+        "👤 Profile & Strategy Settings"
     ]
+    if is_admin:
+        nav_items.append("👑 Admin User Manager")
 
     active_tab = st.radio(
         "Navigation:",
         nav_items,
         index=0
+    )
+
+    st.markdown("---")
+    base_budget = st.number_input(
+        "Tranche Execution Budget (₹)",
+        min_value=1000.0,
+        max_value=500000.0,
+        value=5000.0,
+        step=500.0,
+        help="Target allocated capital per individual paper trading execution."
     )
 
     st.markdown("---")
@@ -2041,13 +2415,13 @@ if "High-Conviction Master Hub" in active_tab:
         if preset_key == "AI / RAG" and "AI_Buy_Confidence" in view_etf_df.columns:
             sorted_etfs = view_etf_df.sort_values(by="AI_Buy_Confidence", ascending=False)
         elif preset_key == "Swing / Positional" and "Technical Score Buy Swing" in view_etf_df.columns:
-            sorted_etfs = view_etf_df.sort_values(by="Technical Score Buy Swing", ascending=True)
+            sorted_etfs = view_etf_df.sort_values(by="Technical Score Buy Swing", ascending=False)
         elif preset_key == "Long-Term" and "Technical Score Buy LongTerm" in view_etf_df.columns:
-            sorted_etfs = view_etf_df.sort_values(by="Technical Score Buy LongTerm", ascending=True)
+            sorted_etfs = view_etf_df.sort_values(by="Technical Score Buy LongTerm", ascending=False)
         elif preset_key == "Intraday" and "Technical Score Buy Intraday" in view_etf_df.columns:
-            sorted_etfs = view_etf_df.sort_values(by="Technical Score Buy Intraday", ascending=True)
+            sorted_etfs = view_etf_df.sort_values(by="Technical Score Buy Intraday", ascending=False)
         else:
-            sorted_etfs = view_etf_df.sort_values(by="Composite Buy Score", ascending=True)
+            sorted_etfs = view_etf_df.sort_values(by="Composite Buy Score", ascending=False)
 
         limit_e = 10 if "Top 10" in etf_depth else (15 if "Top 15" in etf_depth else len(sorted_etfs))
         slice_etfs = sorted_etfs.head(limit_e)
@@ -2150,13 +2524,13 @@ if "High-Conviction Master Hub" in active_tab:
         if preset_key == "AI / RAG" and "AI_Buy_Confidence" in view_stk_df.columns:
             sorted_stks = view_stk_df.sort_values(by="AI_Buy_Confidence", ascending=False)
         elif preset_key == "Swing / Positional" and "Technical Score Buy Swing" in view_stk_df.columns:
-            sorted_stks = view_stk_df.sort_values(by="Technical Score Buy Swing", ascending=True)
+            sorted_stks = view_stk_df.sort_values(by="Technical Score Buy Swing", ascending=False)
         elif preset_key == "Long-Term" and "Technical Score Buy LongTerm" in view_stk_df.columns:
-            sorted_stks = view_stk_df.sort_values(by="Technical Score Buy LongTerm", ascending=True)
+            sorted_stks = view_stk_df.sort_values(by="Technical Score Buy LongTerm", ascending=False)
         elif preset_key == "Intraday" and "Technical Score Buy Intraday" in view_stk_df.columns:
-            sorted_stks = view_stk_df.sort_values(by="Technical Score Buy Intraday", ascending=True)
+            sorted_stks = view_stk_df.sort_values(by="Technical Score Buy Intraday", ascending=False)
         else:
-            sorted_stks = view_stk_df.sort_values(by="Composite Buy Score", ascending=True)
+            sorted_stks = view_stk_df.sort_values(by="Composite Buy Score", ascending=False)
 
         limit_s = 10 if "Top 10" in stk_depth else (15 if "Top 15" in stk_depth else len(sorted_stks))
         slice_stks = sorted_stks.head(limit_s)
@@ -2639,15 +3013,1176 @@ if "High-Conviction Master Hub" in active_tab:
                 hide_index=True
             )
 
-    # -------------------------------------------------------------
-    # CATEGORY 6: APEX MULTI-FACTOR DEDUPLICATED ALLOCATOR
-    # -------------------------------------------------------------
     st.markdown("---")
+
+    # -----------------------------------------------------------------
+    # CATEGORY 6: APEX MULTI-FACTOR (BEST OF PRESETS - DEDUPLICATED)
+    # -----------------------------------------------------------------
     render_apex_multi_factor_tiles(filtered_etfs_df, filtered_stocks_df, limit=3)
 
 
 # =====================================================================
-# TAB 2: BACKTESTING & MACHINE LEARNING OPTIMIZATION STUDIO
+# TAB 2: PAPER TRADING & MULTI-ASSET PERFORMANCE HUB
+# =====================================================================
+elif "Paper Trading & Multi-Asset Ledger" in active_tab:
+    c_t2_h1, c_t2_h2 = st.columns([3.5, 1.2])
+    with c_t2_h1:
+        st.markdown("### 📈 Paper Trading Ledger & Multi-Asset Execution Hub")
+        st.caption("Centralized Multi-Asset Execution Console • Enriched Indicator Provenance • Live MTM & Position Square-Off")
+    with c_t2_h2:
+        if st.button("🔄 Refresh Ledger Data", use_container_width=True, key="btn_refresh_tab2_data"):
+            st.cache_data.clear()
+            st.session_state.strategy_toast = "Paper trading ledger & live MTM prices refreshed."
+            st.rerun()
+
+    raw_trades = load_paper_trades()
+    trades_df = raw_trades.copy() if (raw_trades is not None and isinstance(raw_trades, pd.DataFrame)) else pd.DataFrame()
+    try:
+        multi_tf_perf = compute_multi_timeframe_performance(trades_df)
+    except Exception:
+        multi_tf_perf = {"matrix_df": pd.DataFrame(), "category_df": pd.DataFrame(), "preset_df": pd.DataFrame()}
+    try:
+        strategy_changelog_df = load_strategy_change_log()
+    except Exception:
+        strategy_changelog_df = pd.DataFrame()
+
+    # Comprehensive Audit & Strategy Package Download
+    c_dl1, c_dl2 = st.columns([3.2, 1.8])
+    with c_dl1:
+        st.markdown(
+            """
+            <div style="font-size:0.83rem; color:#475569; padding-top:4px;">
+                📦 <b>Comprehensive Audit & Strategy Package:</b> Download Excel workbook with full code block summary, logic & guardrails changelog, complete trade ledger with entry provenance, and multi-horizon performance across categories and presets.
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with c_dl2:
+        try:
+            audit_excel_bytes = generate_paper_trade_audit_excel(trades_df, strategy_changelog_df, multi_tf_perf)
+        except Exception:
+            audit_excel_bytes = b""
+        if audit_excel_bytes:
+            st.download_button(
+                label="📥 Download Paper Trade Summary (.xlsx)",
+                data=audit_excel_bytes,
+                file_name=f"AGY_Paper_Trade_Audit_{datetime.datetime.now(IST).strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key="btn_download_paper_trade_audit_xlsx"
+            )
+
+    render_metric_glossary_expander("tab2")
+
+    # 1. Centralized Paper Trading Execution Console (Admin Only)
+    if is_admin:
+        with st.expander("⚡ Centralized Multi-Preset & Multi-Asset Paper Trading Execution Console (Admin Only)", expanded=True):
+            # Admin Operational & Testing Controls
+            st.markdown("###### 🧪 Admin Operational & Testing Controls:")
+            c_adm1, c_adm2, c_adm3 = st.columns([1.5, 1.2, 1.3])
+            with c_adm1:
+                curr_wknd = is_weekend_trading_allowed()
+                admin_wknd_chk = st.checkbox(
+                    "Enable Weekend / Off-Hours Trade Execution (Testing Mode)",
+                    value=curr_wknd,
+                    help="When enabled, scheduled and manual trades are allowed to execute on Saturday & Sunday for testing. When disabled, weekend executions are safely skipped."
+                )
+                if admin_wknd_chk != curr_wknd:
+                    if "admin_testing_overrides" not in runtime_cfg:
+                        runtime_cfg["admin_testing_overrides"] = {}
+                    runtime_cfg["admin_testing_overrides"]["allow_weekend_trades"] = admin_wknd_chk
+                    with open(RUNTIME_CONFIG_PATH, "w", encoding="utf-8") as f_cfg:
+                        json.dump(runtime_cfg, f_cfg, indent=4)
+                    save_platform_setting("allow_weekend_trades", str(admin_wknd_chk), updated_by=current_user)
+                    if admin_wknd_chk:
+                        os.environ["ALLOW_WEEKEND_TRADES"] = "1"
+                    else:
+                        os.environ["ALLOW_WEEKEND_TRADES"] = "0"
+                    st.toast(f"Weekend testing override updated to: {admin_wknd_chk}")
+                    st.rerun()
+            with c_adm2:
+                if st.button("🔔 Test Telegram Alert", use_container_width=True, key="btn_test_tg_admin_top"):
+                    test_signals = [{
+                        "ticker": "NIFTYBEES",
+                        "cmp": 285.50,
+                        "action": "BUY",
+                        "source": "Admin Test Alert"
+                    }]
+                    tg_ok = send_concise_telegram_alert("Admin Direct Test", test_signals, raw_data=raw_data, stocks_market_df=stocks_market_df, trades_df=trades_df)
+                    if tg_ok:
+                        st.success("✅ Telegram test dispatched!")
+                    else:
+                        st.warning("⚠️ Telegram dispatch failed. Check secrets.")
+            with c_adm3:
+                if st.button("⚡ Trigger 3 PM Daemon Cycle", use_container_width=True, key="btn_test_cron_top"):
+                    with st.spinner("Executing 3 PM Paper Trading Cycle..."):
+                        try:
+                            res = run_paper_trader_daemon(mode_override="PAPER_TRADE_3PM")
+                            if isinstance(res, dict) and res.get("status") == "skipped":
+                                st.info(f"ℹ️ {res.get('reason', 'Skipped')}")
+                            else:
+                                st.success("✅ 3 PM Cycle executed successfully!")
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e_cr:
+                            st.error(f"Execution failed: {e_cr}")
+            st.markdown("---")
+            c_exec1, c_exec2, c_exec3 = st.columns([1.3, 1.5, 1.2])
+
+            with c_exec1:
+                st.markdown("##### 1. Select Asset Categories:")
+                chk_etf = st.checkbox("📊 Broad Equity ETFs", value=True, help="Non-Sectoral Broad & Factor ETFs")
+                chk_stk = st.checkbox("🏢 Quality Equities", value=True, help="Fundamentally sound NIFTY equities")
+                chk_sr = st.checkbox("🎯 S/R Support Bounces", value=True, help="Assets trading at S1 support with ≥60% 5Y win rate")
+                chk_reit = st.checkbox("🏛️ Premier REITs & InvITs (Conditional)", value=True, help="Triggered only when Distribution Yield ≥ 6.5% & at NAV discount")
+                chk_metal = st.checkbox("🥇 Multi-AMC Metals (Conditional)", value=True, help="Gold & Silver (triggered only on value dips: 52W Range ≤ 65% & RSI ≤ 55)")
+                chk_apex = st.checkbox("⚡ Apex Multi-Factor (6th Category)", value=True, help="Cross-Preset Deduplicated Best Picks (Max Daily Cap Enforced)")
+
+            with c_exec2:
+                st.markdown("##### 2. Execution Parameters:")
+                selected_presets = st.multiselect(
+                    "Strategy Presets to Execute Against:",
+                    ["Default", "Long-Term", "Swing / Positional", "Intraday", "AI / RAG"],
+                    default=["Default", "Long-Term", "Swing / Positional", "Intraday", "AI / RAG"],
+                    help="Analyzes each selected preset and places 1 Buy & 1 Sell pick per asset category.",
+                    key="central_exec_presets_ms"
+                )
+                c_p1, c_p2 = st.columns(2)
+                with c_p1:
+                    exec_picks = st.radio("Picks per Category (1 Buy, 1 Sell):", [1, 2, 3], index=0, horizontal=True, key="picks_per_cat_r")
+                with c_p2:
+                    exec_budget = st.number_input("Tranche Budget (₹):", min_value=1000.0, max_value=500000.0, value=5000.0, step=500.0, key="central_exec_budget_in")
+
+            with c_exec3:
+                st.markdown("##### 3. Execute Orders:")
+                st.write("")
+                btn_exec_selected = st.button("⚡ Execute Selected Paper Trades", type="primary", use_container_width=True, key="btn_exec_all_selected")
+                with st.popover("🗑️ Clear / Reset Ledger Data", use_container_width=True):
+                    st.warning("⚠️ This will completely purge all local paper trades and reset the execution audit trail.")
+                    if st.button("🚨 Confirm Full Reset", type="primary", use_container_width=True, key="btn_confirm_reset_ledger"):
+                        save_paper_trades(pd.DataFrame(columns=DEFAULT_PAPER_HEADERS))
+                        reset_audit_log({
+                            "Timestamp_IST": datetime.datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S"),
+                            "Trigger_Source": "RESET", "Preset": "All",
+                            "Recommended_BUY": "None", "Recommended_SELL": "None",
+                            "Execution_Status": "Clean Reset", "Reason_Summary": "Ledger and Execution Audit Trail reset clean by user."
+                        })
+                        st.cache_data.clear()
+                        st.session_state.strategy_toast = "Ledger and Execution Audit Trail reset clean."
+                        st.rerun()
+
+            if btn_exec_selected:
+                if not selected_presets:
+                    st.warning("⚠️ Please select at least one Strategy Preset to execute against.")
+                else:
+                    created_trades = []
+                    exec_summary_msgs = []
+                    now_str = datetime.datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+                    regime_name = regime_data.get("regime", "Normal")
+
+                    all_t = load_paper_trades()
+                    active_syms = set(all_t[all_t["Status"] == "ACTIVE"]["Ticker"].astype(str).str.replace(".NS", "")) if not all_t.empty and "Status" in all_t.columns else set()
+
+                    # Iterate through all selected presets for Categories 1, 2, 3
+                    for p_name in selected_presets:
+                        # 1. Broad Equity ETFs
+                        if chk_etf:
+                            if p_name == "AI / RAG":
+                                etf_b, etf_s = get_ai_rag_conviction_candidates(etfs_market_df, is_stock_mode=False, limit=exec_picks)
+                            else:
+                                etf_b, etf_s = get_top_conviction_candidates(etfs_market_df, preset_name=p_name, is_stock_mode=False, limit=exec_picks)
+
+                            # BUY Orders
+                            for _, r in etf_b.iterrows():
+                                sym = str(r["Ticker"]).replace(".NS", "")
+                                cmp_v = float(r["CMP (₹)"])
+                                if sym in active_syms or cmp_v <= 0:
+                                    continue
+                                q = max(1, int(exec_budget // cmp_v))
+                                created_trades.append({
+                                    "Trade_ID": f"V2_ETF_{int(datetime.datetime.now(IST).timestamp())}_{sym}_{p_name[:3].upper()}",
+                                    "Username": current_user, "Ticker": sym,
+                                    "Trade_Action": "🟢 BUY", "Buy Ticker": sym, "Sell Ticker": "—",
+                                    "Category": "Broad Equity ETF", "Asset_Class": "ETF",
+                                    "Trigger_Type": f"{p_name.upper()}_ETF_BUY",
+                                    "Trigger_Indicator": f"{p_name} Preset Buy (RSI: {r.get('RSI (14D)', 50):.1f}, 200DMA: {r.get('Dist 200DMA %', 0):+.1f}%)",
+                                    "Strategy_Preset": p_name, "Status": "ACTIVE",
+                                    "Entry_Price": cmp_v, "Live_CMP": cmp_v, "Executed_Qty": q,
+                                    "Stop_Loss": r["Stop_Loss"], "Target": r["Target"],
+                                    "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                                    "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                                    "Invested_Value": round(cmp_v * q, 2),
+                                    "Technical_Score_At_Entry": round(float(r.get("Technical Score", 50.0)), 1),
+                                    "Fundamental_Score_At_Entry": round(float(r.get("Fundamental Score", 50.0)), 1),
+                                    "Composite_Score_At_Entry": round(float(r.get("Composite Score", r.get("Composite Buy Score", 50.0))), 1),
+                                    "Near_Support_Status": f"Trend Proximity ({r.get('Dist 200DMA %', 0):+.1f}%)",
+                                    "RSI_At_Entry": round(float(r.get("RSI (14D)", 50.0)), 1),
+                                    "Empirical_Win_Rate_At_Entry": "N/A", "Market_Regime_At_Entry": regime_name
+                                })
+                                active_syms.add(sym)
+                                exec_summary_msgs.append(f"🟢 BUY ETF ({p_name}): {sym}")
+
+                            # SELL Orders (Square-off if owned, else record as exit alert)
+                            for _, r in etf_s.iterrows():
+                                sym = str(r["Ticker"]).replace(".NS", "")
+                                cmp_v = float(r["CMP (₹)"])
+                                active_mask = (all_t["Ticker"].astype(str).str.replace(".NS", "") == sym) & (all_t["Status"] == "ACTIVE")
+                                if active_mask.any():
+                                    row_idx = all_t[active_mask].index[0]
+                                    entry_p = float(all_t.at[row_idx, "Entry_Price"])
+                                    eqty = int(all_t.at[row_idx, "Executed_Qty"])
+                                    pnl_val = round((cmp_v - entry_p) * eqty, 2)
+                                    pnl_pct_val = f"{((cmp_v - entry_p) / entry_p * 100):+.2f}%" if entry_p > 0 else "0.0%"
+                                    all_t.at[row_idx, "Status"] = "CLOSED_PROFIT" if pnl_val >= 0 else "CLOSED_STOPLOSS"
+                                    all_t.at[row_idx, "Trade_Action"] = "🔴 SELL"
+                                    all_t.at[row_idx, "Sell Ticker"] = sym
+                                    all_t.at[row_idx, "Exit_Price"] = cmp_v
+                                    all_t.at[row_idx, "Exit_Timestamp"] = now_str
+                                    all_t.at[row_idx, "Exit_Reason"] = f"Overbought Exit Trigger ({p_name} RSI {r.get('RSI (14D)', 50):.1f})"
+                                    all_t.at[row_idx, "PnL_Rs"] = pnl_val
+                                    all_t.at[row_idx, "PnL_Pct"] = pnl_pct_val
+                                    active_syms.discard(sym)
+                                    exec_summary_msgs.append(f"🔴 SQUARE-OFF ETF ({p_name}): {sym} (PnL: ₹{pnl_val:+,.2f})")
+                                else:
+                                    q = max(1, int(exec_budget // cmp_v)) if cmp_v > 0 else 1
+                                    created_trades.append({
+                                        "Trade_ID": f"V2_ETF_EXIT_{int(datetime.datetime.now(IST).timestamp())}_{sym}_{p_name[:3].upper()}",
+                                        "Username": current_user, "Ticker": sym,
+                                        "Trade_Action": "🔴 SELL", "Buy Ticker": "—", "Sell Ticker": sym,
+                                        "Category": "Broad Equity ETF", "Asset_Class": "ETF",
+                                        "Trigger_Type": f"{p_name.upper()}_ETF_SELL",
+                                        "Trigger_Indicator": f"{p_name} Exit Alert (RSI: {r.get('RSI (14D)', 50):.1f}, Urgency: {r.get('Composite Score', 50):.1f})",
+                                        "Strategy_Preset": p_name, "Status": "ACTIVE",
+                                        "Entry_Price": cmp_v, "Live_CMP": cmp_v, "Executed_Qty": q,
+                                        "Stop_Loss": r.get("Stop_Loss", round(cmp_v * 1.04, 2)),
+                                        "Target": r.get("Target", round(cmp_v * 0.95, 2)),
+                                        "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                                        "Exit_Reason": "",
+                                        "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                                        "Invested_Value": round(cmp_v * q, 2),
+                                        "Technical_Score_At_Entry": round(float(r.get("Technical Score", 50.0)), 1),
+                                        "Fundamental_Score_At_Entry": 50.0,
+                                        "Composite_Score_At_Entry": round(float(r.get("Composite Score", 50.0)), 1),
+                                        "Near_Support_Status": "Overbought Resistance Zone",
+                                        "RSI_At_Entry": round(float(r.get("RSI (14D)", 50.0)), 1),
+                                        "Empirical_Win_Rate_At_Entry": "N/A", "Market_Regime_At_Entry": regime_name
+                                    })
+                                    exec_summary_msgs.append(f"🔴 SELL Entry ETF ({p_name}): {sym}")
+
+                        # 2. Quality Equities
+                        if chk_stk:
+                            if p_name == "AI / RAG":
+                                stk_b, stk_s = get_ai_rag_conviction_candidates(stocks_market_df, is_stock_mode=True, limit=exec_picks)
+                            else:
+                                stk_b, stk_s = get_top_conviction_candidates(stocks_market_df, preset_name=p_name, is_stock_mode=True, limit=exec_picks)
+
+                            # BUY Orders
+                            for _, r in stk_b.iterrows():
+                                sym = str(r["Ticker"]).replace(".NS", "")
+                                cmp_v = float(r["CMP (₹)"])
+                                if sym in active_syms or cmp_v <= 0:
+                                    continue
+                                q = max(1, int(exec_budget // cmp_v))
+                                created_trades.append({
+                                    "Trade_ID": f"V2_STK_{int(datetime.datetime.now(IST).timestamp())}_{sym}_{p_name[:3].upper()}",
+                                    "Username": current_user, "Ticker": sym,
+                                    "Trade_Action": "🟢 BUY", "Buy Ticker": sym, "Sell Ticker": "—",
+                                    "Category": "Quality Stock", "Asset_Class": "Stock",
+                                    "Trigger_Type": f"{p_name.upper()}_STOCK_BUY",
+                                    "Trigger_Indicator": f"{p_name} Preset Buy (RSI: {r.get('RSI (14D)', 50):.1f}, 200DMA: {r.get('Dist 200DMA %', 0):+.1f}%)",
+                                    "Strategy_Preset": p_name, "Status": "ACTIVE",
+                                    "Entry_Price": cmp_v, "Live_CMP": cmp_v, "Executed_Qty": q,
+                                    "Stop_Loss": r["Stop_Loss"], "Target": r["Target"],
+                                    "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                                    "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                                    "Invested_Value": round(cmp_v * q, 2),
+                                    "Technical_Score_At_Entry": round(float(r.get("Technical Score", 50.0)), 1),
+                                    "Fundamental_Score_At_Entry": round(float(r.get("Fundamental Score", 50.0)), 1),
+                                    "Composite_Score_At_Entry": round(float(r.get("Composite Score", r.get("Composite Buy Score", 50.0))), 1),
+                                    "Near_Support_Status": f"Trend Proximity ({r.get('Dist 200DMA %', 0):+.1f}%)",
+                                    "RSI_At_Entry": round(float(r.get("RSI (14D)", 50.0)), 1),
+                                    "Empirical_Win_Rate_At_Entry": "N/A", "Market_Regime_At_Entry": regime_name
+                                })
+                                active_syms.add(sym)
+                                exec_summary_msgs.append(f"🟢 BUY Stock ({p_name}): {sym}")
+
+                            # SELL Orders (Square-off if owned, else record as exit alert)
+                            for _, r in stk_s.iterrows():
+                                sym = str(r["Ticker"]).replace(".NS", "")
+                                cmp_v = float(r["CMP (₹)"])
+                                active_mask = (all_t["Ticker"].astype(str).str.replace(".NS", "") == sym) & (all_t["Status"] == "ACTIVE")
+                                if active_mask.any():
+                                    row_idx = all_t[active_mask].index[0]
+                                    entry_p = float(all_t.at[row_idx, "Entry_Price"])
+                                    eqty = int(all_t.at[row_idx, "Executed_Qty"])
+                                    pnl_val = round((cmp_v - entry_p) * eqty, 2)
+                                    pnl_pct_val = f"{((cmp_v - entry_p) / entry_p * 100):+.2f}%" if entry_p > 0 else "0.0%"
+                                    all_t.at[row_idx, "Status"] = "CLOSED_PROFIT" if pnl_val >= 0 else "CLOSED_STOPLOSS"
+                                    all_t.at[row_idx, "Trade_Action"] = "🔴 SELL"
+                                    all_t.at[row_idx, "Sell Ticker"] = sym
+                                    all_t.at[row_idx, "Exit_Price"] = cmp_v
+                                    all_t.at[row_idx, "Exit_Timestamp"] = now_str
+                                    all_t.at[row_idx, "Exit_Reason"] = f"Overbought Exit Trigger ({p_name} RSI {r.get('RSI (14D)', 50):.1f})"
+                                    all_t.at[row_idx, "PnL_Rs"] = pnl_val
+                                    all_t.at[row_idx, "PnL_Pct"] = pnl_pct_val
+                                    active_syms.discard(sym)
+                                    exec_summary_msgs.append(f"🔴 SQUARE-OFF Stock ({p_name}): {sym} (PnL: ₹{pnl_val:+,.2f})")
+                                else:
+                                    q = max(1, int(exec_budget // cmp_v)) if cmp_v > 0 else 1
+                                    created_trades.append({
+                                        "Trade_ID": f"V2_STK_EXIT_{int(datetime.datetime.now(IST).timestamp())}_{sym}_{p_name[:3].upper()}",
+                                        "Username": current_user, "Ticker": sym,
+                                        "Trade_Action": "🔴 SELL", "Buy Ticker": "—", "Sell Ticker": sym,
+                                        "Category": "Quality Stock", "Asset_Class": "Stock",
+                                        "Trigger_Type": f"{p_name.upper()}_STOCK_SELL",
+                                        "Trigger_Indicator": f"{p_name} Exit Alert (RSI: {r.get('RSI (14D)', 50):.1f}, Urgency: {r.get('Composite Score', 50):.1f})",
+                                        "Strategy_Preset": p_name, "Status": "ACTIVE",
+                                        "Entry_Price": cmp_v, "Live_CMP": cmp_v, "Executed_Qty": q,
+                                        "Stop_Loss": r.get("Stop_Loss", round(cmp_v * 1.05, 2)),
+                                        "Target": r.get("Target", round(cmp_v * 0.94, 2)),
+                                        "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                                        "Exit_Reason": "",
+                                        "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                                        "Invested_Value": round(cmp_v * q, 2),
+                                        "Technical_Score_At_Entry": round(float(r.get("Technical Score", 50.0)), 1),
+                                        "Fundamental_Score_At_Entry": 50.0,
+                                        "Composite_Score_At_Entry": round(float(r.get("Composite Score", 50.0)), 1),
+                                        "Near_Support_Status": "Overbought Resistance Zone",
+                                        "RSI_At_Entry": round(float(r.get("RSI (14D)", 50.0)), 1),
+                                        "Empirical_Win_Rate_At_Entry": "N/A", "Market_Regime_At_Entry": regime_name
+                                    })
+                                    exec_summary_msgs.append(f"🔴 SELL Entry Stock ({p_name}): {sym}")
+
+                    # 3. S/R Mean-Reversion Tranche (Evaluated once across S1 Support & R1 Resistance)
+                    if chk_sr:
+                        sr_all = get_cached_sr_matrices(tickers_tuple)
+                        sr_buys = sr_all[sr_all["Action Signal"].str.contains("BUY|ACCUMULATE", na=False)].sort_values(by="5Y S/R Win Rate (%)", ascending=False).head(exec_picks)
+                        for _, sr_it in sr_buys.iterrows():
+                            sym = str(sr_it["Ticker"]).replace(".NS", "")
+                            cmp_v = float(sr_it["CMP (₹)"])
+                            if sym in active_syms or cmp_v <= 0: continue
+                            q = max(1, int(exec_budget // cmp_v))
+                            s1_v = float(sr_it.get("Major Support S1 (₹)", cmp_v * 0.97))
+                            dist_s1 = ((cmp_v - s1_v) / s1_v * 100) if s1_v > 0 else 0.0
+                            created_trades.append({
+                                "Trade_ID": f"V2_SR_{int(datetime.datetime.now(IST).timestamp())}_{sym}", "Username": current_user, "Ticker": sym,
+                                "Trade_Action": "🟢 BUY", "Buy Ticker": sym, "Sell Ticker": "—",
+                                "Category": "S/R Mean Reversion", "Asset_Class": sr_it.get("Category", "Stock"), "Trigger_Type": "SR_SUPPORT_BUY",
+                                "Trigger_Indicator": f"S1 Support Bounce ({sr_it.get('5Y S/R Win Rate (%)', 50)}% 5Y Win)",
+                                "Strategy_Preset": "S/R Range Mean Reversion", "Status": "ACTIVE",
+                                "Entry_Price": cmp_v, "Live_CMP": cmp_v, "Executed_Qty": q,
+                                "Stop_Loss": sr_it["Suggested SL (₹)"], "Target": sr_it["Suggested Target (₹)"],
+                                "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                                "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                                "Invested_Value": round(cmp_v * q, 2),
+                                "Technical_Score_At_Entry": round(float(sr_it.get("RSI (14D)", 50.0)), 1),
+                                "Fundamental_Score_At_Entry": round(float(sr_it.get("5Y S/R Win Rate (%)", 50.0)), 1),
+                                "Composite_Score_At_Entry": round(float(sr_it.get("Range Position (%)", 50.0)), 1),
+                                "Near_Support_Status": f"Yes (+{dist_s1:.1f}% to S1)",
+                                "RSI_At_Entry": round(float(sr_it.get("RSI (14D)", 50.0)), 1),
+                                "Empirical_Win_Rate_At_Entry": f"{sr_it.get('5Y S/R Win Rate (%)', 50)}%",
+                                "Market_Regime_At_Entry": regime_name
+                            })
+                            active_syms.add(sym)
+                            exec_summary_msgs.append(f"🟢 BUY S/R Support: {sym}")
+
+                        # S/R Resistance Exits
+                        sr_exits = sr_all[sr_all["Range Position (%)"] >= 80.0].sort_values(by="Range Position (%)", ascending=False).head(exec_picks)
+                        for _, srx in sr_exits.iterrows():
+                            sym = str(srx["Ticker"]).replace(".NS", "")
+                            cmp_v = float(srx["CMP (₹)"])
+                            active_mask = (all_t["Ticker"].astype(str).str.replace(".NS", "") == sym) & (all_t["Status"] == "ACTIVE")
+                            if active_mask.any():
+                                row_idx = all_t[active_mask].index[0]
+                                entry_p = float(all_t.at[row_idx, "Entry_Price"])
+                                eqty = int(all_t.at[row_idx, "Executed_Qty"])
+                                pnl_val = round((cmp_v - entry_p) * eqty, 2)
+                                pnl_pct_val = f"{((cmp_v - entry_p) / entry_p * 100):+.2f}%" if entry_p > 0 else "0.0%"
+                                all_t.at[row_idx, "Status"] = "CLOSED_PROFIT" if pnl_val >= 0 else "CLOSED_STOPLOSS"
+                                all_t.at[row_idx, "Trade_Action"] = "🔴 SELL"
+                                all_t.at[row_idx, "Sell Ticker"] = sym
+                                all_t.at[row_idx, "Exit_Price"] = cmp_v
+                                all_t.at[row_idx, "Exit_Timestamp"] = now_str
+                                all_t.at[row_idx, "Exit_Reason"] = f"S/R Resistance Exit (Range Position {srx.get('Range Position (%)', 85):.1f}%)"
+                                all_t.at[row_idx, "PnL_Rs"] = pnl_val
+                                all_t.at[row_idx, "PnL_Pct"] = pnl_pct_val
+                                active_syms.discard(sym)
+                                exec_summary_msgs.append(f"🔴 SQUARE-OFF S/R Resistance: {sym} (PnL: ₹{pnl_val:+,.2f})")
+
+                    # 4. Premier REITs/InvITs (Conditional: Only when Lucrative)
+                    if chk_reit:
+                        reit_scan = get_cached_reits_data()
+                        reit_triggered = 0
+                        for _, r_row in reit_scan.iterrows():
+                            if reit_triggered >= exec_picks:
+                                break
+                            sym = str(r_row["Ticker"]).replace(".NS", "")
+                            cmp_v = float(r_row["CMP (₹)"])
+                            r_el = check_reit_investment_eligibility(r_row.to_dict())
+                            if r_el["eligible"] and sym not in active_syms and cmp_v > 0:
+                                q = max(1, int(exec_budget // cmp_v))
+                                created_trades.append({
+                                    "Trade_ID": f"V2_REIT_{int(datetime.datetime.now(IST).timestamp())}_{sym}",
+                                    "Username": current_user, "Ticker": sym,
+                                    "Trade_Action": "🟢 BUY", "Buy Ticker": sym, "Sell Ticker": "—",
+                                    "Category": "REIT/InvIT", "Asset_Class": "Real Estate / Infra",
+                                    "Trigger_Type": "HIGH_YIELD_REIT_BUY",
+                                    "Trigger_Indicator": f"Lucrative Yield {r_row['Distribution Yield (%)']:.1f}% (NAV Disc: {r_row['NAV Discount / Premium (%)']:+.1f}%)",
+                                    "Strategy_Preset": "High-Yield Cash Flow", "Status": "ACTIVE",
+                                    "Entry_Price": cmp_v, "Live_CMP": cmp_v, "Executed_Qty": q,
+                                    "Stop_Loss": float(r_row.get("Immediate Support S1 (₹)", cmp_v * 0.95)),
+                                    "Target": float(r_row.get("Immediate Resistance R1 (₹)", cmp_v * 1.08)),
+                                    "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                                    "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                                    "Invested_Value": round(cmp_v * q, 2),
+                                    "Technical_Score_At_Entry": round(float(r_row.get("RSI (14D)", 50.0)), 1),
+                                    "Fundamental_Score_At_Entry": round(float(r_row.get("Distribution Yield (%)", 8.0)), 1),
+                                    "Composite_Score_At_Entry": round(float(r_row.get("Composite Score (0-100)", 75.0)), 1),
+                                    "Near_Support_Status": "S1 Yield Floor (Lucrative)",
+                                    "RSI_At_Entry": round(float(r_row.get("RSI (14D)", 50.0)), 1),
+                                    "Empirical_Win_Rate_At_Entry": "N/A", "Market_Regime_At_Entry": regime_name
+                                })
+                                active_syms.add(sym)
+                                reit_triggered += 1
+                                exec_summary_msgs.append(f"🟢 BUY REIT (Lucrative): {sym}")
+                            elif not r_el["eligible"]:
+                                exec_summary_msgs.append(f"🛑 Skipped REIT {sym} ({r_el.get('reason')})")
+
+                    # 5. Multi-AMC Precious Metals (Conditional: Only on Lucrative Dip)
+                    if chk_metal:
+                        if "all_metals_df" not in locals() or all_metals_df is None or (isinstance(all_metals_df, pd.DataFrame) and all_metals_df.empty):
+                            all_metals_df = build_all_precious_metals_df(etfs_market_df)
+                        for m_metal_type in ["Gold", "Silver"]:
+                            metal_cands = all_metals_df[all_metals_df["Metal Type"] == m_metal_type].sort_values(by=["is_eligible", "Expense %", "52W Range %"], ascending=[False, True, True])
+                            if not metal_cands.empty:
+                                best_m = metal_cands.iloc[0].to_dict()
+                                sym = str(best_m["Ticker"])
+                                cmp_v = float(best_m["CMP (₹)"])
+                                m_el = check_metal_investment_eligibility(best_m)
+                                if m_el["eligible"] and sym not in active_syms and cmp_v > 0:
+                                    q = max(1, int(exec_budget // cmp_v))
+                                    created_trades.append({
+                                        "Trade_ID": f"V2_MET_{int(datetime.datetime.now(IST).timestamp())}_{sym}",
+                                        "Username": current_user, "Ticker": sym,
+                                        "Trade_Action": "🟢 BUY", "Buy Ticker": sym, "Sell Ticker": "—",
+                                        "Category": "Precious Metal", "Asset_Class": "Commodity",
+                                        "Trigger_Type": "METALS_VALUE_DIP_BUY",
+                                        "Trigger_Indicator": f"Lucrative Dip (AMC: {best_m.get('AMC')}, RSI: {best_m.get('RSI (14D)', 50):.1f})",
+                                        "Strategy_Preset": "Commodity Defensive Hedge", "Status": "ACTIVE",
+                                        "Entry_Price": cmp_v, "Live_CMP": cmp_v, "Executed_Qty": q,
+                                        "Stop_Loss": round(cmp_v * 0.96, 2), "Target": round(cmp_v * 1.06, 2),
+                                        "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                                        "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                                        "Invested_Value": round(cmp_v * q, 2),
+                                        "Technical_Score_At_Entry": round(float(best_m.get("RSI (14D)", 50.0)), 1),
+                                        "Fundamental_Score_At_Entry": 50.0, "Composite_Score_At_Entry": 50.0,
+                                        "Near_Support_Status": "Value Dip Zone (Lucrative)",
+                                        "RSI_At_Entry": round(float(best_m.get("RSI (14D)", 50.0)), 1),
+                                        "Empirical_Win_Rate_At_Entry": "N/A", "Market_Regime_At_Entry": regime_name
+                                    })
+                                    active_syms.add(sym)
+                                    exec_summary_msgs.append(f"🟢 BUY Metal ({best_m.get('AMC')} {m_metal_type}): {sym}")
+                                elif not m_el["eligible"]:
+                                    exec_summary_msgs.append(f"🛑 Skipped {m_metal_type} {sym} ({m_el.get('reason')})")
+
+                    # 6. Category 6: Apex Multi-Factor (Deduplicated Cross-Preset Picks)
+                    if chk_apex and created_trades:
+                        apex_rt_cfg = get_active_runtime_config()
+                        apex_cap_val = int(apex_rt_cfg.get("apex_category", {}).get("max_daily_trades", 2))
+                        # Group candidates across executed presets to identify confluence
+                        cand_map = {}
+                        for tr in created_trades:
+                            t_sym = tr["Ticker"]
+                            if t_sym not in cand_map:
+                                cand_map[t_sym] = []
+                            cand_map[t_sym].append(tr)
+
+                        apex_picks = []
+                        for t_sym, t_list in cand_map.items():
+                            best_t = max(t_list, key=lambda x: float(x.get("Composite_Score_At_Entry", 50.0)))
+                            confluence = len(t_list)
+                            apex_picks.append((confluence, float(best_t.get("Composite_Score_At_Entry", 50.0)), best_t))
+
+                        apex_picks.sort(key=lambda x: (x[0], x[1]), reverse=True)
+                        for conf, sc, tr_item in apex_picks[:apex_cap_val]:
+                            a_sym = tr_item["Ticker"]
+                            a_cmp = float(tr_item.get("Entry_Price", 0.0))
+                            if a_cmp > 0:
+                                a_qty = max(1, int(exec_budget // a_cmp))
+                                is_buy = "BUY" in str(tr_item.get("Trade_Action", ""))
+                                created_trades.append({
+                                    "Trade_ID": f"V2_APEX_{int(datetime.datetime.now(IST).timestamp())}_{a_sym}",
+                                    "Username": current_user, "Ticker": a_sym,
+                                    "Trade_Action": "🟢 BUY" if is_buy else "🔴 SELL",
+                                    "Buy Ticker": a_sym if is_buy else "—",
+                                    "Sell Ticker": "—" if is_buy else a_sym,
+                                    "Category": "Apex Multi-Factor",
+                                    "Asset_Class": tr_item.get("Asset_Class", "Equity"),
+                                    "Trigger_Type": "APEX_DEDUP_BUY" if is_buy else "APEX_DEDUP_SELL",
+                                    "Trigger_Indicator": f"Apex Confluence ({conf} Presets | Score: {sc:.1f})",
+                                    "Strategy_Preset": "Apex Multi-Factor", "Status": "ACTIVE",
+                                    "Entry_Price": a_cmp, "Live_CMP": a_cmp, "Executed_Qty": a_qty,
+                                    "Stop_Loss": tr_item.get("Stop_Loss", a_cmp * 0.96),
+                                    "Target": tr_item.get("Target", a_cmp * 1.06),
+                                    "Target_Tier1": tr_item.get("Target_Tier1", round(a_cmp * 1.025, 2)),
+                                    "Execution_Timestamp": now_str, "Exit_Timestamp": "", "Exit_Price": 0.0,
+                                    "Exit_Reason": "", "Hold_Duration_Days": 0, "PnL_Rs": 0.0, "PnL_Pct": "0.0%",
+                                    "Invested_Value": round(a_cmp * a_qty, 2),
+                                    "Technical_Score_At_Entry": tr_item.get("Technical_Score_At_Entry", 50.0),
+                                    "Fundamental_Score_At_Entry": tr_item.get("Fundamental_Score_At_Entry", 50.0),
+                                    "Composite_Score_At_Entry": sc,
+                                    "Near_Support_Status": f"Apex Multi-Confluence ({conf}x)",
+                                    "RSI_At_Entry": tr_item.get("RSI_At_Entry", 50.0),
+                                    "Empirical_Win_Rate_At_Entry": "N/A", "Market_Regime_At_Entry": regime_name
+                                })
+                                active_syms.add(a_sym)
+                                exec_summary_msgs.append(f"{'🟢 BUY' if is_buy else '🔴 SELL'} Apex Multi-Factor ({conf}x): {a_sym}")
+
+                    # Persist updated ledger
+                    if created_trades:
+                        combined_t = pd.concat([all_t, pd.DataFrame(created_trades)], ignore_index=True)
+                    else:
+                        combined_t = all_t
+
+                    save_paper_trades(combined_t)
+
+                    # Persist audit log entry
+                    audit_entry = {
+                        "Timestamp_IST": now_str,
+                        "Trigger_Source": "CENTRAL_EXEC_CONSOLE",
+                        "Preset": ", ".join(selected_presets),
+                        "Recommended_BUY": ", ".join([r["Ticker"] for r in created_trades if "BUY" in r.get("Trigger_Type", "")]),
+                        "Recommended_SELL": ", ".join([r["Ticker"] for r in created_trades if "SELL" in r.get("Trigger_Type", "")]),
+                        "Execution_Status": f"🟢 Executed {len(created_trades)} Orders across {len(selected_presets)} Presets",
+                        "Reason_Summary": f"Multi-preset execution summary: {'; '.join(exec_summary_msgs)}"
+                    }
+                    save_audit_entry(audit_entry)
+                    st.cache_data.clear()
+                    st.session_state.strategy_toast = f"Executed {len(created_trades)} orders live across {len(selected_presets)} presets!"
+                    if created_trades:
+                        try:
+                            signals_list = []
+                            for r in created_trades:
+                                signals_list.append({
+                                    "ticker": r["Ticker"],
+                                    "cmp": float(r.get("Entry_Price", 0.0)),
+                                    "action": "BUY" if "BUY" in str(r.get("Trade_Action", "")) else "SELL",
+                                    "source": str(r.get("Strategy_Preset", "Quant"))
+                                })
+                            send_concise_telegram_alert("Central Execution Console", signals_list, raw_data=raw_data, stocks_market_df=stocks_market_df, trades_df=trades_df)
+                        except Exception as e_tg:
+                            logger.error(f"Telegram alert failed: {e_tg}")
+                    st.rerun()
+
+    else:
+        st.info("💡 **Algorithmic Paper Execution** is centrally managed via automated background cron schedules and Admin controls. Your personal allocated holdings and positions are tracked below.")
+
+    # Process Exits & Active Live MTM
+    if not trades_df.empty and "Status" in trades_df.columns:
+        # User-level filtering
+        if is_admin:
+            all_u_opts = ["All Users / Platform"] + sorted(list(trades_df["Username"].dropna().unique()))
+            sel_u = st.selectbox("👤 Filter Ledger by User / Daemon:", all_u_opts, key="admin_user_ledger_filter")
+            if sel_u != "All Users / Platform":
+                trades_df = trades_df[trades_df["Username"] == sel_u]
+        else:
+            user_trades_exist = (trades_df["Username"] == current_user).any()
+            if is_authenticated and user_trades_exist:
+                sel_view = st.radio("Display Scope:", ["Platform Portfolio (Consolidated)", "My Trades Only"], horizontal=True, key="user_scope_filter")
+                if sel_view == "My Trades Only":
+                    trades_df = trades_df[trades_df["Username"] == current_user]
+
+        if "PnL_Pct" in trades_df.columns:
+            trades_df["PnL_Pct"] = trades_df["PnL_Pct"].astype(object)
+        try:
+            trades_df = evaluate_trade_exits(trades_df, load_historical_market_data(tickers_tuple))
+        except Exception as _exit_err:
+            logger.warning(f"Error during evaluate_trade_exits: {_exit_err}")
+
+        # Ensure Trade_Action, Buy Ticker, and Sell Ticker provenance are present
+        if "Trade_Action" not in trades_df.columns:
+            trades_df["Trade_Action"] = trades_df.apply(
+                lambda r: "🔴 SELL" if any(k in str(r.get("Trigger_Type", "")).upper() + str(r.get("Trigger_Indicator", "")).upper() + str(r.get("Exit_Reason", "")).upper() for k in ["SELL", "EXIT"]) else "🟢 BUY",
+                axis=1
+            )
+        else:
+            trades_df["Trade_Action"] = trades_df["Trade_Action"].fillna("").apply(
+                lambda v: "🔴 SELL" if any(k in str(v).upper() for k in ["SELL", "EXIT"]) else "🟢 BUY"
+            )
+        if "Buy Ticker" not in trades_df.columns:
+            trades_df["Buy Ticker"] = trades_df.apply(
+                lambda r: str(r.get("Ticker", "—")).replace(".NS", "") if "BUY" in str(r.get("Trade_Action", "")).upper() else "—",
+                axis=1
+            )
+        else:
+            trades_df["Buy Ticker"] = trades_df["Buy Ticker"].fillna("—")
+
+        if "Sell Ticker" not in trades_df.columns:
+            trades_df["Sell Ticker"] = trades_df.apply(
+                lambda r: str(r.get("Ticker", "—")).replace(".NS", "") if "SELL" in str(r.get("Trade_Action", "")).upper() else "—",
+                axis=1
+            )
+        else:
+            trades_df["Sell Ticker"] = trades_df["Sell Ticker"].fillna("—")
+
+        # Category Filter Dropdown
+        cat_options = ["All Categories"] + sorted(list(trades_df["Category"].dropna().unique())) if "Category" in trades_df.columns else ["All Categories"]
+        sel_cat = st.selectbox("🎯 Filter Ledger by Asset Category:", cat_options, key="ledger_cat_filter")
+
+        filtered_trades = trades_df if sel_cat == "All Categories" else trades_df[trades_df["Category"] == sel_cat]
+        open_trades = filtered_trades[filtered_trades["Status"] == "ACTIVE"].copy()
+        closed_trades = filtered_trades[(filtered_trades["Status"] != "ACTIVE") & (filtered_trades["Status"] != "EXIT_ALERT")].copy()
+    else:
+        filtered_trades = pd.DataFrame()
+        open_trades = pd.DataFrame()
+        closed_trades = pd.DataFrame()
+
+    cap_deployed = float(pd.to_numeric(open_trades["Invested_Value"], errors="coerce").sum()) if not open_trades.empty else 0.0
+    tot_unrealized = float(pd.to_numeric(open_trades["PnL_Rs"], errors="coerce").sum()) if not open_trades.empty else 0.0
+    closed_pnl = float(pd.to_numeric(closed_trades["PnL_Rs"], errors="coerce").sum()) if not closed_trades.empty else 0.0
+    win_count = (pd.to_numeric(closed_trades["PnL_Rs"], errors="coerce") > 0).sum() if not closed_trades.empty else 0
+    tot_closed = len(closed_trades)
+    win_rate = (win_count / tot_closed * 100.0) if tot_closed > 0 else 0.0
+
+    # High-Fidelity KPI Cards (Always visible)
+    st.markdown("---")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Live Unrealized PnL", f"₹{tot_unrealized:+,.2f}", f"{len(open_trades)} Active Positions")
+    m2.metric("Active Capital Deployed", f"₹{cap_deployed:,.2f}")
+    m3.metric("Closed Realized PnL", f"₹{closed_pnl:+,.2f}", f"{tot_closed} Closed Trades")
+    m4.metric("Strategy Win Rate", f"{win_rate:.1f}%" if tot_closed > 0 else "N/A", f"{win_count} Wins / {tot_closed - win_count} Losses")
+
+    # Multi-Timeframe Duration Performance Matrix (Standardized Rolling Horizons)
+    st.markdown("##### ⏱️ Multi-Timeframe Duration Performance Matrix (1M, Quarter, 6M, 1Y, 3Y, 5Y)")
+    st.caption("Standardized rolling window duration analytics across all presets & horizons • All 6 Presets including Intraday with Category Contribution Hints")
+
+    tf_tab_preset, tf_tab_global, tf_tab_cat = st.tabs([
+        "🎯 Presets Duration Matrix (All 6 Presets + Intraday)",
+        "🌐 Portfolio Rolling Horizons (1W, 2W, 1M, 1Q, 6M, 1Y, 3Y, 5Y)",
+        "📊 Asset Category Duration Horizons (ETFs, Equities, REITs, Metals)"
+    ])
+
+    with tf_tab_preset:
+        if multi_tf_perf and "preset_df" in multi_tf_perf and not multi_tf_perf["preset_df"].empty:
+            p_mat_df = multi_tf_perf["preset_df"]
+            render_top_scrollbar_sync()
+            st.dataframe(
+                p_mat_df.style.apply(apply_paper_table_styling, axis=None).format({
+                    "1M PnL (₹)": "₹{:+,.2f}",
+                    "1Q PnL (₹)": "₹{:+,.2f}",
+                    "6M PnL (₹)": "₹{:+,.2f}",
+                    "1Y PnL (₹)": "₹{:+,.2f}",
+                    "3Y PnL (₹)": "₹{:+,.2f}",
+                    "5Y PnL (₹)": "₹{:+,.2f}",
+                    "Realized PnL (₹)": "₹{:+,.2f}",
+                    "Unrealized PnL (₹)": "₹{:+,.2f}",
+                    "Total PnL (₹)": "₹{:+,.2f}",
+                    "Capital Deployed (₹)": "₹{:,.2f}"
+                }),
+                column_config=get_pinned_column_config(p_mat_df, 2),
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No preset duration performance recorded yet.")
+
+    with tf_tab_global:
+        if multi_tf_perf and "matrix_df" in multi_tf_perf and not multi_tf_perf["matrix_df"].empty:
+            tf_mat_df = multi_tf_perf["matrix_df"]
+            render_top_scrollbar_sync()
+            st.dataframe(
+                tf_mat_df.style.apply(apply_paper_table_styling, axis=None).format({
+                    "Realized PnL (₹)": "₹{:+,.2f}",
+                    "Unrealized PnL (₹)": "₹{:+,.2f}",
+                    "Total PnL (₹)": "₹{:+,.2f}",
+                    "Capital Deployed (₹)": "₹{:,.2f}"
+                }),
+                column_config=get_pinned_column_config(tf_mat_df, 2),
+                use_container_width=True,
+                hide_index=True
+            )
+
+    with tf_tab_cat:
+        if multi_tf_perf and "category_df" in multi_tf_perf and not multi_tf_perf["category_df"].empty:
+            c_mat_df = multi_tf_perf["category_df"]
+            render_top_scrollbar_sync()
+            st.dataframe(
+                c_mat_df.style.apply(apply_paper_table_styling, axis=None).format({
+                    "1M PnL (₹)": "₹{:+,.2f}",
+                    "1Q PnL (₹)": "₹{:+,.2f}",
+                    "6M PnL (₹)": "₹{:+,.2f}",
+                    "1Y PnL (₹)": "₹{:+,.2f}",
+                    "3Y PnL (₹)": "₹{:+,.2f}",
+                    "5Y PnL (₹)": "₹{:+,.2f}",
+                    "Total Realized PnL (₹)": "₹{:+,.2f}",
+                    "Unrealized PnL (₹)": "₹{:+,.2f}"
+                }),
+                column_config=get_pinned_column_config(c_mat_df, 2),
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No category duration performance recorded yet.")
+
+    # Unified Portfolio Overview & Asset Allocation Summary (Visible to all users)
+    st.markdown("##### 💼 Unified Portfolio Overview & Asset Holdings")
+    st.caption("Aggregated platform holdings across all tranches clubbed per asset over time • Live CMP & Unrealized Return")
+    if not open_trades.empty:
+        port_rows = []
+        for t_sym, grp in open_trades.groupby(open_trades["Ticker"].astype(str).str.replace(".NS", "")):
+            tot_qty = float(pd.to_numeric(grp["Executed_Qty"], errors="coerce").sum())
+            tot_inv = float(pd.to_numeric(grp["Invested_Value"], errors="coerce").sum())
+            avg_entry = (tot_inv / tot_qty) if tot_qty > 0 else 0.0
+            live_cmp = float(grp["Live_CMP"].iloc[-1]) if "Live_CMP" in grp.columns and pd.notnull(grp["Live_CMP"].iloc[-1]) else avg_entry
+            cur_val = round(live_cmp * tot_qty, 2)
+            pnl_rs = round(cur_val - tot_inv, 2)
+            pnl_pct = f"{((cur_val - tot_inv) / tot_inv * 100):+.2f}%" if tot_inv > 0 else "0.0%"
+            cat = grp["Category"].iloc[0] if "Category" in grp.columns else "General"
+            asset_cls = grp["Asset_Class"].iloc[0] if "Asset_Class" in grp.columns else "ETF"
+            port_rows.append({
+                "Ticker": t_sym,
+                "Asset Class": asset_cls,
+                "Category": cat,
+                "Combined Tranches": len(grp),
+                "Total Units": int(tot_qty),
+                "Avg Entry (₹)": avg_entry,
+                "Live CMP (₹)": live_cmp,
+                "Invested (₹)": tot_inv,
+                "Current Value (₹)": cur_val,
+                "Unrealized PnL (₹)": pnl_rs,
+                "Return %": pnl_pct
+            })
+        if port_rows:
+            port_df = pd.DataFrame(port_rows)
+            render_top_scrollbar_sync()
+            st.dataframe(
+                port_df.style.apply(apply_paper_table_styling, axis=None).format({
+                    "Avg Entry (₹)": "₹{:,.2f}",
+                    "Live CMP (₹)": "₹{:,.2f}",
+                    "Invested (₹)": "₹{:,.2f}",
+                    "Current Value (₹)": "₹{:,.2f}",
+                    "Unrealized PnL (₹)": "₹{:+,.2f}"
+                }),
+                column_config=get_pinned_column_config(port_df, 3),
+                use_container_width=True,
+                hide_index=True
+            )
+    else:
+        st.info("No active open positions in the platform portfolio.")
+
+    # Multi-Category Performance Breakdown Matrix (Visible to all users)
+    st.markdown("##### 📊 Multi-Category Performance Breakdown (Multi-Timeframe Duration Windows)")
+    if not trades_df.empty and "Category" in trades_df.columns:
+        cat_kpi_rows = []
+        for c_name, grp in trades_df.groupby("Category"):
+            c_tot = len(grp)
+            c_grp_is_buy = grp.apply(is_buy_trade_prediction, axis=1) if not grp.empty else pd.Series(dtype=bool)
+            c_tot_buy = int(c_grp_is_buy.sum()) if not grp.empty else 0
+            c_tot_sell = c_tot - c_tot_buy
+
+            c_act = grp[grp["Status"] == "ACTIVE"]
+            c_act_cnt = len(c_act)
+            c_act_is_buy = c_act.apply(is_buy_trade_prediction, axis=1) if not c_act.empty else pd.Series(dtype=bool)
+            c_act_buy = int(c_act_is_buy.sum()) if not c_act.empty else 0
+            c_act_sell = c_act_cnt - c_act_buy
+
+            c_closed = grp[(grp["Status"] != "ACTIVE") & (grp["Status"] != "EXIT_ALERT")]
+            c_pnl = pd.to_numeric(c_closed["PnL_Rs"], errors="coerce").sum() if not c_closed.empty else 0.0
+            c_unreal = pd.to_numeric(c_act["PnL_Rs"], errors="coerce").sum() if not c_act.empty else 0.0
+            c_wins = int((pd.to_numeric(c_closed["PnL_Rs"], errors="coerce") > 0).sum()) if not c_closed.empty else 0
+            c_tot_c = len(c_closed)
+            c_wrate = (c_wins / c_tot_c * 100.0) if c_tot_c > 0 else 0.0
+
+            if not c_closed.empty:
+                c_is_buy = c_closed.apply(is_buy_trade_prediction, axis=1)
+                c_cld_buy = c_closed[c_is_buy]
+                c_cld_sell = c_closed[~c_is_buy]
+                c_buy_tot = len(c_cld_buy)
+                c_buy_wins = int((pd.to_numeric(c_cld_buy["PnL_Rs"], errors="coerce") > 0).sum()) if c_buy_tot > 0 else 0
+                c_buy_wrate = (c_buy_wins / c_buy_tot * 100.0) if c_buy_tot > 0 else 0.0
+                c_sell_tot = len(c_cld_sell)
+                c_sell_wins = int((pd.to_numeric(c_cld_sell["PnL_Rs"], errors="coerce") > 0).sum()) if c_sell_tot > 0 else 0
+                c_sell_wrate = (c_sell_wins / c_sell_tot * 100.0) if c_sell_tot > 0 else 0.0
+            else:
+                c_buy_tot, c_sell_tot = 0, 0
+                c_buy_wins, c_sell_wins = 0, 0
+                c_buy_wrate, c_sell_wrate = 0.0, 0.0
+
+            b_tickers = sorted(list(set([str(t) for t in grp["Buy Ticker"] if str(t).strip() not in ["—", "", "nan"]])))
+            s_tickers = sorted(list(set([str(t) for t in grp["Sell Ticker"] if str(t).strip() not in ["—", "", "nan"]])))
+
+            # Multi-horizon duration window PnLs
+            c_ref = pd.Timestamp.now()
+            c_exec = pd.to_datetime(grp.get("Execution_Timestamp"), errors="coerce").fillna(pd.to_datetime(grp.get("Exit_Timestamp"), errors="coerce")).fillna(c_ref)
+            c_diff_days = (c_ref - c_exec).dt.total_seconds() / 86400.0
+
+            pnl_1m = float(pd.to_numeric(grp[c_diff_days <= 30]["PnL_Rs"], errors="coerce").sum())
+            pnl_1q = float(pd.to_numeric(grp[c_diff_days <= 90]["PnL_Rs"], errors="coerce").sum())
+            pnl_6m = float(pd.to_numeric(grp[c_diff_days <= 180]["PnL_Rs"], errors="coerce").sum())
+            pnl_1y = float(pd.to_numeric(grp[c_diff_days <= 365]["PnL_Rs"], errors="coerce").sum())
+            pnl_3y = float(pd.to_numeric(grp[c_diff_days <= 1095]["PnL_Rs"], errors="coerce").sum())
+            pnl_5y = float(pd.to_numeric(grp[c_diff_days <= 1825]["PnL_Rs"], errors="coerce").sum())
+
+            cat_kpi_rows.append({
+                "Category": c_name,
+                "Total Trades": f"{c_tot} (Buy={c_tot_buy}, Sell={c_tot_sell})",
+                "🟢 Buy Tickers": ", ".join(b_tickers) if b_tickers else "—",
+                "🔴 Sell Tickers": ", ".join(s_tickers) if s_tickers else "—",
+                "Active Trades": f"{c_act_cnt} (Buy={c_act_buy}, Sell={c_act_sell})",
+                "Closed Trades": f"{c_tot_c} (Buy={c_buy_tot}, Sell={c_sell_tot})",
+                "Win Rate %": f"{c_wrate:.1f}% ({c_wins}/{c_tot_c})" if c_tot_c > 0 else "Pending (0)",
+                "Buy Win Rate %": f"{c_buy_wrate:.1f}% ({c_buy_wins}/{c_buy_tot})" if c_buy_tot > 0 else "Pending (0)",
+                "Sell Win Rate %": f"{c_sell_wrate:.1f}% ({c_sell_wins}/{c_sell_tot})" if c_sell_tot > 0 else "Pending (0)",
+                "1M PnL (₹)": pnl_1m,
+                "1Q PnL (₹)": pnl_1q,
+                "6M PnL (₹)": pnl_6m,
+                "1Y PnL (₹)": pnl_1y,
+                "3Y PnL (₹)": pnl_3y,
+                "5Y PnL (₹)": pnl_5y,
+                "Realized PnL (₹)": c_pnl,
+                "Unrealized PnL (₹)": c_unreal
+            })
+        if cat_kpi_rows:
+            cat_kpi_df = pd.DataFrame(cat_kpi_rows)
+            render_top_scrollbar_sync()
+            st.dataframe(
+                cat_kpi_df.style.apply(apply_paper_table_styling, axis=None).format({
+                    "1M PnL (₹)": "₹{:+,.2f}",
+                    "1Q PnL (₹)": "₹{:+,.2f}",
+                    "6M PnL (₹)": "₹{:+,.2f}",
+                    "1Y PnL (₹)": "₹{:+,.2f}",
+                    "3Y PnL (₹)": "₹{:+,.2f}",
+                    "5Y PnL (₹)": "₹{:+,.2f}",
+                    "Realized PnL (₹)": "₹{:+,.2f}",
+                    "Unrealized PnL (₹)": "₹{:+,.2f}"
+                }),
+                column_config=get_pinned_column_config(cat_kpi_df, 3),
+                use_container_width=True,
+                hide_index=True
+            )
+    else:
+        st.info("No category performance data recorded yet.")
+
+    # Strategy Preset Performance Breakdown Matrix (Visible to all users)
+    st.markdown("##### 🎯 Strategy Preset Performance Breakdown (Multi-Timeframe Duration Windows)")
+    if not trades_df.empty and "Strategy_Preset" in trades_df.columns:
+        preset_kpi_rows = []
+        for p_name, grp in trades_df.groupby("Strategy_Preset"):
+            p_tot = len(grp)
+            p_grp_is_buy = grp.apply(is_buy_trade_prediction, axis=1) if not grp.empty else pd.Series(dtype=bool)
+            p_tot_buy = int(p_grp_is_buy.sum()) if not grp.empty else 0
+            p_tot_sell = p_tot - p_tot_buy
+
+            p_act = grp[grp["Status"] == "ACTIVE"]
+            p_act_cnt = len(p_act)
+            p_act_is_buy = p_act.apply(is_buy_trade_prediction, axis=1) if not p_act.empty else pd.Series(dtype=bool)
+            p_act_buy = int(p_act_is_buy.sum()) if not p_act.empty else 0
+            p_act_sell = p_act_cnt - p_act_buy
+
+            p_closed = grp[(grp["Status"] != "ACTIVE") & (grp["Status"] != "EXIT_ALERT")]
+            p_pnl = pd.to_numeric(p_closed["PnL_Rs"], errors="coerce").sum() if not p_closed.empty else 0.0
+            p_unreal = pd.to_numeric(p_act["PnL_Rs"], errors="coerce").sum() if not p_act.empty else 0.0
+            p_wins = int((pd.to_numeric(p_closed["PnL_Rs"], errors="coerce") > 0).sum()) if not p_closed.empty else 0
+            p_tot_c = len(p_closed)
+            p_wrate = (p_wins / p_tot_c * 100.0) if p_tot_c > 0 else 0.0
+
+            if not p_closed.empty:
+                p_is_buy = p_closed.apply(is_buy_trade_prediction, axis=1)
+                p_cld_buy = p_closed[p_is_buy]
+                p_cld_sell = p_closed[~p_is_buy]
+                p_buy_tot = len(p_cld_buy)
+                p_buy_wins = int((pd.to_numeric(p_cld_buy["PnL_Rs"], errors="coerce") > 0).sum()) if p_buy_tot > 0 else 0
+                p_buy_wrate = (p_buy_wins / p_buy_tot * 100.0) if p_buy_tot > 0 else 0.0
+                p_sell_tot = len(p_cld_sell)
+                p_sell_wins = int((pd.to_numeric(p_cld_sell["PnL_Rs"], errors="coerce") > 0).sum()) if p_sell_tot > 0 else 0
+                p_sell_wrate = (p_sell_wins / p_sell_tot * 100.0) if p_sell_tot > 0 else 0.0
+            else:
+                p_buy_tot, p_sell_tot = 0, 0
+                p_buy_wins, p_sell_wins = 0, 0
+                p_buy_wrate, p_sell_wrate = 0.0, 0.0
+
+            p_b_tickers = sorted(list(set([str(t) for t in grp["Buy Ticker"] if str(t).strip() not in ["—", "", "nan"]])))
+            p_s_tickers = sorted(list(set([str(t) for t in grp["Sell Ticker"] if str(t).strip() not in ["—", "", "nan"]])))
+
+            # Multi-horizon duration window PnLs
+            p_ref = pd.Timestamp.now()
+            p_exec = pd.to_datetime(grp.get("Execution_Timestamp"), errors="coerce").fillna(pd.to_datetime(grp.get("Exit_Timestamp"), errors="coerce")).fillna(p_ref)
+            p_diff_days = (p_ref - p_exec).dt.total_seconds() / 86400.0
+
+            p_pnl_1m = float(pd.to_numeric(grp[p_diff_days <= 30]["PnL_Rs"], errors="coerce").sum())
+            p_pnl_1q = float(pd.to_numeric(grp[p_diff_days <= 90]["PnL_Rs"], errors="coerce").sum())
+            p_pnl_6m = float(pd.to_numeric(grp[p_diff_days <= 180]["PnL_Rs"], errors="coerce").sum())
+            p_pnl_1y = float(pd.to_numeric(grp[p_diff_days <= 365]["PnL_Rs"], errors="coerce").sum())
+            p_pnl_3y = float(pd.to_numeric(grp[p_diff_days <= 1095]["PnL_Rs"], errors="coerce").sum())
+            p_pnl_5y = float(pd.to_numeric(grp[p_diff_days <= 1825]["PnL_Rs"], errors="coerce").sum())
+
+            preset_kpi_rows.append({
+                "Strategy Preset": p_name,
+                "Total Trades": f"{p_tot} (Buy={p_tot_buy}, Sell={p_tot_sell})",
+                "🟢 Buy Tickers": ", ".join(p_b_tickers) if p_b_tickers else "—",
+                "🔴 Sell Tickers": ", ".join(p_s_tickers) if p_s_tickers else "—",
+                "Active": f"{p_act_cnt} (Buy={p_act_buy}, Sell={p_act_sell})",
+                "Closed": f"{p_tot_c} (Buy={p_buy_tot}, Sell={p_sell_tot})",
+                "Win Rate %": f"{p_wrate:.1f}% ({p_wins}/{p_tot_c})" if p_tot_c > 0 else "Pending (0)",
+                "Buy Win Rate %": f"{p_buy_wrate:.1f}% ({p_buy_wins}/{p_buy_tot})" if p_buy_tot > 0 else "Pending (0)",
+                "Sell Win Rate %": f"{p_sell_wrate:.1f}% ({p_sell_wins}/{p_sell_tot})" if p_sell_tot > 0 else "Pending (0)",
+                "1M PnL (₹)": p_pnl_1m,
+                "1Q PnL (₹)": p_pnl_1q,
+                "6M PnL (₹)": p_pnl_6m,
+                "1Y PnL (₹)": p_pnl_1y,
+                "3Y PnL (₹)": p_pnl_3y,
+                "5Y PnL (₹)": p_pnl_5y,
+                "Realized PnL (₹)": p_pnl,
+                "Unrealized PnL (₹)": p_unreal
+            })
+        if preset_kpi_rows:
+            preset_kpi_df = pd.DataFrame(preset_kpi_rows)
+            render_top_scrollbar_sync()
+            st.dataframe(
+                preset_kpi_df.style.apply(apply_paper_table_styling, axis=None).format({
+                    "1M PnL (₹)": "₹{:+,.2f}",
+                    "1Q PnL (₹)": "₹{:+,.2f}",
+                    "6M PnL (₹)": "₹{:+,.2f}",
+                    "1Y PnL (₹)": "₹{:+,.2f}",
+                    "3Y PnL (₹)": "₹{:+,.2f}",
+                    "5Y PnL (₹)": "₹{:+,.2f}",
+                    "Realized PnL (₹)": "₹{:+,.2f}",
+                    "Unrealized PnL (₹)": "₹{:+,.2f}"
+                }),
+                column_config=get_pinned_column_config(preset_kpi_df, 3),
+                use_container_width=True,
+                hide_index=True
+            )
+    else:
+        st.info("No strategy preset performance data recorded yet.")
+
+    # Trade Direction Filter
+    filter_action = st.radio(
+        "🔎 Filter Positions by Trade Direction:",
+        ["All Positions (Mixed)", "🟢 BUY Positions Only", "🔴 SELL / Exit Positions Only"],
+        horizontal=True,
+        key="ledger_action_filter"
+    )
+    if not open_trades.empty:
+        if filter_action == "🟢 BUY Positions Only":
+            open_trades = open_trades[open_trades["Trade_Action"].str.contains("BUY", na=False)]
+        elif filter_action == "🔴 SELL / Exit Positions Only":
+            open_trades = open_trades[open_trades["Trade_Action"].str.contains("SELL|EXIT", na=False)]
+
+    if not closed_trades.empty:
+        if filter_action == "🟢 BUY Positions Only":
+            closed_trades = closed_trades[closed_trades["Trade_Action"].str.contains("BUY", na=False)]
+        elif filter_action == "🔴 SELL / Exit Positions Only":
+            closed_trades = closed_trades[closed_trades["Trade_Action"].str.contains("SELL|EXIT", na=False)]
+
+    # Active Positions Table with Enriched Parameter Provenance (Visible to all users)
+    st.markdown("##### 📋 Open Active Positions (Live MTM & Indicator Provenance)")
+    if not open_trades.empty:
+        open_trades["Timeframe Horizon"] = open_trades["Execution_Timestamp"].apply(assign_trade_timeframe_horizon)
+        open_display_cols = [
+            "Trade_Action", "Buy Ticker", "Sell Ticker", "Trade_ID", "Category", "Strategy_Preset",
+            "Trigger_Indicator", "Near_Support_Status",
+            "Technical_Score_At_Entry", "Fundamental_Score_At_Entry", "RSI_At_Entry",
+            "Entry_Price", "Live_CMP", "Executed_Qty", "Stop_Loss", "Target",
+            "PnL_Rs", "PnL_Pct", "Hold_Duration_Days", "Timeframe Horizon", "Execution_Timestamp"
+        ]
+        valid_open_cols = [c for c in open_display_cols if c in open_trades.columns]
+        render_top_scrollbar_sync()
+        st.dataframe(
+            open_trades[valid_open_cols].style.apply(apply_paper_table_styling, axis=None).format({
+                "Entry_Price": "₹{:.2f}",
+                "Live_CMP": "₹{:.2f}",
+                "Stop_Loss": "₹{:.2f}",
+                "Target": "₹{:.2f}",
+                "PnL_Rs": "₹{:+.2f}",
+                "RSI_At_Entry": "{:.1f}",
+                "Technical_Score_At_Entry": "{:.1f}",
+                "Fundamental_Score_At_Entry": "{:.1f}"
+            }),
+            column_config=get_pinned_column_config(valid_open_cols, 3),
+            use_container_width=True
+        )
+
+        # 1-Click Manual Squareoff / Exit Control (Admin Only)
+        if is_admin:
+            st.markdown("###### 🚪 Immediate Position Square-Off Control (Admin Only):")
+            sq_c1, sq_c2 = st.columns([3, 1])
+            with sq_c1:
+                active_trade_opts = [f"{r['Trade_ID']} - {r['Ticker']} ({r.get('Trade_Action', 'BUY')} | CMP: ₹{r['Live_CMP']:.2f}, PnL: ₹{r['PnL_Rs']:+.2f})" for _, r in open_trades.iterrows()]
+                sel_sq_trade = st.selectbox("Select Active Position to Exit:", active_trade_opts, key="sq_trade_select")
+            with sq_c2:
+                st.write("")
+                if st.button("🚪 Exit Selected Position", type="secondary", use_container_width=True, key="btn_exit_single_trade"):
+                    sel_tid = sel_sq_trade.split(" - ")[0].strip()
+                    all_raw_t = load_paper_trades()
+                    for idx_t, row_t in all_raw_t.iterrows():
+                        if str(row_t["Trade_ID"]).strip() == sel_tid:
+                            cur_cmp = float(row_t["Live_CMP"])
+                            ent_p = float(row_t["Entry_Price"])
+                            qty_p = float(row_t["Executed_Qty"])
+                            is_short = any(k in str(row_t.get("Trade_Action", "")).upper() + str(row_t.get("Trigger_Type", "")).upper() for k in ["SELL", "SHORT"])
+                            pnl_val = round((ent_p - cur_cmp) * qty_p, 2) if is_short else round((cur_cmp - ent_p) * qty_p, 2)
+                            pnl_pct_val = round(((ent_p - cur_cmp) / ent_p * 100), 2) if is_short else (round(((cur_cmp - ent_p) / ent_p * 100), 2) if ent_p > 0 else 0.0)
+                            all_raw_t.at[idx_t, "Status"] = "MANUAL_EXITED"
+                            all_raw_t.at[idx_t, "Exit_Price"] = cur_cmp
+                            all_raw_t.at[idx_t, "Exit_Timestamp"] = datetime.datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+                            all_raw_t.at[idx_t, "Exit_Reason"] = "User Manual Squareoff"
+                            all_raw_t.at[idx_t, "PnL_Rs"] = pnl_val
+                            if "PnL_Pct" in all_raw_t.columns and all_raw_t["PnL_Pct"].dtype != object:
+                                all_raw_t["PnL_Pct"] = all_raw_t["PnL_Pct"].astype(object)
+                            all_raw_t.at[idx_t, "PnL_Pct"] = f"{pnl_pct_val:+.2f}%"
+                            break
+                    save_paper_trades(all_raw_t)
+                    st.cache_data.clear()
+                    st.session_state.strategy_toast = f"Closed position {sel_tid} successfully."
+                    st.rerun()
+    else:
+        st.info("No active open positions currently.")
+
+    # Closed Positions History Journal (Visible to all users)
+    st.markdown("##### 📜 Closed Positions & Historical Exit Journal")
+    if not closed_trades.empty:
+        closed_trades["Timeframe Horizon"] = closed_trades["Execution_Timestamp"].apply(assign_trade_timeframe_horizon)
+        closed_display_cols = [
+            "Trade_Action", "Buy Ticker", "Sell Ticker", "Trade_ID", "Category", "Strategy_Preset",
+            "Trigger_Indicator", "Near_Support_Status",
+            "Technical_Score_At_Entry", "Fundamental_Score_At_Entry",
+            "Entry_Price", "Exit_Price", "Executed_Qty", "Hold_Duration_Days", "Timeframe Horizon",
+            "PnL_Rs", "PnL_Pct", "Exit_Reason", "Execution_Timestamp", "Exit_Timestamp"
+        ]
+        valid_closed_cols = [c for c in closed_display_cols if c in closed_trades.columns]
+        render_top_scrollbar_sync()
+        st.dataframe(
+            closed_trades[valid_closed_cols].style.apply(apply_paper_table_styling, axis=None).format({
+                "Entry_Price": "₹{:.2f}",
+                "Exit_Price": "₹{:.2f}",
+                "PnL_Rs": "₹{:+.2f}",
+                "Technical_Score_At_Entry": "{:.1f}",
+                "Fundamental_Score_At_Entry": "{:.1f}"
+            }),
+            column_config=get_pinned_column_config(valid_closed_cols, 3),
+            use_container_width=True,
+            height=220
+        )
+    else:
+        st.info("No closed positions recorded yet.")
+
+    # Strategic Logic & Guardrails Changes History Log Expander
+    with st.expander("🏛️ Strategic Logic & Guardrails Changes History Log (Click to view)", expanded=False):
+        st.markdown(
+            """
+            > **Institutional Strategic Governance:** Permanent audit log documenting version milestones, quantitative formula adaptations, safety guardrail deployments, and algorithmic improvements across the AGY Tactical Allocator platform.
+            """
+        )
+        strat_log_df = load_strategy_change_log()
+        if not strat_log_df.empty:
+            render_top_scrollbar_sync()
+            st.dataframe(
+                strat_log_df,
+                column_config=get_pinned_column_config(strat_log_df, 3),
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No strategic changes logged yet.")
+
+    # =====================================================================
+    # DEDICATED INTRADAY TRADE EXECUTION & PARAMETER TELEMETRY JOURNAL
+    # =====================================================================
+    st.markdown("---")
+    st.markdown("##### ⚡ Dedicated Intraday Trade Execution & Telemetry Journal (Entry & Exit Diagnostics)")
+    st.caption("Detailed institutional telemetry log for Intraday Momentum trades: capturing precise entry time, entry CMP, technical factor justification provenance (RSI, composite score, dynamic channel status), exit time, exit CMP, realized PnL, and square-off rationale.")
+
+    # Filter for all intraday trades (active or closed)
+    raw_all_trades = raw_trades.copy()
+    if not raw_all_trades.empty:
+        is_intra = (
+            raw_all_trades["Strategy_Preset"].astype(str).str.upper().str.contains("INTRADAY") |
+            raw_all_trades["Trigger_Type"].astype(str).str.upper().str.contains("INTRADAY") |
+            raw_all_trades["Trade_ID"].astype(str).str.startswith("INTRA_")
+        )
+        intra_df = raw_all_trades[is_intra].copy()
+    else:
+        intra_df = pd.DataFrame()
+
+    if not intra_df.empty:
+        # Convert numeric columns for reliable KPIs
+        pnl_num = pd.to_numeric(intra_df["PnL_Rs"], errors="coerce").fillna(0.0)
+        tot_intra_trades = len(intra_df)
+        active_intra_trades = len(intra_df[intra_df["Status"].astype(str).str.strip().str.upper() == "ACTIVE"])
+        closed_intra_trades = tot_intra_trades - active_intra_trades
+        tot_realized_intra_pnl = float(pnl_num[intra_df["Status"].astype(str).str.strip().str.upper() != "ACTIVE"].sum())
+        win_count = int((pnl_num[(intra_df["Status"].astype(str).str.strip().str.upper() != "ACTIVE") & (pnl_num > 0)]).count())
+        win_rate = (win_count / closed_intra_trades * 100.0) if closed_intra_trades > 0 else 0.0
+
+        # KPI Tiles
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("Total Intraday Trades", f"{tot_intra_trades}")
+        k2.metric("Active Intraday", f"{active_intra_trades}")
+        k3.metric("Closed Intraday", f"{closed_intra_trades}")
+        k4.metric("Intraday Win Rate", f"{win_rate:.1f}%")
+        k5.metric("Net Realized Intraday PnL", f"₹{tot_realized_intra_pnl:+,.2f}", delta=f"{tot_realized_intra_pnl:+,.2f}")
+
+        # Ensure float columns for table display
+        for col in ["Entry_Price", "Exit_Price", "Live_CMP", "Stop_Loss", "Target", "Executed_Qty", "PnL_Rs", "Technical_Score_At_Entry", "Fundamental_Score_At_Entry", "RSI_At_Entry", "Composite_Score_At_Entry"]:
+            if col in intra_df.columns:
+                intra_df[col] = pd.to_numeric(intra_df[col], errors="coerce").fillna(0.0)
+
+        # Build clean columns map
+        intra_cols_ordered = [
+            "Status", "Ticker", "Trade_ID",
+            "Execution_Timestamp", "Entry_Price", "Executed_Qty",
+            "Trigger_Indicator", "Near_Support_Status",
+            "RSI_At_Entry", "Technical_Score_At_Entry", "Composite_Score_At_Entry",
+            "Stop_Loss", "Target",
+            "Exit_Timestamp", "Exit_Price",
+            "PnL_Rs", "PnL_Pct", "Exit_Reason"
+        ]
+        valid_intra_cols = [c for c in intra_cols_ordered if c in intra_df.columns]
+        
+        # Sort newest trades first
+        sort_col = "Execution_Timestamp" if "Execution_Timestamp" in intra_df.columns else "Trade_ID"
+        sorted_intra = intra_df.sort_values(by=sort_col, ascending=False)
+
+        render_top_scrollbar_sync()
+        st.dataframe(
+            sorted_intra[valid_intra_cols].style.apply(apply_paper_table_styling, axis=None).format({
+                "Entry_Price": "₹{:.2f}",
+                "Exit_Price": "₹{:.2f}",
+                "Stop_Loss": "₹{:.2f}",
+                "Target": "₹{:.2f}",
+                "Executed_Qty": "{:.0f}",
+                "PnL_Rs": "₹{:+.2f}",
+                "RSI_At_Entry": "{:.1f}",
+                "Technical_Score_At_Entry": "{:.1f}",
+                "Composite_Score_At_Entry": "{:.1f}"
+            }),
+            column_config=get_pinned_column_config(valid_intra_cols, 3),
+            use_container_width=True,
+            height=260
+        )
+    else:
+        st.info("ℹ️ No intraday trades recorded yet. Intraday momentum orders execute automatically at 09:45 AM IST and square off at 03:10 PM IST.")
+
+    # Execution Audit Log
+    st.markdown("---")
+    st.markdown("##### 📋 Execution Audit Trail")
+    aud_df = load_audit_log()
+    if not aud_df.empty:
+        aud_display = aud_df.rename(columns={
+            "Recommended_BUY": "🟢 Buy Tickers",
+            "Recommended_SELL": "🔴 Sell Tickers"
+        })
+        st.dataframe(
+            aud_display.sort_values(by="Timestamp_IST", ascending=False).style.apply(apply_paper_table_styling, axis=None),
+            column_config=get_pinned_column_config(aud_display, 3),
+            use_container_width=True,
+            height=180
+        )
+
+
+# =====================================================================
+# TAB 3: BACKTESTING & MACHINE LEARNING OPTIMIZATION STUDIO
 # =====================================================================
 elif "Multi-Regime Backtesting" in active_tab:
     if not is_authenticated:
@@ -2673,7 +4208,9 @@ elif "Multi-Regime Backtesting" in active_tab:
     except Exception:
         pass
 
+    # 1. Optimization Engine Status (Automated AI/ML & Regime Controls Consolidated in Tab 4)
     st.markdown(f"**Optimization Engine Status:** `{runtime_cfg.get('optimization_status', 'Active')}`")
+    st.caption("ℹ️ Automated AI/ML empirical recommendations, counterfactual backtesting, and 1-Click strategy/market-regime implementation are centrally controlled in **Tab 4: 🧠 AI/ML & RAG Strategy Forensics → 5. 1-Click Implementation Console**.")
 
     st.markdown("---")
 
@@ -2907,27 +4444,29 @@ elif "Multi-Regime Backtesting" in active_tab:
             height=180
         )
 
-    # 5. Strategic Logic & Architectural Changes History Log
+    # 5. Strategic Changes & Architectural Logic Log
     st.markdown("---")
     st.markdown("#### 🏛️ Strategic Logic & Architectural Changes Log")
+    st.caption("Permanent institutional audit log tracking version upgrades, mathematical formula adaptations, guardrail additions, and code improvements over time.")
     strat_log_tab3 = load_strategy_change_log()
     if not strat_log_tab3.empty:
+        render_top_scrollbar_sync()
         st.dataframe(
             strat_log_tab3,
             column_config=get_pinned_column_config(strat_log_tab3, 3),
             use_container_width=True,
-            height=200
+            height=240
         )
 
 
 # =====================================================================
-# TAB 3: AI/ML & RAG STRATEGY FORENSICS & BACKTEST ADVISOR
+# TAB 4: AI/ML & RAG STRATEGY FORENSICS & BACKTEST ADVISOR
 # =====================================================================
 elif "AI/ML & RAG Strategy Forensics" in active_tab:
     import ai_rag_forensics as _arf_mod
     _reload_if_changed("ai_rag_forensics")
     _arf_mod.render_ai_rag_forensics_tab(
-        trades_df=None,
+        trades_df=load_paper_trades(),
         is_admin=is_admin,
         current_user=current_user,
         docx_bytes=docx_bytes
@@ -2935,52 +4474,138 @@ elif "AI/ML & RAG Strategy Forensics" in active_tab:
 
 
 # =====================================================================
-# TAB 4: PLATFORM STRATEGY GUIDE & DOCX EXPORT
+# TAB 5: PROFILE & STRATEGY SETTINGS
 # =====================================================================
-elif "Platform Strategy Guide" in active_tab:
-    st.markdown("### 📘 Platform Strategy Architecture & Quantitative Documentation")
-    st.caption("Institutional methodology, mathematical derivations, factor models, and exportable documentation.")
+elif "Profile & Strategy Settings" in active_tab:
+    if not is_authenticated:
+        st.warning("🔒 Access Restricted: Profile & Strategy Settings are private. Please sign in from the sidebar to access.")
+        st.stop()
 
-    g_col1, g_col2 = st.columns([3, 1])
-    with g_col1:
-        st.markdown(
-            """
-            #### 🏛️ Strategy Philosophy: The 5-Pillar Non-Sectoral Allocator
-            1. **Broad Equity & Smart Beta ETFs:** Eliminates uncompensated single-sector cyclical risks by allocating to Nifty 50, Next 50, Midcap 150, Smallcap 250, Momentum 30, Alpha 30, and Quality 30.
-            2. **High-Conviction Quality Equities:** Generates alpha by identifying NIFTY LargeMidcap 250 companies experiencing multi-timeframe oversold technical pullbacks while possessing superior balance sheet liquidity.
-            3. **Support & Resistance (S/R) Mean Reversion:** Exploits non-trending, range-bound regimes (ADX < 25) to enter precisely at the 50-day rolling S1 support floor, verified by 5-year empirical bounce backtests.
-            4. **Premier Indian REITs & InvITs:** Captures inflation-indexed, high-yield cash distributions (7.5% - 12.2%) with SEBI-mandated 100% NDCF payouts and AAA credit protection.
-            5. **Precious Metals Sectoral Commodities:** Allocates to Gold and Silver conditionally as macro hedges during equity stress, automatically skipping entries during overbought cyclical peaks.
-            """
-        )
-    with g_col2:
-        st.markdown("##### 📥 Export Guide")
-        if docx_bytes:
-            st.download_button(
-                label="📥 Download V2 Guide (.docx)",
-                data=docx_bytes,
-                file_name="AGY_Quant_Platform_V2_Guide.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                use_container_width=True
-            )
-        st.markdown(
-            """
-            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 12px; border-radius: 6px; font-size: 0.80rem;">
-                <b>Version:</b> 2.3-Adaptive<br>
-                <b>Coverage:</b> 297 Assets<br>
-                <b>SEBI Compliance:</b> 100% NDCF<br>
-                <b>Zero-Secrets:</b> Verified
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+    st.markdown("### 👤 Profile & Account Settings")
+    st.caption("Manage personal account details, execution tranche budgets, and security.")
+    user_match = users_df[users_df["Username"] == current_user]
+    if not user_match.empty:
+        user_row = user_match.iloc[0]
+        with st.form("profile_form"):
+            c_p1, c_p2 = st.columns(2)
+            with c_p1:
+                p_name = st.text_input("Name", value=str(user_row.get("Name", "")))
+                p_email = st.text_input("Email", value=str(user_row.get("Email", "")))
+                p_mobile = st.text_input("Mobile", value=str(user_row.get("Mobile", "")))
+            with c_p2:
+                p_budget = st.number_input("Personal Tranche Budget (₹)", min_value=1000, value=int(user_row.get("Tranche_Budget", 5000)), step=1000)
+                p_preset = st.selectbox("Preferred Strategy Preset", ["Default", "Long-Term", "Swing / Positional", "Intraday", "AI / RAG"], index=0)
+                new_pw = st.text_input("New Password", type="password")
+                confirm_pw = st.text_input("Confirm Password", type="password")
+
+            if st.form_submit_button("💾 Save Profile Changes", type="primary"):
+                if new_pw and new_pw != confirm_pw:
+                    st.error("Passwords do not match.")
+                else:
+                    idx = users_df[users_df["Username"] == current_user].index[0]
+                    users_df.at[idx, "Name"] = str(p_name)
+                    users_df.at[idx, "Email"] = str(p_email)
+                    users_df.at[idx, "Mobile"] = str(p_mobile)
+                    users_df.at[idx, "Tranche_Budget"] = int(p_budget)
+                    users_df.at[idx, "Strategy_Preset"] = str(p_preset)
+                    if new_pw:
+                        users_df.at[idx, "Password"] = str(new_pw)
+                    sync_users_df_to_sheets(users_df)
+                    st.success("Profile updated successfully in Google Sheets!")
+                    st.rerun()
+    else:
+        st.info("Profile settings are available when signed in as an authenticated user.")
+
+
+# =====================================================================
+# TAB 6: ADMIN USER MANAGER (ADMIN ONLY)
+# =====================================================================
+elif "Admin User Manager" in active_tab:
+    if not is_admin:
+        st.error("👑 Administrator privileges required.")
+        st.stop()
+    st.markdown("### 👑 Admin User & Access Management")
+    st.caption("Manage registered users, reset credentials, and audit access permissions in Google Sheets.")
+
+    st.markdown("##### 👥 Registered Users (Google Sheets `Users` Worksheet)")
+    st.dataframe(users_df, column_config=get_pinned_column_config(users_df, 3), use_container_width=True)
+
+    c_adm1, c_adm2 = st.columns(2)
+    with c_adm1:
+        st.markdown("##### ➕ Create New User Account")
+        with st.form("admin_create_user_form"):
+            new_u = st.text_input("Username", key="new_u_in")
+            new_p = st.text_input("Password", value="Etaa@1234#", key="new_p_in")
+            new_n = st.text_input("Full Name", key="new_n_in")
+            new_e = st.text_input("Email", key="new_e_in")
+            new_m = st.text_input("Mobile", key="new_m_in")
+            new_r = st.selectbox("Role", ["user", "admin"], index=0, key="new_r_in")
+            if st.form_submit_button("➕ Register User", type="primary"):
+                if not new_u:
+                    st.error("Username cannot be empty.")
+                elif new_u in users_df["Username"].values:
+                    st.error("User already exists.")
+                else:
+                    new_row = {
+                        "Username": new_u, "Password": new_p, "Name": new_n, "Email": new_e,
+                        "Mobile": new_m, "Role": new_r, "Strategy_Preset": "Default",
+                        "Tranche_Budget": 5000, "Monthly_Cap": 50000
+                    }
+                    updated_u_df = pd.concat([users_df, pd.DataFrame([new_row])], ignore_index=True)
+                    sync_users_df_to_sheets(updated_u_df)
+                    st.success(f"User {new_u} registered successfully!")
+                    st.rerun()
+
+    with c_adm2:
+        st.markdown("##### 🔑 Reset User Password")
+        with st.form("admin_pw_reset_form"):
+            target_u = st.selectbox("Select User:", users_df["Username"].dropna().unique(), key="admin_sel_u_reset")
+            admin_set_pw = st.text_input("New Password", value="Etaa@1234#", key="admin_set_pw_in")
+            if st.form_submit_button("🔑 Update Password", type="primary"):
+                t_idx = users_df[users_df["Username"] == target_u].index[0]
+                users_df.at[t_idx, "Password"] = str(admin_set_pw)
+                sync_users_df_to_sheets(users_df)
+                st.success(f"Password reset for {target_u} in Google Sheets!")
+                st.rerun()
 
     st.markdown("---")
-    st.markdown(
-        """
-        ##### 📐 Mathematical Factor Formulations
-        $$\\text{Composite Buy Score} = w_{\\text{DMA}} \\cdot \\text{Rank}(\\Delta_{\\text{200DMA}}) + w_{\\text{RSI}} \\cdot \\text{Rank}(\\text{RSI}_{14}) + w_{\\text{Low}} \\cdot \\text{Rank}(\\text{Dist}_{52W\\text{Low}}) + w_{\\text{Exp}} \\cdot \\text{Rank}(\\text{Expense})$$
-        $$\\text{Dynamic S/R Channel Width (\\%)} = \\frac{R_1 - S_1}{S_1} \\times 100$$
-        $$\\text{REIT Real Estate Yield} = \\frac{\\text{Annualized DPU (₹)}}{\\text{CMP (₹)}} \\times 100$$
-        """
-    )
+    st.markdown("#### 🛠️ Google Sheets Worksheets & Schema Management")
+    st.caption("Manage Google Sheets worksheets (`Users`, `Paper_Trades`, `Execution_Audit_Log`), synchronize columns, or wipe old data to build a clean-slate schema.")
+
+    c_gs1, c_gs2 = st.columns(2)
+    with c_gs1:
+        st.markdown("##### 🔄 Ensure / Repair Schema (Safe)")
+        st.caption("Checks that all 3 worksheets exist in Google Sheets and appends any missing quantitative columns (`Trade_Action`, `Buy Ticker`, `Sell Ticker`, etc.) without deleting existing trades or accounts.")
+        if st.button("🛠️ Check & Repair Worksheets / Schema", type="secondary", use_container_width=True, key="btn_repair_gsheets"):
+            with st.spinner("Connecting to Google Sheets and repairing schema..."):
+                ok, msg = setup_or_repair_gsheets_schema(wipe_existing_data=False)
+                if ok:
+                    st.success(f"✅ Schema Ready: {msg}")
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    st.error(f"❌ Error: {msg}")
+
+    with c_gs2:
+        st.markdown("##### 🚨 Clean-Slate Reset (Wipe & Recreate)")
+        st.caption("Deletes current rows in Google Sheets, recreates tabs with clean 2026-compliant column headers, and seeds the default Admin account.")
+        with st.popover("⚠️ Wipe Data & Reset Tabs", use_container_width=True):
+            st.error("⚠️ **DANGER ZONE: Irreversible Data Deletion**")
+            st.markdown(
+                "This action will:\n"
+                "1. **Clear** all trade records in `Paper_Trades` worksheet.\n"
+                "2. **Clear** all logs in `Execution_Audit_Log` worksheet.\n"
+                "3. **Reset** `Users` worksheet to seed account `Purn (Admin)`.\n"
+                "4. **Rebuild** the exact new column headers for all 3 tabs.\n"
+                "5. **Clear** local cache files in `data/`."
+            )
+            confirm_wipe = st.checkbox("Yes, delete current data and rebuild clean worksheets & columns", key="chk_wipe_confirm")
+            if st.button("🚨 Wipe Data & Rebuild Clean Schema Now", type="primary", disabled=not confirm_wipe, use_container_width=True, key="btn_wipe_confirm_run"):
+                with st.spinner("Wiping data and rebuilding Google Sheets tabs..."):
+                    ok, msg = setup_or_repair_gsheets_schema(wipe_existing_data=True)
+                    if ok:
+                        st.success(f"✅ Clean Slate Reset Complete: {msg}")
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Reset Failed: {msg}")

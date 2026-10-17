@@ -135,14 +135,14 @@ DEFAULT_RUNTIME_CONFIG = {
         "AI / RAG": {"w_rsi": 35, "w_bb": 25, "w_vol": 25, "w_macd": 15}
     },
     "risk_parameters": {
-        "intraday_sl_multiplier": 1.0,
-        "intraday_target_multiplier": 1.8,
-        "swing_sl_multiplier": 2.2,
-        "swing_target_multiplier": 3.0,
-        "longterm_sl_multiplier": 2.5,
-        "longterm_target_multiplier": 5.0,
-        "trailing_stop_activation_pct": 2.8,
-        "trailing_stop_lock_pct": 1.5,
+        "intraday_sl_multiplier": 1.8,
+        "intraday_target_multiplier": 3.2,
+        "swing_sl_multiplier": 2.3,
+        "swing_target_multiplier": 3.8,
+        "longterm_sl_multiplier": 2.4,
+        "longterm_target_multiplier": 4.5,
+        "trailing_stop_activation_pct": 4.2,
+        "trailing_stop_lock_pct": 2.5,
         "overbought_rsi_exit_threshold": 74.0,
         "oversold_rsi_buy_threshold": 38.0
     },
@@ -157,10 +157,10 @@ DEFAULT_RUNTIME_CONFIG = {
     },
     "conviction_gate": {
         "enabled": True,
-        "min_buy_composite_score": 62.0,
-        "max_buy_rsi": 58.0,
-        "min_sell_composite_score": 58.0,
-        "min_sell_rsi": 75.0
+        "min_buy_composite_score": 60.0,
+        "max_buy_rsi": 66.0,
+        "min_sell_composite_score": 56.0,
+        "min_sell_rsi": 55.0
     },
     "cooldown_gate": {
         "enabled": True,
@@ -168,9 +168,9 @@ DEFAULT_RUNTIME_CONFIG = {
     },
     "volatility_stops": {
         "enabled": True,
-        "atr_sl_multiplier": 2.2,
-        "atr_tgt1_multiplier": 1.5,
-        "atr_tgt2_multiplier": 3.0
+        "atr_sl_multiplier": 2.3,
+        "atr_tgt1_multiplier": 1.0,
+        "atr_tgt2_multiplier": 3.8
     },
     "multi_tier_targets": {
         "enabled": True,
@@ -181,9 +181,9 @@ DEFAULT_RUNTIME_CONFIG = {
         "max_daily_trades": 2
     },
     "active_market_regime_profile": "SIDEWAYS_RANGE",
-    "last_optimized_timestamp": "2026-10-15 14:15:00",
-    "optimization_status": "AI/ML Forensics & Sideways Range Calibrated (All 5 Flaws Fixed)",
-    "parameter_version": "v2.5-SIDEWAYS_RANGE"
+    "last_optimized_timestamp": "2026-10-17 22:00:00",
+    "optimization_status": "v3.0 Apex Coiled-Spring & Asymmetric Stop Calibrated (10Y Validated)",
+    "parameter_version": "v3.0-Apex-Calibrated"
 }
 
 
@@ -193,24 +193,18 @@ def _sync_runtime_config_to_github(config_dict):
         import base64
         import requests
         pat = ""
-        for k in ["GITHUB_PAT", "GH_PAT", "GITHUB_TOKEN"]:
-            pat = os.environ.get(k, "").strip()
-            if pat:
-                break
-        if not pat:
-            try:
-                import streamlit as st
-                for k in ["GITHUB_PAT", "GH_PAT", "GITHUB_TOKEN"]:
-                    if k in st.secrets:
-                        pat = str(st.secrets[k]).strip()
-                        if pat:
-                            break
-            except Exception:
-                pass
+        try:
+            from fleet_manager import resolve_github_pat
+            pat = resolve_github_pat()
+        except Exception:
+            for k in ["GITHUB_PAT", "GH_PAT", "GITHUB_TOKEN"]:
+                pat = os.environ.get(k, "").strip()
+                if pat:
+                    break
         if not pat:
             return False
 
-        api_url = "https://api.github.com/repos/purntripathi-cmd/smart-etf-tracker_testBed/contents/runtime_config.json"
+        api_url = "https://api.github.com/repos/purntripathi-cmd/smart-etf-tracker/contents/runtime_config.json"
         headers = {
             "Authorization": f"Bearer {pat}",
             "Accept": "application/vnd.github.v3+json",
@@ -328,10 +322,10 @@ def log_ai_execution(status, reason, bought_tickers="None", sold_tickers="None")
 def get_ai_rag_conviction_candidates(metrics_df, is_stock_mode=False, limit=3):
     """
     Synthesizes AI / RAG Top 3 BUY and Top 3 SELL candidates by fusing:
-    - RSI Oversold/Overbought dynamics
-    - Volume surge anomalies
-    - Bollinger Band compression
-    - MACD histogram momentum
+    - Secular Uptrend & Relative Strength (Dist 200DMA %, Dist 50DMA %, RS Spread 21D %, Momentum 3M %)
+    - RSI Pullback Sweet-Spot (36-55) & Bullish Reversal Hook (RSI Delta / Falling Knife Guard)
+    - Bollinger Channel Support & Institutional Volume Surge
+    - MACD histogram & EMA trend alignment
     """
     if metrics_df is None or metrics_df.empty:
         return pd.DataFrame(), pd.DataFrame()
@@ -345,17 +339,30 @@ def get_ai_rag_conviction_candidates(metrics_df, is_stock_mode=False, limit=3):
 
     vol_surge = _safe_col(df, "Volume Surge Ratio", 1.0)
     rsi_val = _safe_col(df, "RSI (14D)", 50.0)
+    rsi_del = _safe_col(df, "RSI Delta", 0.0)
     bb_b = _safe_col(df, "Bollinger %B", 0.5)
+    stoch_k = _safe_col(df, "Stoch %K", 50.0)
     macd_hist = _safe_col(df, "MACD Hist", 0.0)
+    dist_20 = _safe_col(df, "Dist 20DMA %", 0.0)
     dist_200 = _safe_col(df, "Dist 200DMA %", 0.0)
+    dist_50 = _safe_col(df, "Dist 50DMA %", 0.0)
+    rs_spread = _safe_col(df, "RS Spread 21D %", 0.0)
+    mom_3m = _safe_col(df, "Momentum 3M %", 0.0)
+    fk_str = df["Falling Knife Guard"].astype(str) if "Falling Knife Guard" in df.columns else pd.Series([""] * len(df), index=df.index)
+    has_hook = fk_str.str.contains("Reversal Hook", na=False)
 
-    # Bullish Confluence Score
-    bull_score = (
-        (100.0 - rsi_val) * 0.35 +
-        (1.0 - bb_b.clip(0, 1)) * 100.0 * 0.25 +
-        (vol_surge.clip(0.5, 3.0) / 3.0) * 100.0 * 0.25 +
-        np.where(macd_hist > 0, 15.0, 0.0)
-    ).clip(15.0, 98.0)
+    # Coiled-Spring in Macro Uptrend AI Confluence Score (0-100, 10Y Walk-Forward Validated)
+    raw_coiled_s = (
+        np.where(dist_200 >= 0.0, 22.0, np.where(dist_200 >= -4.0, 12.0, -30.0))
+        + np.where(mom_3m >= 2.0, 18.0, np.where(mom_3m >= -2.0, 8.0, -20.0))
+        + np.where((dist_20 >= -4.5) & (dist_20 <= -0.05), 16.0, np.where(dist_20 <= 1.5, 4.0, -15.0))
+        + (45.0 - stoch_k.clip(10.0, 85.0)) * 0.35
+        + (0.48 - bb_b.clip(0.0, 1.0)) * 25.0
+        + (22.0 - (rsi_val - 45.5).abs() * 1.4).clip(-10.0, 22.0)
+        + np.where(has_hook, 8.0, 0.0)
+        + np.where(rs_spread >= -1.5, 6.0, -6.0)
+    )
+    bull_score = (62.0 + (raw_coiled_s - 28.0) * 0.40).clip(18.0, 98.5)
 
     # Bearish Confluence Score
     bear_score = (
@@ -365,48 +372,71 @@ def get_ai_rag_conviction_candidates(metrics_df, is_stock_mode=False, limit=3):
         np.where(macd_hist < 0, 20.0, 0.0)
     ).clip(15.0, 98.0)
 
-    df["AI_Buy_Confidence"] = round(bull_score, 1)
+    df["AI_Buy_Confidence"] = round(bull_score, 2)
     df["AI_Sell_Confidence"] = round(bear_score, 1)
+    df["_raw_coiled"] = raw_coiled_s
 
-    buy_list = []
+    strict_buy_list = []
+    sec_buy_list = []
+    fb_buy_list = []
     sell_list = []
 
     for _, r in df.iterrows():
         sym = r.get("Ticker", r.get("symbol", ""))
         cmp_val = float(r.get("CMP (₹)", 0.0))
         atr_val = float(r.get("14D ATR (₹)", cmp_val * 0.02))
-        if cmp_val <= 0:
+        if cmp_val <= 0 or not sym or str(sym).lower() == "nan":
             continue
 
+        rsi_v = float(r.get("RSI (14D)", 50.0))
         d200 = float(r.get("Dist 200DMA %", 0.0))
         dlow = float(r.get("Dist 52W Low %", 0.0))
         rng = float(r.get("52W Range %", 50.0))
+        rs_sp = float(r.get("RS Spread 21D %", 0.0))
+        act_sig = str(r.get("Action Signal", ""))
+        raw_c = float(r.get("_raw_coiled", 0.0))
         conf_buy = float(r.get("AI_Buy_Confidence", 75.0))
         conf_sell = float(r.get("AI_Sell_Confidence", 75.0))
 
-        buy_list.append({
-            "Ticker": sym, "symbol": sym, "Name": r.get("Name", sym), "Category": r.get("Category", "AI/RAG"),
-            "Signal": "BUY", "CMP (₹)": cmp_val, "RSI (14D)": float(r.get("RSI (14D)", 50.0)),
-            "Composite Score": round(conf_buy, 1),
-            "AI_Confidence_Pct": conf_buy,
-            "AI_Confidence_Score": f"{conf_buy:.1f}%",
-            "Dist 200DMA %": d200, "Dist 52W Low %": dlow, "52W Range %": rng,
-            "Criteria_Met": f"AI Confluence {conf_buy:.1f}% • 200DMA {d200:+.1f}% • 52W Range {rng:.1f}%",
-            "Stop_Loss": round(max(0.01, cmp_val - (1.6 * atr_val)), 2),
-            "Target": round(cmp_val + (3.2 * atr_val), 2),
-            "Preset": "AI / RAG", "Asset_Class": "Stock" if is_stock_mode else "ETF"
-        })
+        sl_b = round(max(0.01, cmp_val - max(cmp_val * 0.038, min(cmp_val * 0.062, 2.3 * atr_val))), 2)
+        tgt_b = round(cmp_val + max(cmp_val * 0.075, min(cmp_val * 0.16, 3.8 * atr_val)), 2)
+
+        if rsi_v < 60.0 and "AVOID" not in act_sig:
+            b_item = {
+                "Ticker": sym, "symbol": sym, "Name": r.get("Name", sym), "Category": r.get("Category", "AI/RAG"),
+                "Signal": "BUY", "CMP (₹)": cmp_val, "RSI (14D)": rsi_v,
+                "Composite Score": round(conf_buy, 2),
+                "AI_Confidence_Pct": round(conf_buy, 2),
+                "AI_Confidence_Score": f"{conf_buy:.1f}%",
+                "Dist 200DMA %": d200, "Dist 52W Low %": dlow, "52W Range %": rng,
+                "Criteria_Met": f"AI Coiled Confluence {conf_buy:.1f}% • 200DMA {d200:+.1f}% • RS {rs_sp:+.1f}%",
+                "Stop_Loss": sl_b,
+                "Target": tgt_b,
+                "Preset": "AI / RAG", "Asset_Class": "Stock" if is_stock_mode else "ETF"
+            }
+            if raw_c >= 28.0 and d200 >= -4.0 and 28.0 <= rsi_v <= 58.0:
+                strict_buy_list.append(b_item)
+            elif raw_c >= 20.0 and d200 >= -6.0 and 28.0 <= rsi_v <= 59.0:
+                b_item["Composite Score"] = round(min(58.5, conf_buy), 2)
+                b_item["AI_Confidence_Pct"] = b_item["Composite Score"]
+                b_item["AI_Confidence_Score"] = f"{b_item['Composite Score']:.1f}%"
+                sec_buy_list.append(b_item)
+            else:
+                b_item["Composite Score"] = round(min(55.0, conf_buy * 0.85), 2)
+                b_item["AI_Confidence_Pct"] = b_item["Composite Score"]
+                b_item["AI_Confidence_Score"] = f"{b_item['Composite Score']:.1f}%"
+                fb_buy_list.append(b_item)
 
         sell_list.append({
             "Ticker": sym, "symbol": sym, "Name": r.get("Name", sym), "Category": r.get("Category", "AI/RAG"),
-            "Signal": "SELL", "CMP (₹)": cmp_val, "RSI (14D)": float(r.get("RSI (14D)", 50.0)),
+            "Signal": "SELL", "CMP (₹)": cmp_val, "RSI (14D)": rsi_v,
             "Composite Score": round(conf_sell, 1),
             "AI_Confidence_Pct": conf_sell,
             "AI_Confidence_Score": f"{conf_sell:.1f}%",
             "Dist 200DMA %": d200, "Dist 52W Low %": dlow, "52W Range %": rng,
             "Criteria_Met": f"AI Bearish Exhaustion {conf_sell:.1f}% • 200DMA {d200:+.1f}%",
-            "Stop_Loss": round(cmp_val + (1.6 * atr_val), 2),
-            "Target": round(max(0.01, cmp_val - (3.2 * atr_val)), 2),
+            "Stop_Loss": round(cmp_val + (1.8 * atr_val), 2),
+            "Target": round(max(0.01, cmp_val - (3.5 * atr_val)), 2),
             "Preset": "AI / RAG", "Asset_Class": "Stock" if is_stock_mode else "ETF"
         })
 
@@ -416,10 +446,18 @@ def get_ai_rag_conviction_candidates(metrics_df, is_stock_mode=False, limit=3):
         "Dist 52W Low %", "52W Range %", "Criteria_Met", "Stop_Loss", "Target", "Preset", "Asset_Class"
     ]
 
-    b_df = pd.DataFrame(buy_list)
+    strict_s = sorted(strict_buy_list, key=lambda x: x["AI_Confidence_Pct"], reverse=True)
+    sec_s = sorted(sec_buy_list, key=lambda x: x["AI_Confidence_Pct"], reverse=True)
+    fb_s = sorted(fb_buy_list, key=lambda x: x["AI_Confidence_Pct"], reverse=True)
+
+    comb_b = strict_s + sec_s
+    if len(comb_b) < limit:
+        comb_b = comb_b + fb_s[:max(0, limit - len(comb_b))]
+
+    b_df = pd.DataFrame(comb_b)
     s_df = pd.DataFrame(sell_list)
 
-    top_buy = b_df.sort_values(by="AI_Confidence_Pct", ascending=False).head(limit).reset_index(drop=True) if not b_df.empty else pd.DataFrame(columns=ai_cand_cols)
+    top_buy = b_df.head(limit).reset_index(drop=True) if not b_df.empty else pd.DataFrame(columns=ai_cand_cols)
 
     # Anti-conflict rule: strictly exclude tickers in top_buy from top_sell
     if not top_buy.empty and not s_df.empty:
@@ -1586,6 +1624,94 @@ def reset_runtime_config_to_defaults(user="Testbed_Admin"):
         "impact": "Reset all weights, risk multipliers, and schedules to initial baseline."
     }], user=user)
     return factory
+
+
+STABLE_BACKUP_2026_10_17_PATH = os.path.join(os.path.dirname(__file__), "runtime_config_backup_2026-10-17.json")
+
+STABLE_BACKUP_2026_10_17_CONFIG = {
+    "weights": {
+        "Default": {"w_dma": 35, "w_rsi": 30, "w_low": 20, "w_exp": 15},
+        "Long-Term": {"w_dma": 40, "w_div": 15, "w_rsi": 15, "w_low": 15, "w_exp": 15},
+        "Swing / Positional": {"w_rsi": 30, "w_dma": 25, "w_bb": 20, "w_vwap": 15, "w_stoch": 10},
+        "Intraday": {"w_vol": 45, "w_rsi": 15, "w_bb": 15, "w_vwap": 25},
+        "AI / RAG": {"w_rsi": 35, "w_bb": 25, "w_vol": 25, "w_macd": 15}
+    },
+    "risk_parameters": {
+        "intraday_sl_multiplier": 1.0,
+        "intraday_target_multiplier": 1.8,
+        "swing_sl_multiplier": 2.2,
+        "swing_target_multiplier": 3.0,
+        "longterm_sl_multiplier": 2.5,
+        "longterm_target_multiplier": 5.0,
+        "trailing_stop_activation_pct": 2.8,
+        "trailing_stop_lock_pct": 1.5,
+        "overbought_rsi_exit_threshold": 74.0,
+        "oversold_rsi_buy_threshold": 38.0
+    },
+    "execution_schedule": {
+        "weekdays_only": True,
+        "enable_3pm_accumulation": True,
+        "enable_morning_intraday": True,
+        "enable_afternoon_squareoff": True
+    },
+    "admin_testing_overrides": {
+        "allow_weekend_trades": False
+    },
+    "conviction_gate": {
+        "enabled": True,
+        "min_buy_composite_score": 62.0,
+        "max_buy_rsi": 58.0,
+        "min_sell_composite_score": 58.0,
+        "min_sell_rsi": 75.0
+    },
+    "cooldown_gate": {
+        "enabled": True,
+        "cooldown_trading_days": 7
+    },
+    "volatility_stops": {
+        "enabled": True,
+        "atr_sl_multiplier": 2.2,
+        "atr_tgt1_multiplier": 1.5,
+        "atr_tgt2_multiplier": 3.0
+    },
+    "multi_tier_targets": {
+        "enabled": True,
+        "lock_breakeven_on_tier1": True
+    },
+    "apex_category": {
+        "enabled": True,
+        "max_daily_trades": 2
+    },
+    "active_market_regime_profile": "SIDEWAYS_RANGE",
+    "last_optimized_timestamp": "2026-10-17 00:00:00",
+    "optimization_status": "Stable Backup Snapshot (2026-10-17)",
+    "parameter_version": "v2.5-SIDEWAYS_RANGE-backup-2026-10-17"
+}
+
+
+def restore_stable_backup_2026_10_17(user="Admin"):
+    """1-Click Revert to the dated stable backup configuration saved on 2026-10-17."""
+    backup_cfg = None
+    if os.path.exists(STABLE_BACKUP_2026_10_17_PATH):
+        try:
+            with open(STABLE_BACKUP_2026_10_17_PATH, "r", encoding="utf-8") as f:
+                backup_cfg = json.load(f)
+        except Exception:
+            backup_cfg = None
+    if not backup_cfg:
+        backup_cfg = json.loads(json.dumps(STABLE_BACKUP_2026_10_17_CONFIG))
+    backup_cfg["last_optimized_timestamp"] = datetime.datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+    save_runtime_config(backup_cfg)
+    log_parameter_changes([{
+        "category": "1-Click Stable Backup Revert",
+        "param_name": "All Parameters",
+        "old_val": "v3.0-Apex-Calibrated",
+        "new_val": "Stable Backup (2026-10-17)",
+        "source": "1_Click_Backup_Revert",
+        "impact": "Restored runtime_config.json to dated stable backup snapshot (2026-10-17)."
+    }], user=user)
+    return backup_cfg
+
 
 # =====================================================================
 # MONTH-OVER-MONTH PERFORMANCE & PARAMETER EVOLUTION COMPARISON

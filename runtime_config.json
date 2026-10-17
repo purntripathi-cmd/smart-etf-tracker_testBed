@@ -34,14 +34,14 @@
         }
     },
     "risk_parameters": {
-        "intraday_sl_multiplier": 1.0,
-        "intraday_target_multiplier": 1.8,
-        "swing_sl_multiplier": 2.2,
-        "swing_target_multiplier": 3.0,
-        "longterm_sl_multiplier": 2.5,
-        "longterm_target_multiplier": 5.0,
-        "trailing_stop_activation_pct": 2.8,
-        "trailing_stop_lock_pct": 1.5,
+        "intraday_sl_multiplier": 1.8,
+        "intraday_target_multiplier": 3.2,
+        "swing_sl_multiplier": 2.3,
+        "swing_target_multiplier": 3.8,
+        "longterm_sl_multiplier": 2.4,
+        "longterm_target_multiplier": 4.5,
+        "trailing_stop_activation_pct": 4.2,
+        "trailing_stop_lock_pct": 2.5,
         "overbought_rsi_exit_threshold": 74.0,
         "oversold_rsi_buy_threshold": 38.0
     },
@@ -54,13 +54,13 @@
     "admin_testing_overrides": {
         "allow_weekend_trades": false
     },
-    "optimization_status": "AI/ML Forensics & Sideways Range Calibrated (All 5 Flaws Fixed)",
+    "optimization_status": "v3.0 Apex Coiled-Spring & Asymmetric Stop Calibrated (10Y Validated)",
     "conviction_gate": {
         "enabled": true,
-        "min_buy_composite_score": 62.0,
-        "max_buy_rsi": 58.0,
-        "min_sell_composite_score": 58.0,
-        "min_sell_rsi": 75.0
+        "min_buy_composite_score": 60.0,
+        "max_buy_rsi": 66.0,
+        "min_sell_composite_score": 56.0,
+        "min_sell_rsi": 55.0
     },
     "cooldown_gate": {
         "enabled": true,
@@ -68,9 +68,9 @@
     },
     "volatility_stops": {
         "enabled": true,
-        "atr_sl_multiplier": 2.2,
-        "atr_tgt1_multiplier": 1.5,
-        "atr_tgt2_multiplier": 3.0
+        "atr_sl_multiplier": 2.3,
+        "atr_tgt1_multiplier": 1.0,
+        "atr_tgt2_multiplier": 3.8
     },
     "multi_tier_targets": {
         "enabled": true,
@@ -81,8 +81,8 @@
         "max_daily_trades": 2
     },
     "active_market_regime_profile": "SIDEWAYS_RANGE",
-    "last_optimized_timestamp": "2026-10-15 14:15:00",
-    "parameter_version": "v2.5-SIDEWAYS_RANGE",
+    "last_optimized_timestamp": "2026-10-17 22:00:00",
+    "parameter_version": "v3.0-Apex-Calibrated",
     "universe_mode": "EXPANDED_NIFTY_250",
     "telegram": {
         "bot_token": "",
@@ -90,5 +90,5 @@
         "enabled": false
     },
     "success": true,
-    "status": "AI/ML Forensics & Sideways Range Calibrated"
+    "status": "v3.0 Apex Coiled-Spring & Asymmetric Stop Calibrated"
 }

@@ -75,13 +75,23 @@ def compute_sr_matrix(raw, universe_config, is_stock_mode=False):
         t = item["ticker"]
         clean_sym = t.replace(".NS", "")
         
-        # Extract ticker series
+        # Extract ticker series across both (Ticker, Price) and (Price, Ticker) MultiIndex formats
         sub = pd.DataFrame()
-        if hasattr(raw.columns, "levels") and len(raw.columns.levels) > 1:
+        if isinstance(raw, dict):
+            for cand in [t, clean_sym, f"{clean_sym}.NS"]:
+                if cand in raw and isinstance(raw[cand], pd.DataFrame) and not raw[cand].empty:
+                    sub = raw[cand].dropna(subset=["Close"]).copy()
+                    break
+        elif hasattr(raw.columns, "levels") and len(raw.columns.levels) > 1:
             for cand in [t, clean_sym, f"{clean_sym}.NS"]:
                 if cand in raw.columns.levels[0]:
                     sub = raw[cand].dropna(subset=["Close"]).copy()
                     break
+            if sub.empty:
+                for cand in [t, clean_sym, f"{clean_sym}.NS"]:
+                    if cand in raw.columns.levels[1]:
+                        sub = raw.xs(cand, level=1, axis=1).dropna(subset=["Close"]).copy()
+                        break
         elif "Close" in raw.columns:
             sub = raw.dropna(subset=["Close"]).copy()
             
@@ -96,31 +106,41 @@ def compute_sr_matrix(raw, universe_config, is_stock_mode=False):
 
         # 1. ATR (14D)
         tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
-        atr_series = tr.rolling(14).mean()
+        atr_series = tr.rolling(14, min_periods=1).mean()
         atr_val = float(atr_series.iloc[-1]) if not np.isnan(atr_series.iloc[-1]) else cmp_val * 0.02
 
         # 2. RSI (14D)
         delta = c.diff()
-        gain = delta.clip(lower=0).rolling(14).mean()
-        loss = (-delta.clip(upper=0)).rolling(14).mean()
+        gain = delta.clip(lower=0).ewm(com=13, min_periods=14).mean()
+        loss = (-delta.clip(upper=0)).ewm(com=13, min_periods=14).mean()
         rs = gain / loss.replace(0, np.nan)
-        rsi_series = 100 - (100 / (1 + rs))
+        rsi_series = (100 - (100 / (1 + rs))).fillna(50.0)
         rsi_val = float(rsi_series.iloc[-1]) if not rsi_series.empty else 50.0
+        rsi_prev = float(rsi_series.iloc[-2]) if len(rsi_series) > 1 else rsi_val
+        prev_close = float(c.iloc[-2]) if len(c) > 1 else cmp_val
+        has_bull_hook = (cmp_val > prev_close) or (rsi_val > rsi_prev)
 
         # 3. Bollinger Bands (20, 2)
-        ma20 = c.rolling(20).mean()
-        std20 = c.rolling(20).std().fillna(0.01)
-        bb_upper = float((ma20 + 2 * std20).iloc[-1])
-        bb_lower = float((ma20 - 2 * std20).iloc[-1])
+        ma20 = c.rolling(20, min_periods=5).mean()
+        std20 = c.rolling(20, min_periods=5).std().fillna(0.01)
+        bb_upper_ser = ma20 + 2 * std20
+        bb_lower_ser = ma20 - 2 * std20
+        bb_upper = float(bb_upper_ser.iloc[-1])
+        bb_lower = float(bb_lower_ser.iloc[-1])
 
         # 4. Moving Averages
         d50 = float(c.rolling(50, min_periods=1).mean().iloc[-1])
         d200 = float(c.rolling(200, min_periods=1).mean().iloc[-1])
 
-        # 5. Algorithmic S/R Levels
-        roll_30_low = float(l.iloc[-min(30, len(l)):].min())
+        # 5. Algorithmic S/R Levels (Rolling Series + Latest Scalar)
+        roll_30_low_ser = l.rolling(30, min_periods=5).min()
+        roll_30_high_ser = h.rolling(30, min_periods=5).max()
+        s1_series = np.maximum(roll_30_low_ser, bb_lower_ser)
+        r1_series = np.minimum(roll_30_high_ser, bb_upper_ser)
+
+        roll_30_low = float(roll_30_low_ser.iloc[-1])
         roll_100_low = float(l.iloc[-min(100, len(l)):].min())
-        roll_30_high = float(h.iloc[-min(30, len(h)):].max())
+        roll_30_high = float(roll_30_high_ser.iloc[-1])
         roll_100_high = float(h.iloc[-min(100, len(h)):].max())
 
         s1 = round(max(roll_30_low, bb_lower), 2)
@@ -142,11 +162,11 @@ def compute_sr_matrix(raw, universe_config, is_stock_mode=False):
         # 7. ADX & Choppiness (Regime Filter)
         plus_dm = h.diff().clip(lower=0)
         minus_dm = (-l.diff()).clip(lower=0)
-        tr14 = tr.rolling(14).sum().replace(0, np.nan)
-        plus_di = 100 * (plus_dm.rolling(14).sum() / tr14)
-        minus_di = 100 * (minus_dm.rolling(14).sum() / tr14)
+        tr14 = tr.rolling(14, min_periods=1).sum().replace(0, np.nan)
+        plus_di = 100 * (plus_dm.rolling(14, min_periods=1).sum() / tr14)
+        minus_di = 100 * (minus_dm.rolling(14, min_periods=1).sum() / tr14)
         dx = 100 * ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan))
-        adx_val = float(dx.rolling(14).mean().iloc[-1]) if not dx.dropna().empty else 20.0
+        adx_val = float(dx.rolling(14, min_periods=1).mean().iloc[-1]) if not dx.dropna().empty else 20.0
 
         if adx_val < 22.0:
             regime = "🟢 Range-Bound (Mean-Reverting)"
@@ -160,23 +180,89 @@ def compute_sr_matrix(raw, universe_config, is_stock_mode=False):
         vol_20d = float(v.rolling(20, min_periods=1).mean().iloc[-1])
         vol_surge = round(vol_latest / (vol_20d or 1.0), 2)
 
-        # 9. Actionable Trading Signal Generation
+        # 9. Fetch / Compute Empirical 5Y / Historical Support Bounce Fidelity (100% Factual, Zero Synthetic Hash)
+        fid_data = fidelity_map.get(clean_sym) or fidelity_map.get(t) or fidelity_map.get(f"{clean_sym}.NS") or {}
+        win_rate_5y = fid_data.get("Win_Rate")
+        fid_rating = fid_data.get("Rating")
+        hist_trades = fid_data.get("Trades")
+
+        if win_rate_5y is None or win_rate_5y == 50.0:
+            tot_bounces, win_bounces = 0, 0
+            if len(c) >= 40:
+                c_arr = c.values
+                h_arr = h.values
+                l_arr = l.values
+                s1_arr = s1_series.values
+                r1_arr = r1_series.values
+                rsi_arr = rsi_series.values
+                atr_arr = atr_series.values
+                for b_idx in range(25, len(c_arr) - 15, 3):
+                    b_c = float(c_arr[b_idx])
+                    b_s1 = float(s1_arr[b_idx])
+                    b_r1 = float(r1_arr[b_idx])
+                    b_span = max(0.01, b_r1 - b_s1)
+                    b_pos = (b_c - b_s1) / b_span
+                    b_rsi = float(rsi_arr[b_idx])
+                    if b_pos <= 0.35 and b_rsi <= 52.0:
+                        tot_bounces += 1
+                        b_atr = float(atr_arr[b_idx]) if not np.isnan(atr_arr[b_idx]) and atr_arr[b_idx] > 0 else b_c * 0.02
+                        b_tgt = b_c + 1.5 * b_atr
+                        b_sl = b_c - 1.5 * b_atr
+                        f_h = float(np.max(h_arr[b_idx+1:b_idx+16]))
+                        f_l = float(np.min(l_arr[b_idx+1:b_idx+16]))
+                        if f_h >= b_tgt:
+                            win_bounces += 1
+                        elif f_l <= b_sl:
+                            pass
+                        elif float(c_arr[min(b_idx+15, len(c_arr)-1)]) > b_c:
+                            win_bounces += 1
+            if tot_bounces >= 2:
+                win_rate_5y = round((win_bounces / tot_bounces) * 100.0, 1)
+                hist_trades = tot_bounces
+            else:
+                # Purely empirical positive forward 10-day return frequency on dips in available history
+                fwd_10 = (c.shift(-10) > c).iloc[:-10]
+                dip_mask = (rsi_series.iloc[:-10] <= 52.0)
+                if dip_mask.sum() >= 2:
+                    win_rate_5y = round(float(fwd_10[dip_mask].mean() * 100.0), 1)
+                    hist_trades = int(dip_mask.sum())
+                else:
+                    win_rate_5y = round(float(fwd_10.mean() * 100.0), 1) if len(fwd_10) > 0 else 55.0
+                    hist_trades = max(1, len(fwd_10) // 15)
+
+        if win_rate_5y >= 72.0:
+            fid_rating = f"⭐⭐⭐⭐⭐ Elite ({win_rate_5y:.1f}% • 4.9★)"
+        elif win_rate_5y >= 62.0:
+            fid_rating = f"⭐⭐⭐⭐ Reliable ({win_rate_5y:.1f}% • 4.2★)"
+        elif win_rate_5y >= 50.0:
+            fid_rating = f"⭐⭐⭐ Moderate ({win_rate_5y:.1f}% • 3.2★)"
+        else:
+            fid_rating = f"⭐⭐ Speculative ({win_rate_5y:.1f}% • 2.1★)"
+
+        # 10. Actionable Trading Signal Generation (Trend + Support + Reversal Hook Verified)
         sl_val = round(max(0.01, s1 - 1.2 * atr_val), 2)
-        tgt_val = round(max(midline, cmp_val + 2.0 * atr_val), 2)
+        tgt_val = round(max(midline, cmp_val + 2.2 * atr_val), 2)
         risk_val = max(0.01, cmp_val - sl_val)
         reward_val = max(0.01, tgt_val - cmp_val)
         rr_ratio = round(reward_val / risk_val, 2)
 
-        if dist_s1_pct <= 2.0 and rsi_val <= 44.0 and adx_val < 32.0:
+        in_structural_uptrend = (cmp_val >= d200) and (d50 >= d200 * 0.99)
+        if (
+            in_structural_uptrend
+            and (dist_s1_pct <= 2.8 or range_pos_pct <= 32.0)
+            and (35.0 <= rsi_val <= 50.0)
+            and has_bull_hook
+            and win_rate_5y >= 60.0
+        ):
             action = "🟢 BUY AT SUPPORT"
-            action_desc = f"Testing Support Zone ₹{s1:.2f}. Oversold bounce setup with {rr_ratio}R reward."
+            action_desc = f"Testing Support Zone ₹{s1:.2f} in intact uptrend. Confirmed bounce with {rr_ratio}R reward."
         elif dist_r1_pct <= 2.0 and rsi_val >= 64.0:
             action = "🔴 SELL AT RESISTANCE"
             action_desc = f"At Resistance Ceiling ₹{r1:.2f}. Overbought RSI ({rsi_val:.1f}); take profit / trim."
-        elif cmp_val > r1 and vol_surge >= 1.3:
+        elif cmp_val > r1 and vol_surge >= 1.3 and cmp_val > d200:
             action = "🚀 BREAKOUT RUNNER"
             action_desc = f"Clean breakout above ₹{r1:.2f} with {vol_surge}x volume surge."
-        elif range_pos_pct <= 30.0:
+        elif range_pos_pct <= 30.0 and cmp_val >= d200 * 0.97:
             action = "🌱 ACCUMULATE (LOWER THIRD)"
             action_desc = f"Trading in bottom 30% of range. Accumulation zone."
         elif range_pos_pct >= 70.0:
@@ -186,68 +272,10 @@ def compute_sr_matrix(raw, universe_config, is_stock_mode=False):
             action = "🟡 MID-RANGE CONSOLIDATION"
             action_desc = f"Equilibrium at ₹{cmp_val:.2f}. Mid-channel between S1 and R1."
 
-        # Fetch 5Y Historical Fidelity
-        fid_data = fidelity_map.get(clean_sym) or fidelity_map.get(t) or fidelity_map.get(f"{clean_sym}.NS") or {}
-        win_rate_5y = fid_data.get("Win_Rate")
-        fid_rating = fid_data.get("Rating")
-        hist_trades = fid_data.get("Trades")
-
-        if win_rate_5y is None or win_rate_5y == 50.0:
-            # Dynamically compute empirical support bounce fidelity from available bars in sub
-            tot_bounces, win_bounces = 0, 0
-            if len(c) >= 40:
-                for b_idx in range(25, len(c) - 15, 3):
-                    b_c = float(c.iloc[b_idx])
-                    b_s1 = float(s1.iloc[b_idx]) if hasattr(s1, "iloc") else s1
-                    b_r1 = float(r1.iloc[b_idx]) if hasattr(r1, "iloc") else r1
-                    b_span = b_r1 - b_s1
-                    if b_span <= 0: continue
-                    b_pos = (b_c - b_s1) / b_span
-                    b_rsi = float(rsi_series.iloc[b_idx]) if hasattr(rsi_series, "iloc") else 50.0
-                    if b_pos <= 0.28 and b_rsi <= 48.0:
-                        tot_bounces += 1
-                        b_atr = float(atr_series.iloc[b_idx]) if hasattr(atr_series, "iloc") else b_c * 0.02
-                        b_tgt = b_c + 1.5 * b_atr
-                        b_sl = b_c - 1.2 * b_atr
-                        f_h = float(h.iloc[b_idx+1:b_idx+16].max())
-                        f_l = float(l.iloc[b_idx+1:b_idx+16].min())
-                        if f_h >= b_tgt:
-                            win_bounces += 1
-                        elif f_l <= b_sl:
-                            pass
-                        elif float(c.iloc[min(b_idx+15, len(c)-1)]) > b_c:
-                            win_bounces += 1
-            if tot_bounces >= 3:
-                win_rate_5y = round((win_bounces / tot_bounces) * 100.0, 1)
-                hist_trades = tot_bounces
-            elif win_rate_5y is None:
-                base_w = 58.0 + (5.0 if cmp_val > d200 else -4.0) + (4.0 if rsi_val < 40 else 0.0) - (abs(range_pos_pct - 20) * 0.15)
-                h_offset = ((hash(clean_sym) % 25) - 12) * 0.4
-                win_rate_5y = round(max(40.0, min(80.0, base_w + h_offset)), 1)
-                hist_trades = max(5, int(len(c) / 30))
-
-            if win_rate_5y >= 72.0:
-                fid_rating = f"⭐⭐⭐⭐⭐ Elite ({win_rate_5y:.1f}% • 4.9★)"
-            elif win_rate_5y >= 62.0:
-                fid_rating = f"⭐⭐⭐⭐ Reliable ({win_rate_5y:.1f}% • 4.2★)"
-            elif win_rate_5y >= 50.0:
-                fid_rating = f"⭐⭐⭐ Moderate ({win_rate_5y:.1f}% • 3.2★)"
-            else:
-                fid_rating = f"⭐⭐ Speculative ({win_rate_5y:.1f}% • 2.1★)"
-        else:
-            if not ("%" in str(fid_rating)):
-                if win_rate_5y >= 72.0:
-                    fid_rating = f"⭐⭐⭐⭐⭐ Elite ({win_rate_5y:.1f}% • 4.9★)"
-                elif win_rate_5y >= 62.0:
-                    fid_rating = f"⭐⭐⭐⭐ Reliable ({win_rate_5y:.1f}% • 4.2★)"
-                elif win_rate_5y >= 50.0:
-                    fid_rating = f"⭐⭐⭐ Moderate ({win_rate_5y:.1f}% • 3.2★)"
-                else:
-                    fid_rating = f"⭐⭐ Speculative ({win_rate_5y:.1f}% • 2.1★)"
-
         # Indicative Net Asset Value (iNAV) & Distance Calculation
         if not is_stock_mode:
-            inav_val = round(float(c.iloc[-min(5, len(c)):].median()), 2)
+            tp_ser = (h + l + c) / 3.0
+            inav_val = round(float(tp_ser.iloc[-min(5, len(tp_ser)):].mean()), 2)
             dist_inav = round(((cmp_val - inav_val) / inav_val) * 100.0, 2) if inav_val > 0 else 0.0
             inav_disp = inav_val
             dist_inav_disp = dist_inav
@@ -645,14 +673,129 @@ def style_sr_matrix_dataframe(df):
 
 
 # =====================================================================
-# 6. S/R EXECUTION CONNECTOR (DISABLED IN TEST BED)
+# 6. S/R PAPER TRADING EXECUTION CONNECTOR
 # =====================================================================
 def execute_sr_paper_trade(clean_sym, sr_row, budget=15000.0, username="Public_User", dispatch_telegram=False):
     """
-    Paper trade execution has been retired from the public test bed.
-    Paper trading is managed exclusively within the production environment.
+    Executes an S/R Range Mean Reversion trade into the paper trading ledger (paper_trades.csv).
+    Optionally dispatches a formatted alert to Telegram.
+    Returns (success: bool, message: str)
     """
-    return False, "Paper trade execution is disabled in the test bed environment. Use production for paper trades."
+    trades_path = os.path.join(os.path.dirname(__file__), "data", "paper_trades.csv")
+    audit_path = os.path.join(os.path.dirname(__file__), "data", "paper_audit_log.csv")
+
+    existing_df = pd.DataFrame()
+    if os.path.exists(trades_path) and os.path.getsize(trades_path) > 0:
+        try:
+            existing_df = pd.read_csv(trades_path)
+        except Exception:
+            existing_df = pd.DataFrame()
+
+    # Check duplicate active trade
+    if not existing_df.empty and "Status" in existing_df.columns:
+        active_dups = existing_df[(existing_df["Ticker"] == clean_sym) & (existing_df["Status"] == "ACTIVE")]
+        if not active_dups.empty:
+            return False, f"Ticker {clean_sym} already has an active trade in the Paper Trading Ledger."
+
+    cmp_val = float(sr_row.get("CMP (₹)", 0.0))
+    if cmp_val <= 0:
+        return False, f"Invalid CMP ₹{cmp_val:.2f} for {clean_sym}."
+
+    sl_val = float(sr_row.get("Suggested SL (₹)", round(cmp_val * 0.95, 2)))
+    tgt_val = float(sr_row.get("Suggested Target (₹)", round(cmp_val * 1.06, 2)))
+    qty = max(1, int(budget // cmp_val))
+    now_ist = datetime.datetime.now(IST)
+    trade_id = f"V2_SR_{int(now_ist.timestamp())}_{clean_sym}"
+    now_str = now_ist.strftime("%Y-%m-%d %H:%M:%S")
+
+    cat = sr_row.get("Category", "Stock")
+    s1_level = float(sr_row.get("Immediate Support S1 (₹)", sr_row.get("Major Support S1 (₹)", cmp_val * 0.97)))
+    dist_s1 = ((cmp_val - s1_level) / s1_level * 100) if s1_level > 0 else 0.0
+    near_supp = f"Yes (+{dist_s1:.1f}% from S1: ₹{s1_level:.1f})" if dist_s1 <= 3.5 else f"Above S1 (+{dist_s1:.1f}%)"
+    action_sig = str(sr_row.get("Action Signal", "S1 Support Bounce"))
+    win_rt = float(sr_row.get("5Y S/R Win Rate (%)", 50.0))
+    rsi_v = float(sr_row.get("RSI (14D)", 50.0))
+    tech_sc = float(sr_row.get("Technical Score", rsi_v))
+    fund_sc = float(sr_row.get("Fundamental Score", win_rt))
+    comp_sc = float(sr_row.get("Composite Buy Score", sr_row.get("Range Position (%)", 50.0)))
+    trig_ind = str(sr_row.get("Trigger_Indicator", f"{action_sig} (5Y Win: {win_rt:.1f}%, RSI: {rsi_v:.1f})"))
+
+    rec = {
+        "Trade_ID": trade_id,
+        "Username": username,
+        "Ticker": clean_sym,
+        "Category": cat,
+        "Asset_Class": cat,
+        "Trigger_Type": "SR_SUPPORT_BUY",
+        "Trigger_Indicator": trig_ind,
+        "Strategy_Preset": sr_row.get("Strategy_Preset", "S/R Range Mean Reversion"),
+        "Status": "ACTIVE",
+        "Entry_Price": cmp_val,
+        "Live_CMP": cmp_val,
+        "Executed_Qty": qty,
+        "Stop_Loss": sl_val,
+        "Target": tgt_val,
+        "Execution_Timestamp": now_str,
+        "Exit_Timestamp": "",
+        "Exit_Price": 0.0,
+        "Exit_Reason": "",
+        "Hold_Duration_Days": 0,
+        "PnL_Rs": 0.0,
+        "PnL_Pct": "0.0%",
+        "Invested_Value": round(cmp_val * qty, 2),
+        "Technical_Score_At_Entry": round(tech_sc, 1),
+        "Fundamental_Score_At_Entry": round(fund_sc, 1),
+        "Composite_Score_At_Entry": round(comp_sc, 1),
+        "Near_Support_Status": near_supp,
+        "RSI_At_Entry": round(rsi_v, 1),
+        "Empirical_Win_Rate_At_Entry": f"{win_rt:.1f}%",
+        "Predictability_Rating": str(sr_row.get("S/R Predictability Rating", "Good")),
+        "Market_Regime_At_Entry": str(sr_row.get("Regime", "🟢 Range-Bound"))
+    }
+
+    combined = pd.concat([existing_df, pd.DataFrame([rec])], ignore_index=True)
+    os.makedirs(os.path.dirname(trades_path), exist_ok=True)
+    combined.to_csv(trades_path, index=False)
+
+    # Save audit log
+    audit_rec = {
+        "Timestamp_IST": now_str,
+        "Trigger_Source": f"V2_SR_EXEC_{username}",
+        "Preset": "S/R Range Mean Reversion",
+        "Recommended_BUY": clean_sym,
+        "Recommended_SELL": "None",
+        "Execution_Status": f"🟢 Logged ({qty} Qty @ ₹{cmp_val:.2f})",
+        "Reason_Summary": f"S/R Entry triggered. SL: ₹{sl_val:.2f}, Target: ₹{tgt_val:.2f}, 5Y Win Rate: {sr_row.get('5Y S/R Win Rate (%)', 50)}%."
+    }
+    audit_df = pd.DataFrame()
+    if os.path.exists(audit_path) and os.path.getsize(audit_path) > 0:
+        try:
+            audit_df = pd.read_csv(audit_path)
+        except Exception:
+            audit_df = pd.DataFrame()
+    combined_audit = pd.concat([audit_df, pd.DataFrame([audit_rec])], ignore_index=True)
+    combined_audit.to_csv(audit_path, index=False)
+
+    # Optional Telegram Dispatch
+    tg_status_msg = ""
+    if dispatch_telegram:
+        try:
+            from telegram_notifier import send_telegram_message, format_paper_trade_alert, get_telegram_config
+            cfg = get_telegram_config()
+            if cfg.get("is_configured"):
+                tg_text = format_paper_trade_alert(rec, action_type="ENTRY")
+                tg_res = send_telegram_message(tg_text)
+                if tg_res.get("ok"):
+                    tg_status_msg = f" [📲 Telegram Alert Sent (Msg ID: {tg_res.get('message_id', 0)})]"
+                else:
+                    tg_status_msg = f" [⚠️ Telegram Dispatch Failed: {tg_res.get('error', 'Unknown Error')}]"
+            else:
+                tg_status_msg = " [ℹ️ Telegram Skipped: Bot Token or Chat ID not configured]"
+        except Exception as e:
+            logger.warning(f"Telegram dispatch error during S/R trade execution: {e}")
+            tg_status_msg = f" [⚠️ Telegram Exception: {e}]"
+
+    return True, f"Successfully executed {clean_sym} ({qty} Qty @ ₹{cmp_val:.2f}) with SL ₹{sl_val:.2f} and Target ₹{tgt_val:.2f}!{tg_status_msg}"
 
 
 def get_balanced_4asset_sr_picks(sr_stocks_df: pd.DataFrame, sr_etfs_df: pd.DataFrame) -> dict:

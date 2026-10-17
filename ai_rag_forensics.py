@@ -2029,7 +2029,7 @@ def render_ai_rag_forensics_tab(trades_df=None, is_admin=False, current_user="Pu
             key="impl_rec_multiselect"
         )
 
-        btn_col1, btn_col2 = st.columns(2)
+        btn_col1, btn_col2, btn_col3 = st.columns(3)
         with btn_col1:
             if st.button(
                 "🚀 Implement Selected AI/ML Recommendations Now",
@@ -2045,6 +2045,17 @@ def render_ai_rag_forensics_tab(trades_df=None, is_admin=False, current_user="Pu
                 st.rerun()
 
         with btn_col2:
+            if st.button(
+                "⏪ 1-Click Revert to Stable Backup (2026-10-17)",
+                use_container_width=True,
+                key="btn_revert_2026_10_17_backup"
+            ):
+                from ml_optimizer import restore_stable_backup_2026_10_17
+                restore_stable_backup_2026_10_17(user=current_user)
+                st.info("⏪ Reverted `runtime_config.json` to Dated Stable Backup (`2026-10-17`).")
+                st.rerun()
+
+        with btn_col3:
             if st.button(
                 "🔄 Revert `runtime_config.json` to `v1.0-stable` Factory Baseline",
                 use_container_width=True,

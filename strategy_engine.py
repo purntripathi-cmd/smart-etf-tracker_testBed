@@ -246,9 +246,9 @@ def compute_volatility_stop_and_targets(cmp_val, atr_val, is_buy=True, sl_mult=2
     """
     Computes ATR-based dynamic volatility stop-loss and multi-tier targets.
     Calibrated across 10Y NSE walk-forward backtest:
-    - Stop-loss gives normal daily volatility breathing room (3.8% to 6.2% of CMP)
+    - Stop-loss gives normal daily volatility breathing room (3.8% to 6.2% of CMP scaled by preset sl_mult)
     - Tier-1 locks breakeven + partial profit on the initial 1.8% to 2.8% swing impulse
-    - Tier-2 captures extended 7.5% to 16.0% trend continuation
+    - Tier-2 captures extended 7.5% to 16.0% trend continuation scaled by preset tgt2_mult
     """
     if atr_val <= 0 or np.isnan(atr_val):
         atr_val = cmp_val * 0.022
@@ -869,15 +869,22 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
         t_buy = float(row.get(tech_buy_col, row.get("Technical Score", 50.0)))
         t_sell = float(row.get("Technical Score Sell", 50.0))
 
+        vol_stops_cfg = cfg.get("volatility_stops", {})
+        tgt1_mult = float(vol_stops_cfg.get("atr_tgt1_multiplier", 1.0))
         if p_clean == "Intraday":
-            sl_mult = float(risk_cfg.get("intraday_sl_multiplier", 1.8))
-            tgt_mult = float(risk_cfg.get("intraday_target_multiplier", 3.2))
+            sl_mult = float(risk_cfg.get("intraday_sl_multiplier", 2.1))
+            tgt_mult = float(risk_cfg.get("intraday_target_multiplier", 3.4))
+            tgt1_mult = 0.95
         elif p_clean == "Long-Term":
-            sl_mult = float(risk_cfg.get("longterm_sl_multiplier", 2.3))
-            tgt_mult = float(risk_cfg.get("longterm_target_multiplier", 3.8))
-        else:
+            sl_mult = float(risk_cfg.get("longterm_sl_multiplier", 2.5))
+            tgt_mult = float(risk_cfg.get("longterm_target_multiplier", 4.5))
+            tgt1_mult = 1.05
+        elif p_clean in ["Swing / Positional", "Swing"]:
             sl_mult = float(risk_cfg.get("swing_sl_multiplier", 2.3))
             tgt_mult = float(risk_cfg.get("swing_target_multiplier", 3.8))
+        else:
+            sl_mult = float(vol_stops_cfg.get("atr_sl_multiplier", 2.3))
+            tgt_mult = float(vol_stops_cfg.get("atr_tgt2_multiplier", 3.8))
 
         # Determine exact buy score directly aligned with metrics_df for 100% transparent sorting
         if p_clean == "Default" and "Composite Buy Score" in row and pd.notna(row["Composite Buy Score"]):
@@ -892,11 +899,12 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
             buy_composite = round((w_t * t_buy) + (w_f * f_score), 1)
 
         dist_20 = float(row.get("Dist 20DMA %", 0.0))
+        dist_vwap = float(row.get("Dist VWAP %", 0.0))
         stoch_k = float(row.get("Stoch %K", 50.0))
         bb_b = float(row.get("Bollinger %B", 0.5))
         div_y = float(row.get("Dividend Yield %", 0.0))
 
-        # Coiled-Spring in Macro Uptrend Score (10Y Walk-Forward Validated)
+        # Coiled-Spring in Macro Uptrend Base Score (10Y Walk-Forward Validated)
         raw_coiled = (
             (22.0 if dist_200 >= 0.0 else (12.0 if dist_200 >= -4.0 else -30.0))
             + (18.0 if mom_3m >= 2.0 else (8.0 if mom_3m >= -2.0 else -20.0))
@@ -907,14 +915,35 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
             + (8.0 if has_rev_hook else 0.0)
             + (6.0 if rs_spread >= -1.5 else -6.0)
         )
+        # Orthogonal Preset-Specific Factor Tilts (Gap 2: Differentiate presets while preserving Coiled-Spring alpha)
         if p_clean == "Long-Term":
-            raw_coiled += min(0.8, div_y * 0.2)
-        elif p_clean == "Intraday":
-            raw_coiled += min(0.8, max(0.0, (vol_ratio - 0.85) * 0.4))
+            # Secular Value + Fundamental Quality + Dividend Yield + Unextended 200DMA Cushion
+            raw_coiled += (
+                (f_score - 55.0) * 0.50
+                + min(10.0, div_y * 4.5)
+                + (14.0 if (-2.5 <= dist_200 <= 7.0) else (-12.0 if dist_200 > 11.0 else 0.0))
+                + (8.0 if range_pct <= 55.0 else -6.0)
+                + (6.0 if rsi <= 44.0 else -4.0)
+            )
         elif p_clean in ["Swing / Positional", "Swing"]:
-            raw_coiled += (0.50 - min(1.0, max(0.0, bb_b))) * 0.8
+            # Lower-Bollinger Compression + Stochastic Hook + Positive RSI Inflection in 200DMA Uptrend
+            raw_coiled += (
+                (0.42 - min(1.0, max(0.0, bb_b))) * 18.0
+                + (42.0 - min(85.0, max(10.0, stoch_k))) * 0.22
+                + (11.0 if has_rev_hook else -5.0)
+                + (8.0 if (rsi_del > 0.15 and rs_spread >= -0.5) else -5.0)
+                + (7.0 if (-3.8 <= dist_20 <= -0.2 and dist_200 >= 0.0) else -4.0)
+            )
+        elif p_clean == "Intraday":
+            # Institutional Volume Surge + 20D VWAP Elastic Support + 21D Relative Strength Burst
+            raw_coiled += (
+                min(22.0, max(-12.0, (vol_ratio - 0.95) * 28.0))
+                + (14.0 if (-1.5 <= dist_vwap <= 1.2) else -8.0)
+                + min(14.0, max(-10.0, rs_spread * 2.5))
+                + (8.0 if (43.0 <= rsi <= 54.0 and rsi_del >= 0.0) else -6.0)
+            )
 
-        # Strictly monotonic mapping across [-50, +118] -> [18.0, 98.5] so top candidates never tie at 98.0
+        # Strictly monotonic mapping across [-50, +135] -> [18.0, 98.5] so top candidates never tie at 98.0
         coiled_ui_score = round(min(98.5, max(18.0, 62.0 + (raw_coiled - 28.0) * 0.40)), 2)
 
         # Compute true Overbought Exit Urgency Score (0 to 100)
@@ -922,9 +951,9 @@ def get_top_conviction_candidates(metrics_df, preset_name="Default", is_stock_mo
         d200_norm = min(100.0, max(0.0, 50.0 + (dist_200 * 2.0)))
         sell_exit_urgency = round((0.45 * rsi) + (0.35 * d200_norm) + (0.20 * range_pct), 1)
 
-        # Volatility-adjusted stops and multi-tier targets
-        sl_buy, tgt1_buy, tgt_buy = compute_volatility_stop_and_targets(curr_p, atr, is_buy=True, sl_mult=2.3, tgt1_mult=1.0, tgt2_mult=3.8)
-        sl_sell, tgt1_sell, tgt_sell = compute_volatility_stop_and_targets(curr_p, atr, is_buy=False, sl_mult=2.3, tgt1_mult=1.0, tgt2_mult=3.8)
+        # Volatility-adjusted stops and multi-tier targets (using preset-specific sl_mult, tgt1_mult, tgt_mult)
+        sl_buy, tgt1_buy, tgt_buy = compute_volatility_stop_and_targets(curr_p, atr, is_buy=True, sl_mult=sl_mult, tgt1_mult=tgt1_mult, tgt2_mult=tgt_mult)
+        sl_sell, tgt1_sell, tgt_sell = compute_volatility_stop_and_targets(curr_p, atr, is_buy=False, sl_mult=sl_mult, tgt1_mult=tgt1_mult, tgt2_mult=tgt_mult)
 
         # Explain criteria met for Buy
         buy_criteria_items = []
@@ -1115,6 +1144,14 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False, sk
         if current_p <= 0:
             continue
 
+        high_p = current_p
+        low_p = current_p
+        if df is not None and not df.empty:
+            if "High" in df.columns and not df["High"].dropna().empty:
+                high_p = max(current_p, float(df["High"].dropna().iloc[-1]))
+            if "Low" in df.columns and not df["Low"].dropna().empty:
+                low_p = min(current_p, float(df["Low"].dropna().iloc[-1]))
+
         entry_p = float(pd.to_numeric(row.get("Entry_Price", 0), errors="coerce") or 0.0)
         stop_l = float(pd.to_numeric(row.get("Stop_Loss", 0), errors="coerce") or 0.0)
         target_p = float(pd.to_numeric(row.get("Target", 0), errors="coerce") or 0.0)
@@ -1129,13 +1166,15 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False, sk
         if is_short:
             pnl_rs = round((entry_p - current_p) * qty, 2)
             pnl_pct = round(((entry_p - current_p) / entry_p) * 100.0, 2)
-            target_hit = (target_p > 0 and current_p <= target_p)
-            stop_hit = (stop_l > 0 and current_p >= stop_l)
+            target_hit = (target_p > 0 and low_p <= target_p)
+            stop_hit = (stop_l > 0 and high_p >= stop_l)
+            peak_fav_pct = round(((entry_p - low_p) / entry_p) * 100.0, 2)
         else:
             pnl_rs = round((current_p - entry_p) * qty, 2)
             pnl_pct = round(((current_p - entry_p) / entry_p) * 100.0, 2)
-            target_hit = (target_p > 0 and current_p >= target_p)
-            stop_hit = (stop_l > 0 and current_p <= stop_l)
+            target_hit = (target_p > 0 and high_p >= target_p)
+            stop_hit = (stop_l > 0 and low_p <= stop_l)
+            peak_fav_pct = round(((high_p - entry_p) / entry_p) * 100.0, 2)
 
         # Hold duration calculation (Strictly counting active NSE trading sessions, excluding weekends and holidays)
         hold_days = 0
@@ -1149,43 +1188,43 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False, sk
         cfg = get_active_runtime_config()
         risk_cfg = cfg.get("risk_parameters", {})
         multi_tier_cfg = cfg.get("multi_tier_targets", {})
-        trail_act_pct = float(risk_cfg.get("trailing_stop_activation_pct", 3.0))
-        trail_lock_pct = float(risk_cfg.get("trailing_stop_lock_pct", 0.5))
+        trail_act_pct = float(risk_cfg.get("trailing_stop_activation_pct", 2.2))
+        trail_lock_pct = float(risk_cfg.get("trailing_stop_lock_pct", 1.0))
         overbought_rsi = float(risk_cfg.get("overbought_rsi_exit_threshold", 76.0))
 
-        # Multi-Tier Target Booking: When Tier 1 is achieved (+2.5% or Target_Tier1), advance stop to breakeven!
+        # Multi-Tier Target Booking: When Tier 1 is achieved (+2.2% or Target_Tier1 via high_p/low_p), advance stop to breakeven!
         target_tier1 = float(pd.to_numeric(row.get("Target_Tier1", 0), errors="coerce") or 0.0)
         tier1_hit = False
         if not is_short:
-            if target_tier1 > 0 and current_p >= target_tier1:
+            if target_tier1 > 0 and high_p >= target_tier1:
                 tier1_hit = True
-            elif pnl_pct >= 2.5:
+            elif max(pnl_pct, peak_fav_pct) >= 2.2:
                 tier1_hit = True
             if tier1_hit and multi_tier_cfg.get("lock_breakeven_on_tier1", True):
-                breakeven_sl = round(entry_p * 1.001, 2)
+                breakeven_sl = round(entry_p * 1.002, 2)
                 if stop_l < breakeven_sl:
                     updated.at[idx, "Stop_Loss"] = breakeven_sl
                     stop_l = breakeven_sl
-                    logger.info(f"[TIER1-BREAKEVEN] {sym} hit Tier 1 target (+{pnl_pct:.2f}%). Stop loss moved to breakeven ₹{breakeven_sl:.2f}")
+                    logger.info(f"[TIER1-BREAKEVEN] {sym} hit Tier 1 target (+{max(pnl_pct, peak_fav_pct):.2f}%). Stop loss moved to breakeven ₹{breakeven_sl:.2f}")
         else:
-            if target_tier1 > 0 and current_p <= target_tier1:
+            if target_tier1 > 0 and low_p <= target_tier1:
                 tier1_hit = True
-            elif pnl_pct >= 2.5:
+            elif max(pnl_pct, peak_fav_pct) >= 2.2:
                 tier1_hit = True
             if tier1_hit and multi_tier_cfg.get("lock_breakeven_on_tier1", True):
-                breakeven_sl = round(entry_p * 0.999, 2)
+                breakeven_sl = round(entry_p * 0.998, 2)
                 if stop_l <= 0 or stop_l > breakeven_sl:
                     updated.at[idx, "Stop_Loss"] = breakeven_sl
                     stop_l = breakeven_sl
-                    logger.info(f"[TIER1-BREAKEVEN] {sym} short hit Tier 1 target (+{pnl_pct:.2f}%). Stop loss moved to breakeven ₹{breakeven_sl:.2f}")
+                    logger.info(f"[TIER1-BREAKEVEN] {sym} short hit Tier 1 target (+{max(pnl_pct, peak_fav_pct):.2f}%). Stop loss moved to breakeven ₹{breakeven_sl:.2f}")
 
         # Trailing stop: Lock in profit once gain exceeds activation %
-        if not is_short and pnl_pct >= trail_act_pct:
+        if not is_short and max(pnl_pct, peak_fav_pct) >= trail_act_pct:
             trailing_floor = round(entry_p * (1.0 + (trail_lock_pct / 100.0)), 2)
             if trailing_floor > stop_l:
                 updated.at[idx, "Stop_Loss"] = trailing_floor
                 stop_l = trailing_floor
-        elif is_short and pnl_pct >= trail_act_pct:
+        elif is_short and max(pnl_pct, peak_fav_pct) >= trail_act_pct:
             trailing_ceiling = round(entry_p * (1.0 - (trail_lock_pct / 100.0)), 2)
             if stop_l <= 0 or trailing_ceiling < stop_l:
                 updated.at[idx, "Stop_Loss"] = trailing_ceiling
@@ -1206,28 +1245,34 @@ def evaluate_trade_exits(trades_df, raw_data, force_squareoff_intraday=False, sk
 
         # Exit 2: Target Achieved
         if target_hit:
+            exec_exit_p = min(current_p, target_p) if is_short else max(current_p, target_p)
+            exec_pnl_rs = round(((entry_p - exec_exit_p) if is_short else (exec_exit_p - entry_p)) * qty, 2)
+            exec_pnl_pct = round((((entry_p - exec_exit_p) if is_short else (exec_exit_p - entry_p)) / entry_p) * 100.0, 2)
             updated.at[idx, "Status"] = "TARGET_ACHIEVED"
-            updated.at[idx, "Exit_Price"] = current_p
+            updated.at[idx, "Exit_Price"] = exec_exit_p
             updated.at[idx, "Exit_Timestamp"] = now_ist.strftime("%Y-%m-%d %H:%M:%S")
             updated.at[idx, "Exit_Reason"] = "Target Price Reached"
             updated.at[idx, "Hold_Duration_Days"] = hold_days
             updated.at[idx, "Live_CMP"] = current_p
-            updated.at[idx, "PnL_Rs"] = pnl_rs
-            updated.at[idx, "PnL_Pct"] = f"{pnl_pct:+.2f}%"
-            logger.info(f"[EXIT-TARGET] {sym} hit target ₹{target_p:.2f} at ₹{current_p:.2f} (+{pnl_pct:.2f}%)")
+            updated.at[idx, "PnL_Rs"] = exec_pnl_rs
+            updated.at[idx, "PnL_Pct"] = f"{exec_pnl_pct:+.2f}%"
+            logger.info(f"[EXIT-TARGET] {sym} hit target ₹{target_p:.2f} at ₹{exec_exit_p:.2f} (+{exec_pnl_pct:.2f}%)")
             continue
 
         # Exit 3: Stop-Loss Hit
         if stop_hit:
+            exec_exit_p = max(current_p, stop_l) if is_short else min(current_p, stop_l)
+            exec_pnl_rs = round(((entry_p - exec_exit_p) if is_short else (exec_exit_p - entry_p)) * qty, 2)
+            exec_pnl_pct = round((((entry_p - exec_exit_p) if is_short else (exec_exit_p - entry_p)) / entry_p) * 100.0, 2)
             updated.at[idx, "Status"] = "STOP_LOSS_HIT"
-            updated.at[idx, "Exit_Price"] = current_p
+            updated.at[idx, "Exit_Price"] = exec_exit_p
             updated.at[idx, "Exit_Timestamp"] = now_ist.strftime("%Y-%m-%d %H:%M:%S")
             updated.at[idx, "Exit_Reason"] = "Stop-Loss Hit" if (stop_l <= entry_p if not is_short else stop_l >= entry_p) else "Trailing Stop Triggered"
             updated.at[idx, "Hold_Duration_Days"] = hold_days
             updated.at[idx, "Live_CMP"] = current_p
-            updated.at[idx, "PnL_Rs"] = pnl_rs
-            updated.at[idx, "PnL_Pct"] = f"{pnl_pct:+.2f}%"
-            logger.info(f"[EXIT-STOP] {sym} hit stop ₹{stop_l:.2f} at ₹{current_p:.2f} ({pnl_pct:.2f}%)")
+            updated.at[idx, "PnL_Rs"] = exec_pnl_rs
+            updated.at[idx, "PnL_Pct"] = f"{exec_pnl_pct:+.2f}%"
+            logger.info(f"[EXIT-STOP] {sym} hit stop ₹{stop_l:.2f} at ₹{exec_exit_p:.2f} ({exec_pnl_pct:.2f}%)")
             continue
 
         # Exit 4: Overbought Swing Exhaustion (RSI >= overbought_rsi)

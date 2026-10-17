@@ -34,11 +34,11 @@
         }
     },
     "risk_parameters": {
-        "intraday_sl_multiplier": 1.8,
-        "intraday_target_multiplier": 3.2,
+        "intraday_sl_multiplier": 2.1,
+        "intraday_target_multiplier": 3.4,
         "swing_sl_multiplier": 2.3,
         "swing_target_multiplier": 3.8,
-        "longterm_sl_multiplier": 2.4,
+        "longterm_sl_multiplier": 2.5,
         "longterm_target_multiplier": 4.5,
         "trailing_stop_activation_pct": 4.2,
         "trailing_stop_lock_pct": 2.5,
@@ -54,7 +54,7 @@
     "admin_testing_overrides": {
         "allow_weekend_trades": false
     },
-    "optimization_status": "v3.0 Apex Coiled-Spring & Asymmetric Stop Calibrated (10Y Validated)",
+    "optimization_status": "v3.2 Apex Coiled-Spring & Orthogonal Preset Calibrated (10Y Validated)",
     "conviction_gate": {
         "enabled": true,
         "min_buy_composite_score": 60.0,
@@ -81,8 +81,9 @@
         "max_daily_trades": 2
     },
     "active_market_regime_profile": "SIDEWAYS_RANGE",
-    "last_optimized_timestamp": "2026-10-17 22:00:00",
-    "parameter_version": "v3.0-Apex-Calibrated",
+    "last_optimized_timestamp": "2026-10-17 23:25:00",
+    "parameter_version": "v3.2_Critic_Verified",
+    "config_version": "v3.2_Critic_Verified",
     "universe_mode": "EXPANDED_NIFTY_250",
     "telegram": {
         "bot_token": "",
@@ -90,5 +91,5 @@
         "enabled": false
     },
     "success": true,
-    "status": "v3.0 Apex Coiled-Spring & Asymmetric Stop Calibrated"
+    "status": "v3.2 Apex Coiled-Spring & Orthogonal Preset Calibrated"
 }
